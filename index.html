@@ -89,7 +89,7 @@ html,body{height:100%;font-family:'Nunito',Arial,sans-serif;background:#f5f6fa;c
 .nbadge.purple{background:var(--purple);}
 
 /* ── MAIN CONTENT ── */
-.main{flex:1;overflow-y:auto;padding:16px;-webkit-overflow-scrolling:touch;}
+.main{flex:1;overflow:hidden;padding:0;display:flex;flex-direction:column;}
 
 /* ── BOTTOM NAV (mobile only) ── */
 #bottom-nav{
@@ -105,7 +105,7 @@ html,body{height:100%;font-family:'Nunito',Arial,sans-serif;background:#f5f6fa;c
 }
 @media (max-width:700px){
   #bottom-nav{display:flex;}
-  .main{padding:12px;}
+  .page.active{padding:12px;}
   .topbar{height:56px;}
 }
 @media (min-width:701px){
@@ -148,7 +148,7 @@ html,body{height:100%;font-family:'Nunito',Arial,sans-serif;background:#f5f6fa;c
 
 /* ── PAGES ── */
 .page{display:none;}
-.page.active{display:flex;flex-direction:column;gap:14px;}
+.page.active{display:flex;flex-direction:column;gap:14px;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:16px;flex:1;}
 #page-exam{display:none;}
 #page-exam.active{gap:0!important;padding:0!important;overflow:hidden!important;display:flex!important;}
 @media(max-width:700px){
@@ -1106,11 +1106,18 @@ input, select, textarea, .finput {
 
 <!-- INPATIENT -->
 <!-- INPATIENT -->
-<div class="page" id="page-inpatient">
-  <div class="ph"><div><div class="ph-title">🏥 Хэвтэн эмчлүүлэх</div><div class="ph-sub">Өдөр тутмын эмчилгээ, асаргааны бүртгэл</div></div></div>
-  <div style="display:grid;grid-template-columns:260px 1fr;gap:14px;min-height:400px;">
-    <div class="card" style="padding:12px;"><div class="ch">Хэвтэн эмчлүүлж байгаа</div><div id="inp-list"></div></div>
-    <div id="inp-detail" style="display:flex;flex-direction:column;gap:12px;"><div class="card" style="display:flex;align-items:center;justify-content:center;min-height:200px;color:var(--muted);"><div style="text-align:center;"><div style="font-size:40px;">👈</div><div>Зүүнээс сонгоно уу</div></div></div></div>
+<div class="page" id="page-inpatient" style="padding:0;gap:0;overflow:hidden;flex:1;">
+  <div style="padding:16px 16px 8px;display:flex;align-items:center;justify-content:space-between;flex-shrink:0;">
+    <div><div class="ph-title">🏥 Хэвтэн эмчлүүлэх</div><div class="ph-sub">Өдөр тутмын эмчилгээ, асаргааны бүртгэл</div></div>
+  </div>
+  <div style="flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:0 16px 16px;display:flex;flex-direction:column;gap:10px;min-height:0;">
+    <div class="card" style="padding:12px;flex-shrink:0;">
+      <div class="ch">Хэвтэн эмчлүүлж байгаа</div>
+      <div id="inp-list"></div>
+    </div>
+    <div id="inp-detail" style="flex-shrink:0;display:flex;align-items:center;justify-content:center;min-height:120px;color:var(--muted);">
+      <div style="text-align:center;"><div style="font-size:36px;">☝️</div><div style="font-size:13px;margin-top:6px;">Дээрхээс сонгоно уу</div></div>
+    </div>
   </div>
 </div>
 
@@ -1406,9 +1413,8 @@ function rdWait(){
 function selWait(id){
   const h=waiting.find(x=>x.id===id);if(!h)return;
   const det=document.getElementById('w-detail');
-  det.style.alignItems='flex-start';
+  det.style.alignItems='stretch';
   det.style.justifyContent='flex-start';
-  det.scrollTop=0;
   det.innerHTML=`<div style="width:100%;padding:4px;"><div style="display:flex;align-items:center;gap:12px;margin-bottom:14px;"><div style="font-size:44px;">🐴</div><div><div style="font-size:18px;font-weight:700;">${h.zus}${h.huiis?' · '+h.huiis:''}</div><div style="color:var(--muted);font-size:13px;">${h.nas?h.nas+' нас':''}${h.jin?' · '+h.jin+'кг':''}${h.uuldur?' · '+h.uuldur:''}</div><div style="margin-top:5px;">${urgBadge(h.urgency)}</div></div></div><div style="background:var(--input);border-radius:8px;padding:10px;font-size:13px;margin-bottom:10px;"><b>👤 ${h.owner}</b> · 📞 ${h.phone}${h.phone2?' / '+h.phone2:''}<br><span style="color:var(--muted);">📍 ${h.aimag||'—'} · ${h.sum||'—'}</span></div><div style="background:var(--input);border-radius:8px;padding:10px;font-size:13px;margin-bottom:12px;line-height:1.6;"><b>Анамнез:</b><br>${h.shinj||'—'}</div><div style="display:flex;gap:8px;"><button class="btn btn-p btn-sm" data-startexam="${h.id}">🩺 Үзлэг эхлэх</button><button class="btn btn-r btn-sm" data-rmwait="${h.id}">🗑 Хасах</button></div></div>`;
 }
 
@@ -1598,7 +1604,18 @@ function rdInp(){
   c.innerHTML=active.map(h=>`<div class="wait-item" data-inpid="${h.id}"><div class="wavatar" style="background:linear-gradient(135deg,#4a235a,#8e44ad);">🏥</div><div class="winfo"><div class="wname">${h.horse.zus}${h.horse.huiis?' ('+h.horse.huiis+')':''}</div><div class="wmeta">👤 ${h.horse.owner}</div><div class="wmeta">${(h.dailyRecords||[]).length} өдөр хэвтсэн</div></div></div>`).join('');
 }
 
-function selInp(id){curInpId=id;const inp=inps.find(x=>x.id===id);if(!inp)return;rdInp();rdInpDetail(inp);}
+function selInp(id){
+  curInpId=id;
+  const inp=inps.find(x=>x.id===id);
+  if(!inp)return;
+  rdInp();
+  rdInpDetail(inp);
+  // Scroll detail into view
+  setTimeout(()=>{
+    const det=document.getElementById('inp-detail');
+    if(det) det.scrollIntoView({behavior:'smooth',block:'start'});
+  },80);
+}
 
 function rdInpDetail(inp){
   const days=inp.dailyRecords||[];
