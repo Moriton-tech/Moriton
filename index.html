@@ -8303,16 +8303,25 @@ function saveUser() {
   const dupIdx = STATE.users.findIndex((u, i) => u.name === name && i !== _editUserIdx);
   if (dupIdx !== -1) { toast('Энэ нэртэй хэрэглэгч аль хэдийн байна', 'err'); return; }
 
+  const ms = nowMs();
   if (_editUserIdx !== null && STATE.users[_editUserIdx]) {
-    STATE.users[_editUserIdx] = { name, pw, role, pages };
+    STATE.users[_editUserIdx] = { name, pw, role, pages, ms };
     writeLog('Хэрэглэгч заслаа', name, role);
   } else {
-    STATE.users.push({ name, pw, role, pages });
+    STATE.users.push({ name, pw, role, pages, ms });
     writeLog('Хэрэглэгч нэмлээ', name, role);
   }
 
   lsSet('mt_users', STATE.users);
-  try { fbPushKey('users'); } catch(e) { console.error('user push fail', e); }
+  // Firebase руу шууд бичнэ (echo guard-тайгаар)
+  try {
+    if (window.__fbReady && window.__fbDocFor) {
+      __fbLastWrite['users'] = ms;
+      window.__fbSetDoc(window.__fbDocFor('users'), { _updatedAt: ms, items: STATE.users })
+        .then(() => { try { flashSync(); } catch(e){} })
+        .catch(err => toast('Firebase алдаа: ' + err.message, 'err'));
+    }
+  } catch(e) { console.error('user push fail', e); }
   populateLoginUsers();
   renderUserList();
   closeModal('user-modal');
@@ -8339,7 +8348,14 @@ function deleteUser() {
 
   STATE.users.splice(_editUserIdx, 1);
   lsSet('mt_users', STATE.users);
-  try { fbPushKey('users'); } catch(e) { console.error('user push fail', e); }
+  try {
+    if (window.__fbReady && window.__fbDocFor) {
+      const ms = nowMs();
+      __fbLastWrite['users'] = ms;
+      window.__fbSetDoc(window.__fbDocFor('users'), { _updatedAt: ms, items: STATE.users })
+        .catch(err => toast('Firebase алдаа: ' + err.message, 'err'));
+    }
+  } catch(e) { console.error('user push fail', e); }
   writeLog('Хэрэглэгч устгалаа', u.name, u.role);
   populateLoginUsers();
   renderUserList();
@@ -8634,9 +8650,16 @@ function addDoc() {
   const name = $('#a-doc-name').value.trim();
   const role = $('#a-doc-role').value;
   if (!name) { toast('Нэр оруулна уу', 'err'); return; }
-  const doc = { id: uid(), name, role, exams: 0, rev: 0 };
+  const doc = { id: uid(), name, role, exams: 0, rev: 0, ms: nowMs() };
   STATE.doctors.push(doc);
-  saveAll();
+  lsSet('mt_doctors', STATE.doctors);
+  // Firebase руу шууд бичнэ (debounce алгасаж)
+  if (window.__fbReady && window.__fbDocFor && !__fbApplyingRemote) {
+    const payload = { _updatedAt: doc.ms, items: STATE.doctors };
+    window.__fbSetDoc(window.__fbDocFor('doctors'), payload)
+      .then(() => { __fbLastWrite['doctors'] = doc.ms; try { flashSync(); } catch(e){} })
+      .catch(err => toast('Firebase алдаа: ' + err.message, 'err'));
+  }
   trySync('doctor', doc);
   $('#a-doc-name').value = '';
   toast('✅ Эмч нэмэгдлээ', 'ok');
@@ -9283,10 +9306,20 @@ function fbApplyKey(key, items) {
         try { if (typeof renderServicePrices === 'function' && document.getElementById('service-prices-modal')?.classList.contains('show')) renderServicePrices(); } catch(e){}
       }
     } else if (key === 'users') {
-      // Хэрэглэгчид нэрээр түлхүүрлэгддэг тул шууд орлуулна (id-аар нэгтгэхгүй)
+      // Хэрэглэгчид нэрээр merge хийнэ — pw талбар алдагдахаас сэргийлнэ
       if (Array.isArray(items) && items.length > 0) {
         __fbRemoteCount[key] = items.length;
-        STATE.users = items;
+        // Локал болон remote-ийг нэрээр нэгтгэнэ
+        const byName = {};
+        (STATE.users || []).forEach(u => { if (u && u.name) byName[u.name] = u; });
+        items.forEach(u => {
+          if (!u || !u.name) return;
+          const lc = byName[u.name];
+          if (!lc) { byName[u.name] = u; return; }
+          // Remote pw байвал авна, байхгүй бол локал pw хадгална
+          byName[u.name] = Object.assign({}, lc, u, { pw: u.pw || lc.pw || '' });
+        });
+        STATE.users = Object.values(byName);
         try { populateLoginUsers(); } catch(e){}
         try { if (STATE.activePage === 'admin' && typeof renderUserList === 'function') renderUserList(); } catch(e){}
       }
