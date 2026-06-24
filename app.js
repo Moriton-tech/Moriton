@@ -2205,6 +2205,7 @@ function removeWaiting() {
   if (!confirm('Энэ адууг хүлээлгээс хасах уу?')) return;
   const w = STATE.waiting.find(x => String(x.id) === String(STATE.selectedW));
   STATE.waiting = STATE.waiting.filter(x => x.id !== STATE.selectedW);
+  _markWaitingRemoved(STATE.selectedW);
   trySync('remove_waiting', { id: STATE.selectedW });
   STATE.selectedW = null;
   saveAll();
@@ -2673,6 +2674,7 @@ function finishExam() {
   STATE.fins.push(fin);
   // remove from waiting
   STATE.waiting = STATE.waiting.filter(w => w.id !== e.waitId);
+  _markWaitingRemoved(e.waitId);
   // update doctor stats
   const doc = STATE.doctors.find(d => String(d.id) === String(e.docId));
   if (doc) {
@@ -2730,6 +2732,7 @@ function moveToInpatient() {
   };
   STATE.inps.push(inp);
   STATE.waiting = STATE.waiting.filter(w => w.id !== e.waitId);
+  _markWaitingRemoved(e.waitId);
   saveAll();
   trySync('exam', exam);
   trySync('inpatient', inp);
@@ -6406,6 +6409,16 @@ let __fbApplyingRemote = false;   // remote-оос ачаалж байх үед 
 const __fbPushTimers = {};        // түлхүүр бүрд тусдаа debounce таймер
 const __fbLastWrite = {};         // түлхүүр бүрд сүүлд бичсэн агшин
 
+// Waiting устгасан ID-уудын нэгдсэн бүртгэл (multi-device sync)
+const __fbRemovedWaiting = new Set(
+  (() => { try { return JSON.parse(localStorage.getItem('mt_removed_waiting') || '[]'); } catch(e) { return []; } })()
+);
+function _markWaitingRemoved(id) {
+  if (!id) return;
+  __fbRemovedWaiting.add(String(id));
+  try { localStorage.setItem('mt_removed_waiting', JSON.stringify([...__fbRemovedWaiting])); } catch(e) {}
+}
+
 // Firestore-д хадгалах STATE-ийн талбарууд
 const FB_KEYS = ['horses','waiting','exams','fins','inps','doctors','staff','users','logs','staffSchedule','deletedExams','servicePrices','customServices','removedServices'];
 
@@ -6433,7 +6446,9 @@ function fbPushKey(key) {
     return Promise.resolve();
   }
   __fbLastWrite[key] = Date.now();
-  const payload = { _updatedAt: __fbLastWrite[key], items: val };
+  const payload = { _updatedAt: __fbLastWrite[key], _writer: window.__fbDeviceId || 'unknown', items: val };
+  // waiting document-д устгасан ID-уудыг хамт хадгалах (multi-device sync)
+  if (key === 'waiting') payload._removedIds = [...__fbRemovedWaiting];
   return window.__fbSetDoc(window.__fbDocFor(key), payload)
     .then(() => { try { flashSync(); } catch(e){} })
     .catch(err => { console.error('[FB] ❌ ' + key + ' бичих алдаа:', err.message); try { toast('FB алдаа (' + key + '): ' + err.message, 'err'); } catch(e){} });
@@ -6464,7 +6479,7 @@ function fbForcePush() {
 window.fbForcePush = fbForcePush;
 
 // Нэг document-оос ирсэн өгөгдлийг STATE-д буулгах
-function fbApplyKey(key, items) {
+function fbApplyKey(key, items, removedIds) {
   __fbApplyingRemote = true;
   try {
     if (key === 'staffSchedule') {
@@ -6526,6 +6541,28 @@ function fbApplyKey(key, items) {
         STATE.deletedExams = merged;
         try { if (STATE.activePage === 'admin' && typeof renderDeletedExams === 'function') renderDeletedExams(); } catch(e){}
       }
+    } else if (key === 'waiting' && Array.isArray(items)) {
+      __fbRemoteCount['waiting'] = items.length;
+      // _removedIds: нөгөө компьютерийн устгасан ID-уудыг авч локал set-тэй нэгтгэнэ
+      if (Array.isArray(removedIds)) {
+        removedIds.forEach(id => _markWaitingRemoved(id));
+      }
+      // Remote болон локал аль алинаас устгасан ID-уудыг хасна
+      const filteredIncoming = items
+        .map(normalizeRow)
+        .filter(r => r && r.id != null && !__fbRemovedWaiting.has(String(r.id)));
+      const localFiltered = (STATE.waiting || []).filter(l => l && l.id != null && !__fbRemovedWaiting.has(String(l.id)));
+      // id-аар union merge, ms-ээр шинийг сонгох
+      const byIdW = {};
+      localFiltered.forEach(l => { if (l.id != null) byIdW[String(l.id)] = l; });
+      filteredIncoming.forEach(r => {
+        if (r == null || r.id == null) return;
+        const id = String(r.id);
+        const lc = byIdW[id];
+        if (!lc) { byIdW[id] = r; return; }
+        if ((parseFloat(r.ms) || 0) >= (parseFloat(lc.ms) || 0)) byIdW[id] = r;
+      });
+      STATE.waiting = Object.values(byIdW);
     } else if (Array.isArray(items)) {
       __fbRemoteCount[key] = items.length;
       // 🛡️ UNION MERGE — real-time multi-device орчинд өгөгдөл алдагдахаас сэргийлнэ.
@@ -6580,9 +6617,14 @@ function fbStartListening() {
       const data = snap.data();
       // Firestore-д хэдэн зүйл байгааг үргэлж тэмдэглэнэ (echo байсан ч)
       if (Array.isArray(data.items)) __fbRemoteCount[key] = data.items.length;
-      // Өөрийн дөнгөж бичсэн өөрчлөлт буцаж ирвэл (echo) алгасах
-      if (data._updatedAt && Math.abs(data._updatedAt - (__fbLastWrite[key]||0)) < 1500) return;
-      fbApplyKey(key, data.items);
+      // Өөрийн дөнгөж бичсэн өөрчлөлт буцаж ирвэл (echo) алгасах.
+      // Device ID-аар таних нь timestamp-ийн зөрүүгээс найдвартай.
+      const isMyEcho = data._writer
+        && data._writer === window.__fbDeviceId
+        && data._updatedAt
+        && (Date.now() - data._updatedAt) < 5000;
+      if (isMyEcho) return;
+      fbApplyKey(key, data.items, data._removedIds);
     }, (err) => console.error('[FB] onSnapshot алдаа (' + key + '):', err));
   });
 }

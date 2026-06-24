@@ -42,5 +42,9 @@ import { initializeApp } from "https://www.gstatic.com/firebasejs/11.0.2/firebas
     } catch (e) { /* аль хэдийн устсан байж болно */ }
   };
 
+  // 🆔 Device ID — echo guard-д ашиглана (timestamp биш)
+  // Хуудас дахин ачаалах бүрт шинэ ID үүснэ
+  window.__fbDeviceId = Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+
   window.__fbReady = true;
   window.dispatchEvent(new Event("firebase-ready"));
