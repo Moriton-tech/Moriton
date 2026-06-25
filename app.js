@@ -2128,6 +2128,8 @@ function submitReg() {
   };
   STATE.waiting.push(wait);
   saveAll();
+  // ⚡ Хүлээлтийн цонхыг нөгөө компьютерт ШУУД харуулна (debounce алгасна)
+  fbPushNow(['horses', 'waiting']);
   trySync('horse', horse);
   trySync('waiting', wait);
   writeLog('Морь бүртгэсэн', horse.id, horse.name + ' / ' + horse.owner, 'Дугаар: ' + examNum, examNum);
@@ -2209,6 +2211,8 @@ function removeWaiting() {
   trySync('remove_waiting', { id: STATE.selectedW });
   STATE.selectedW = null;
   saveAll();
+  // ⚡ Хасалтыг нөгөө компьютерт ШУУД харуулна
+  fbPushNow(['waiting']);
   updateBadges();
   renderWaiting();
   toast('Хүлээлгээс хасагдлаа', 'ok');
@@ -2683,6 +2687,8 @@ function finishExam() {
     trySync('doctor', doc);
   }
   saveAll();
+  // ⚡ Санхүү болон хүлээлтийн өөрчлөлтийг нөгөө компьютерт ШУУД харуулна
+  fbPushNow(['exams_h1', 'exams_h2', 'fins', 'waiting', 'doctors']);
   trySync('exam', exam);
   trySync('finance', fin);
   trySync('remove_waiting', { id: e.waitId });
@@ -2734,6 +2740,8 @@ function moveToInpatient() {
   STATE.waiting = STATE.waiting.filter(w => w.id !== e.waitId);
   _markWaitingRemoved(e.waitId);
   saveAll();
+  // ⚡ Хэвтэгч болон хүлээлтийн өөрчлөлтийг нөгөө компьютерт ШУУД харуулна
+  fbPushNow(['exams_h1', 'exams_h2', 'inps', 'waiting']);
   trySync('exam', exam);
   trySync('inpatient', inp);
   trySync('remove_waiting', { id: e.waitId });
@@ -3502,6 +3510,8 @@ function confirmDischarge() {
   STATE.fins.push(fin);
 
   saveAll();
+  // ⚡ Хэвтэгч гарсан мэдээллийг нөгөө компьютерт ШУУД харуулна
+  fbPushNow(['inps', 'fins']);
   trySync('inpatient', i);
   trySync('finance', fin);
   closeModal('inp-discharge-modal');
@@ -6415,6 +6425,7 @@ document.addEventListener('DOMContentLoaded', () => {
 //    document болгоно: clinic/horses, clinic/exams, ...
 // ============================================================
 let __fbApplyingRemote = false;   // remote-оос ачаалж байх үед буцааж бичихгүй
+let __fbApplyingTimer  = null;    // debounce reset — олон key зэрэг ирэх үед блокийг сунгана
 const __fbPushTimers = {};        // түлхүүр бүрд тусдаа debounce таймер
 const __fbLastWrite = {};         // түлхүүр бүрд сүүлд бичсэн агшин
 
@@ -6433,7 +6444,10 @@ function _markWaitingRemoved(id) {
 // 'users' энд байхгүй — хэрэглэгч бүртгэлийн ажилтан saveAll хийх бүрд
 // Device 2-ын хуучин users list нь Device 1-д нэмсэн шинэ хэрэглэгчийг дарж бичих аюултай.
 // users-ийг зөвхөн saveUser()/deleteUser()-с шууд push хийнэ.
-const FB_OP_KEYS  = ['horses','waiting','exams','fins','inps','doctors','staff','logs','staffSchedule','deletedExams','servicePrices','customServices','removedServices'];
+// exams document 1MB хязгаараас давсан тул хоёр хэсэгт хуваана:
+// exams_h1 → 2026-01~04 (хуучин),  exams_h2 → 2026-05~одоо (шинэ)
+// STATE.exams нэг нэгдсэн array хэвээр — зөвхөн Firestore-д хоёр document болно.
+const FB_OP_KEYS  = ['horses','waiting','exams_h1','exams_h2','fins','inps','doctors','staff','logs','staffSchedule','deletedExams','servicePrices','customServices','removedServices'];
 const FB_KEYS = [...FB_OP_KEYS, 'users']; // fbStartListening бүх key сонсоно
 
 // localStorage түлхүүрийн харгалзаа
@@ -6451,7 +6465,15 @@ const __fbRemoteCount = {};
 // Нэг түлхүүрийг (нэг document) Firestore руу бичих
 function fbPushKey(key) {
   if (!window.__fbReady || !window.__fbDocFor) return Promise.resolve();
-  const val = STATE[key] != null ? STATE[key] : ((key === 'staffSchedule' || key === 'servicePrices') ? {} : []);
+  // exams_h1/h2: STATE.exams-г огноогоор хуваан тус тусдаа document-д бичнэ
+  let val;
+  if (key === 'exams_h1') {
+    val = (STATE.exams || []).filter(e => (e.date || '') < '2026-05');
+  } else if (key === 'exams_h2') {
+    val = (STATE.exams || []).filter(e => (e.date || '') >= '2026-05');
+  } else {
+    val = STATE[key] != null ? STATE[key] : ((key === 'staffSchedule' || key === 'servicePrices') ? {} : []);
+  }
   // 🛡️ ХАМГААЛАЛТ: Firestore-д их дата байхад локал хоосон бол ДАРЖ БИЧИХГҮЙ.
   // Энэ нь localStorage алдагдах үед бүх датаг устгахаас сэргийлнэ.
   if (Array.isArray(val) && val.length === 0 && (__fbRemoteCount[key] || 0) >= 5) {
@@ -6479,7 +6501,17 @@ function fbPush() {
     // Ингэснээр нэг компьютер дээрх хуучин users list нь өөр компьютерт
     // нэмсэн шинэ хэрэглэгч/эрхийг дарж бичихгүй.
     FB_OP_KEYS.forEach(k => fbPushKey(k));
-  }, 300); // 600ms → 300ms: хариу хугацааг хагасаар богиносгов
+  }, 100); // 600→100ms: ерийн автомат save-д хангалттай жижиг debounce
+}
+
+// Шууд push — debounce байхгүй, __fbApplyingRemote-г тоохгүй.
+// Хэрэглэгчийн идэвхтэй үйлдэл (бүртгэл, үзлэг дуусгах, хасах)-д дуудна.
+// Ингэснээр UI нь Firestore-д бичигдэх хугацааны хариу маш хурдан болно.
+function fbPushNow(keys) {
+  if (!window.__fbReady || !window.__fbDocFor) return;
+  clearTimeout(__fbAllTimer); // хойшлогдсон ерийн push-г цуцалж давхардлаас зайлсхийнэ
+  const toPush = keys || FB_OP_KEYS;
+  toPush.forEach(k => fbPushKey(k));
 }
 
 // Албадан бүгдийг шууд бичих (миграци/гар товчинд)
@@ -6502,7 +6534,7 @@ function _fbDebouncedRefresh() {
   clearTimeout(__fbRefreshTimer);
   __fbRefreshTimer = setTimeout(() => {
     if (STATE.user) softRefresh();
-  }, 120);
+  }, 60); // 120→60ms
 }
 
 // Нэг document-оос ирсэн өгөгдлийг STATE-д буулгах
@@ -6616,6 +6648,31 @@ function fbApplyKey(key, items, removedIds) {
         if ((parseFloat(r.ms) || 0) >= (parseFloat(lc.ms) || 0)) byIdW[id] = r;
       });
       STATE.waiting = Object.values(byIdW);
+    } else if (key === 'exams_h1' || key === 'exams_h2') {
+      // exams_h1/h2 хоёулаа STATE.exams-д нэгтгэнэ (union merge by id)
+      if (Array.isArray(items)) {
+        __fbRemoteCount[key] = items.length;
+        const incoming = items.map(normalizeRow)
+          .filter(r => !(STATE.deletedIds instanceof Set && STATE.deletedIds.has(String(r.id))));
+        const byId = {};
+        (STATE.exams || []).forEach(e => { if (e && e.id != null) byId[String(e.id)] = e; });
+        incoming.forEach(r => {
+          if (r == null || r.id == null) return;
+          const id = String(r.id);
+          const lc = byId[id];
+          if (!lc) { byId[id] = r; return; }
+          const lcMs = parseFloat(lc.ms) || 0;
+          const rMs  = parseFloat(r.ms)  || 0;
+          if (rMs >= lcMs) {
+            const ARRAY_FIELDS = ['prepayments','payments','log','services','meds','images'];
+            ARRAY_FIELDS.forEach(f => {
+              if ((!Array.isArray(r[f]) || r[f].length === 0) && Array.isArray(lc[f]) && lc[f].length) r[f] = lc[f];
+            });
+            byId[id] = r;
+          }
+        });
+        STATE.exams = Object.values(byId);
+      }
     } else if (Array.isArray(items)) {
       __fbRemoteCount[key] = items.length;
       // 🛡️ UNION MERGE — real-time multi-device орчинд өгөгдөл алдагдахаас сэргийлнэ.
@@ -6648,14 +6705,22 @@ function fbApplyKey(key, items, removedIds) {
       });
       STATE[key] = Object.values(byId);
     }
-    lsSet(LS_MAP[key], STATE[key] || ((key === 'staffSchedule' || key === 'servicePrices') ? {} : []));
+    // exams_h1/h2 хоёулаа нэг localStorage key-д хадгалана
+    if (key === 'exams_h1' || key === 'exams_h2') {
+      lsSet('mt_exams', STATE.exams || []);
+    } else {
+      lsSet(LS_MAP[key], STATE[key] || ((key === 'staffSchedule' || key === 'servicePrices') ? {} : []));
+    }
     updateBadges();
     _fbDebouncedRefresh(); // debounce-тай: олон key зэрэг шинэчлэгдэх үед UI нэг удаа дахин зурна
     try { flashSync(); } catch(e){}
   } catch(e) {
     console.error('[FB] fbApplyKey алдаа (' + key + '):', e);
   } finally {
-    setTimeout(() => { __fbApplyingRemote = false; }, 200);
+    // Debounce reset: 13 key зэрэг ирэх үед per-call setTimeout нь нийт 800ms+ блоклодог байсан.
+    // Одоо сүүлийн key ирснээс 200ms хойш л reset хийнэ → блок 200ms-д хязгаарлагдана.
+    clearTimeout(__fbApplyingTimer);
+    __fbApplyingTimer = setTimeout(() => { __fbApplyingRemote = false; }, 200);
   }
 }
 
