@@ -5494,11 +5494,16 @@ function saveUser() {
   }
 
   lsSet('mt_users', STATE.users);
-  // Firebase руу шууд бичнэ (echo guard-тайгаар)
+  // Firebase руу шууд бичнэ. _writer талбарыг нэмснээр echo guard зөв ажиллана:
+  // өөрийн бичсэн snapshot буцаж ирэхэд давтан apply хийхгүй.
   try {
     if (window.__fbReady && window.__fbDocFor) {
       __fbLastWrite['users'] = ms;
-      window.__fbSetDoc(window.__fbDocFor('users'), { _updatedAt: ms, items: STATE.users })
+      window.__fbSetDoc(window.__fbDocFor('users'), {
+        _updatedAt: ms,
+        _writer: window.__fbDeviceId || 'unknown', // ⬅ echo guard-д шаардлагатай
+        items: STATE.users
+      })
         .then(() => { try { flashSync(); } catch(e){} })
         .catch(err => toast('Firebase алдаа: ' + err.message, 'err'));
     }
@@ -5533,7 +5538,11 @@ function deleteUser() {
     if (window.__fbReady && window.__fbDocFor) {
       const ms = nowMs();
       __fbLastWrite['users'] = ms;
-      window.__fbSetDoc(window.__fbDocFor('users'), { _updatedAt: ms, items: STATE.users })
+      window.__fbSetDoc(window.__fbDocFor('users'), {
+        _updatedAt: ms,
+        _writer: window.__fbDeviceId || 'unknown', // ⬅ echo guard-д шаардлагатай
+        items: STATE.users
+      })
         .catch(err => toast('Firebase алдаа: ' + err.message, 'err'));
     }
   } catch(e) { console.error('user push fail', e); }
@@ -5834,9 +5843,9 @@ function addDoc() {
   const doc = { id: uid(), name, role, exams: 0, rev: 0, ms: nowMs() };
   STATE.doctors.push(doc);
   lsSet('mt_doctors', STATE.doctors);
-  // Firebase руу шууд бичнэ (debounce алгасаж)
+  // Firebase руу шууд бичнэ (_writer нэмсэн)
   if (window.__fbReady && window.__fbDocFor && !__fbApplyingRemote) {
-    const payload = { _updatedAt: doc.ms, items: STATE.doctors };
+    const payload = { _updatedAt: doc.ms, _writer: window.__fbDeviceId || 'unknown', items: STATE.doctors };
     window.__fbSetDoc(window.__fbDocFor('doctors'), payload)
       .then(() => { __fbLastWrite['doctors'] = doc.ms; try { flashSync(); } catch(e){} })
       .catch(err => toast('Firebase алдаа: ' + err.message, 'err'));
@@ -6420,7 +6429,12 @@ function _markWaitingRemoved(id) {
 }
 
 // Firestore-д хадгалах STATE-ийн талбарууд
-const FB_KEYS = ['horses','waiting','exams','fins','inps','doctors','staff','users','logs','staffSchedule','deletedExams','servicePrices','customServices','removedServices'];
+// FB_OP_KEYS: saveAll() → fbPush() дуудагдах болгонд push хийгдэх operational дата
+// 'users' энд байхгүй — хэрэглэгч бүртгэлийн ажилтан saveAll хийх бүрд
+// Device 2-ын хуучин users list нь Device 1-д нэмсэн шинэ хэрэглэгчийг дарж бичих аюултай.
+// users-ийг зөвхөн saveUser()/deleteUser()-с шууд push хийнэ.
+const FB_OP_KEYS  = ['horses','waiting','exams','fins','inps','doctors','staff','logs','staffSchedule','deletedExams','servicePrices','customServices','removedServices'];
+const FB_KEYS = [...FB_OP_KEYS, 'users']; // fbStartListening бүх key сонсоно
 
 // localStorage түлхүүрийн харгалзаа
 const LS_MAP = {
@@ -6461,8 +6475,11 @@ function fbPush() {
   if (__fbApplyingRemote) return;
   clearTimeout(__fbAllTimer);
   __fbAllTimer = setTimeout(() => {
-    FB_KEYS.forEach(k => fbPushKey(k));
-  }, 600);
+    // ⚠️ users энд байхгүй — saveUser()/deleteUser()-с тусад нь push хийнэ.
+    // Ингэснээр нэг компьютер дээрх хуучин users list нь өөр компьютерт
+    // нэмсэн шинэ хэрэглэгч/эрхийг дарж бичихгүй.
+    FB_OP_KEYS.forEach(k => fbPushKey(k));
+  }, 300); // 600ms → 300ms: хариу хугацааг хагасаар богиносгов
 }
 
 // Албадан бүгдийг шууд бичих (миграци/гар товчинд)
@@ -6477,6 +6494,16 @@ function fbForcePush() {
     .catch(err => { console.error('[FB] ❌ Бичих алдаа:', err); });
 }
 window.fbForcePush = fbForcePush;
+
+// softRefresh debounce — fbApplyKey нь олон key зэрэг шинэчлэгдэх үед
+// UI-г зөвхөн нэг удаа дахин зурна (14 удаагийн оронд). UX мэдэгдэхүйц хурдасна.
+let __fbRefreshTimer = null;
+function _fbDebouncedRefresh() {
+  clearTimeout(__fbRefreshTimer);
+  __fbRefreshTimer = setTimeout(() => {
+    if (STATE.user) softRefresh();
+  }, 120);
+}
 
 // Нэг document-оос ирсэн өгөгдлийг STATE-д буулгах
 function fbApplyKey(key, items, removedIds) {
@@ -6499,20 +6526,46 @@ function fbApplyKey(key, items, removedIds) {
         try { if (typeof renderServicePrices === 'function' && document.getElementById('service-prices-modal')?.classList.contains('show')) renderServicePrices(); } catch(e){}
       }
     } else if (key === 'users') {
-      // Хэрэглэгчид нэрээр merge хийнэ — pw талбар алдагдахаас сэргийлнэ
+      // Хэрэглэгчид нэрээр merge хийнэ — pw болон pages алдагдахаас сэргийлнэ.
+      // 🔑 ms timestamp-аар аль нь шинэ болохыг шийднэ (remote-always-wins биш).
+      // Ингэснээр нэг компьютер дахь эрхийн өөрчлөлтийг өөр компьютерийн
+      // хуучин snapshot дарж бичихгүй.
       if (Array.isArray(items) && items.length > 0) {
         __fbRemoteCount[key] = items.length;
-        // Локал болон remote-ийг нэрээр нэгтгэнэ
         const byName = {};
         (STATE.users || []).forEach(u => { if (u && u.name) byName[u.name] = u; });
         items.forEach(u => {
           if (!u || !u.name) return;
           const lc = byName[u.name];
           if (!lc) { byName[u.name] = u; return; }
-          // Remote pw байвал авна, байхгүй бол локал pw хадгална
-          byName[u.name] = Object.assign({}, lc, u, { pw: u.pw || lc.pw || '' });
+          // ms timestamp-аар аль нь шинэ болохыг шийдэх
+          const remoteMs = parseFloat(u.ms) || 0;
+          const localMs  = parseFloat(lc.ms) || 0;
+          if (remoteMs > localMs) {
+            // Remote шинэ → remote-ийг авна, гэхдээ pw алдагдахаас хамгаална
+            byName[u.name] = Object.assign({}, u, { pw: u.pw || lc.pw || '' });
+          }
+          // Local шинэ эсвэл тэнцүү → локалаа хадгална (remote дарж бичихгүй)
         });
-        STATE.users = Object.values(byName);
+        const mergedUsers = Object.values(byName);
+        STATE.users = mergedUsers;
+        // 🔄 Self-healing: local-д remote-д байхгүй хэрэглэгч байвал Firestore-д
+        // буцааж бичнэ — ингэснээр өөр device-ын хуучин push-ийн улмаас алдагдсан
+        // хэрэглэгч автоматаар сэргэнэ.
+        if (mergedUsers.length > items.length) {
+          clearTimeout(window.__fbUserHealTimer);
+          window.__fbUserHealTimer = setTimeout(() => {
+            if (!__fbApplyingRemote && window.__fbReady && window.__fbDocFor) {
+              const healMs = Date.now();
+              __fbLastWrite['users'] = healMs;
+              window.__fbSetDoc(window.__fbDocFor('users'), {
+                _updatedAt: healMs,
+                _writer: window.__fbDeviceId || 'heal',
+                items: STATE.users
+              }).catch(() => {});
+            }
+          }, 800);
+        }
         try { populateLoginUsers(); } catch(e){}
         try { if (STATE.activePage === 'admin' && typeof renderUserList === 'function') renderUserList(); } catch(e){}
       }
@@ -6597,7 +6650,7 @@ function fbApplyKey(key, items, removedIds) {
     }
     lsSet(LS_MAP[key], STATE[key] || ((key === 'staffSchedule' || key === 'servicePrices') ? {} : []));
     updateBadges();
-    if (STATE.user) softRefresh();
+    _fbDebouncedRefresh(); // debounce-тай: олон key зэрэг шинэчлэгдэх үед UI нэг удаа дахин зурна
     try { flashSync(); } catch(e){}
   } catch(e) {
     console.error('[FB] fbApplyKey алдаа (' + key + '):', e);
