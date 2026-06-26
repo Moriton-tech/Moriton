@@ -907,7 +907,7 @@ function loadAll() {
   STATE.removedServices = lsGet('mt_removed_services', []);
   if (!Array.isArray(STATE.removedServices)) STATE.removedServices = [];
   STATE.user = lsGet('mt_user', null);
-  STATE.syncURL = lsGet('mt_sync_url', SCRIPT_URL) || SCRIPT_URL;
+  STATE.syncURL = ''; // Apps Script sync устгагдсан — Firebase ашиглана
   if (STATE.doctors.length === 0) STATE.doctors = [...DEFAULT_DOCS];
   // Auto-upgrade old default doctors (Б.Батбаяр / Д.Сэлэнгэ / Г.Энхбат) to new real list
   const oldNames = ['Б.Батбаяр','Д.Сэлэнгэ','Г.Энхбат'];
@@ -6112,9 +6112,8 @@ function saveSyncURL() {
 
 function resetSyncURL() {
   if (!confirm('Default URL руу буцаах уу?')) return;
-  STATE.syncURL = SCRIPT_URL;
-  lsSet('mt_sync_url', SCRIPT_URL);
-  $('#a-url').value = SCRIPT_URL;
+  // resetSyncURL — Apps Script устгагдсан
+  toast('Apps Script sync идэвхгүй байна', 'err');
   toast('↻ Default URL руу буцлаа', 'ok');
 }
 
