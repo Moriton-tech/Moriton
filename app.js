@@ -3273,6 +3273,7 @@ function addInpLog() {
   i.log.push(log);
   i.ms = nowMs();
   saveAll();
+  fbPushNow(['inps']);
   trySync('inpatient', i);
   // Reset form fields
   $('#inp-temp').value = ''; $('#inp-pulse').value = ''; $('#inp-wt').value = '';
@@ -3290,9 +3291,8 @@ function deleteInpLog(idx) {
   i.log.splice(idx, 1);
   i.ms = nowMs();
   saveAll();
+  fbPushNow(['inps']);
   trySync('inpatient', i);
-  renderIDetail();
-  toast('🗑 Бичлэг устгагдлаа', 'ok');
 }
 
 // Prepayment functions
@@ -3322,6 +3322,7 @@ function saveInpPrepay() {
   // Bump the record's ms so applyArray treats it as fresher than Sheet
   i.ms = nowMs();
   saveAll();
+  fbPushNow(['inps']);
   trySync('inpatient', i);
   closeModal('inp-prepay-modal');
   renderIDetail();
@@ -3335,6 +3336,7 @@ function deleteInpPrepay(idx) {
   i.prepayments.splice(idx, 1);
   i.ms = nowMs();
   saveAll();
+  fbPushNow(['inps']);
   trySync('inpatient', i);
   renderIDetail();
 }
@@ -3381,6 +3383,8 @@ function cancelInpatient() {
   STATE.waiting.push(wait);
 
   saveAll();
+  // ⚡ Хүлээлэг рүү буцсан мэдээллийг нөгөө компьютерт ШУУД харуулна
+  fbPushNow(['inps', 'waiting', 'exams_h1', 'exams_h2', 'fins']);
   // Sync — write new waiting; remove cancelled records from Sheet
   trySync('waiting', wait);
   if (exam) trySync('remove_exam', { id: exam.id });
@@ -3878,8 +3882,8 @@ function finalizePayment() {
     else f.method = '';
   }
   saveAll();
+  fbPushNow(['fins']);
   trySync('finance', f);
-  // Процессын түүхэнд: хэн төлбөр авсныг тэмдэглэнэ
   const linkedExam = STATE.exams.find(x => String(x.id) === String(f.examId));
   const examNumForLog = (linkedExam && linkedExam.examNum) || f.examNum || '';
   const paidNow = getPaidAmount(f);
@@ -3917,8 +3921,8 @@ function saveEditFin() {
   f.ms = nowMs();
   const changes = diffStr(before, f, [{k:'amount',label:'Дүн'},{k:'method',label:'Төлбөрийн хэлбэр'}]);
   saveAll();
-  trySync('finance', f);
-  writeLog('Санхүү засварласан', f.id, (f.horse||f.examId||''), changes || 'Өөрчлөлтгүй хадгалсан');
+  fbPushNow(['fins']);
+  trySync('finance', f); f.id, (f.horse||f.examId||''), changes || 'Өөрчлөлтгүй хадгалсан');
   closeModal('edit-modal');
   toast('💾 Хадгалагдлаа', 'ok');
   renderFinance();
@@ -5626,8 +5630,8 @@ function saveEditHorse() {
     {k:'breed',label:'Үүлдэр'},{k:'age',label:'Нас'},{k:'province',label:'Аймаг'},{k:'soum',label:'Сум'}
   ]);
   saveAll();
-  trySync('horse', h);
-  writeLog('Морь засварласан', h.id, h.name + ' / ' + h.owner, changes || 'Өөрчлөлтгүй хадгалсан');
+  fbPushNow(['horses']);
+  trySync('horse', h); h.id, h.name + ' / ' + h.owner, changes || 'Өөрчлөлтгүй хадгалсан');
   closeModal('edit-horse-modal');
   toast('✅ Хадгалагдлаа', 'ok');
 }
@@ -5654,6 +5658,7 @@ function deleteHorse(id) {
   STATE.fins   = STATE.fins.filter(x => !linkedFins.some(f => f.id === x.id));
 
   saveAll();
+  fbPushNow(['horses', 'exams_h1', 'exams_h2', 'fins']);
   trySync('delete_horse', { id });
   writeLog('Морь устгасан', id, h.name + ' / ' + h.owner,
     `Холбоотойгоор устсан: ${linkedExams.length} үзлэг, ${linkedFins.length} санхүү`);
@@ -5791,8 +5796,8 @@ function saveEditExam() {
     });
   }
   saveAll();
-  trySync('exam', e);
-  writeLog('Үзлэг засварласан', e.id, e.horse + ' — ' + (e.docName||''), allChanges || 'Өөрчлөлтгүй хадгалсан');
+  fbPushNow(['exams_h1', 'exams_h2', 'fins']);
+  trySync('exam', e); e.id, e.horse + ' — ' + (e.docName||''), allChanges || 'Өөрчлөлтгүй хадгалсан');
   closeModal('edit-exam-modal');
   toast('✅ Хадгалагдлаа', 'ok');
   renderHistory();
@@ -5835,6 +5840,7 @@ function deleteExam(id) {
   STATE.fins = STATE.fins.filter(x => String(x.examId) !== String(id));
   STATE.inps = STATE.inps.filter(x => String(x.examId) !== String(id));
   saveAll();
+  fbPushNow(['exams_h1', 'exams_h2', 'fins', 'inps', 'deletedExams']);
   trySync('delete_exam', { id });
   writeLog('Үзлэг устгасан', id, (e.horse||'') + ' — ' + (e.docName||''),
     `Дүн: ${e.amount||0}; холбоотой ${linkedFins.length} санхүү, ${linkedInps.length} хэвтэн эмчлэх устсан`);
