@@ -3,9 +3,6 @@
 // ============================================================
 'use strict';
 
-// ----- ORACLE AUTONOMOUS DATABASE REST ENDPOINT -----
-const SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbyYK6rKUK5FX47Olv1GEq_Pal8BpioQjzljDarXZqeez2v7-A2x9eShLuRI83wH0rUU/exec';
-
 // ----- DATA: PROVINCES -----
 const PROVS = ['Улаанбаатар','Архангай','Баян-Өлгий','Баянхонгор','Булган','Говь-Алтай',
   'Говьсүмбэр','Дархан-Уул','Дорноговь','Дорнод','Дундговь','Завхан','Орхон',
@@ -890,7 +887,7 @@ function loadAll() {
   // Хэрэглэгч хоосон бол анхны seed жагсаалтаар дүүргэнэ
   if (!Array.isArray(STATE.users) || STATE.users.length === 0) {
     STATE.users = DEFAULT_USERS.map(u => ({ ...u, pages: [...u.pages] }));
-    lsSet('mt_users', STATE.users);
+    _scheduleLsSave('users');
   }
   STATE.staffSchedule = lsGet('mt_staff_schedule', {}); // { 'YYYY-MM': { docId: { 'YYYY-MM-DD': 'work'|'duty'|'off' } } }
   STATE.logs = lsGet('mt_logs', []);
@@ -924,7 +921,7 @@ function loadAll() {
 }
 function saveAll() {
   lsSet('mt_horses', STATE.horses);
-  lsSet('mt_waiting', STATE.waiting);
+  _scheduleLsSave('waiting');
   lsSet('mt_exams', STATE.exams);
   lsSet('mt_fins', STATE.fins);
   lsSet('mt_inps', STATE.inps);
@@ -946,7 +943,7 @@ function saveAll() {
   // Устгасан үзлэгийн архив (сүүлийн 500-аар хязгаарлана)
   if (Array.isArray(STATE.deletedExams)) {
     if (STATE.deletedExams.length > 500) STATE.deletedExams = STATE.deletedExams.slice(-500);
-    lsSet('mt_deleted_exams', STATE.deletedExams);
+    _scheduleLsSave('deletedExams');
   }
   // Үйлчилгээний үнэ
   if (STATE.servicePrices && typeof STATE.servicePrices === 'object') {
@@ -963,7 +960,23 @@ function saveAll() {
 function $(s) { return document.querySelector(s); }
 function $$(s) { return [...document.querySelectorAll(s)]; }
 function uid() { return Date.now().toString(36) + Math.random().toString(36).substr(2,5); }
-function todayStr() { return new Date().toISOString().slice(0,10); }
+function todayStr() {
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+// UTC биш local цагаар YYYY-MM-DD буцаана (UTC+8 Монгол цаг)
+function localDateStr(d) {
+  if (!d) return '';
+  const dt = (d instanceof Date) ? d : new Date(d);
+  if (isNaN(dt)) return '';
+  const y = dt.getFullYear();
+  const m = String(dt.getMonth() + 1).padStart(2, '0');
+  const day = String(dt.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
 function nowMs() { return Date.now(); }
 
 // Бичлэгийн БОДИТ хугацаа: эхлээд огноо (date)-г, байхгүй бол ms-г ашиглана.
@@ -1001,7 +1014,10 @@ function fmtDuration(min) {
 function fmtDate(d) {
   if (!d) return '';
   if (typeof d === 'string') d = new Date(d);
-  return d.toISOString().slice(0,10);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
 }
 function ago(ms) {
   const diff = (nowMs() - ms) / 1000;
@@ -1093,24 +1109,24 @@ function populateLoginUsers() {
 // Доорх жагсаалт нь ЗӨВХӨН анхны seed. Систем дотроос нэмж/засаж
 // болох ба бүх өөрчлөлт Firebase-ээр бүх төхөөрөмжид тархана.
 // ============================================================
+// ⚠️ DEFAULT_USERS — нууц үггүй хоосон жагсаалт.
+// Нууц үгийг Firestore-аас татна. Хэрэв users collection хоосон бол
+// Админ Firebase Console-оос хэрэглэгч нэмнэ.
+// Нууц үгийг ХЭЗЭЭ ЧИД frontend код, localStorage-д plain text хадгалах ХОРИОТОЙ.
 const DEFAULT_USERS = [
-  // Ерөнхий эмч
-  { name: 'Наранбаатар',     pw: 'Naran@2026',    role: 'Ерөнхий эмч',        pages: ['dashboard','register','waiting','exam','inpatient','finance','kpi','history','report','admin'] },
-  // Ахлах эмч нар
-  { name: 'Сайнбилэг',       pw: 'Sainbilg@77',   role: 'Ахлах эмч',          pages: ['dashboard','register','waiting','exam','inpatient','finance','kpi','history','report'] },
-  { name: 'Өсөхбаяр',        pw: 'Osokh@2026',    role: 'Ахлах эмч',          pages: ['dashboard','register','waiting','exam','inpatient','finance','kpi','history','report'] },
-  // Малын их эмч нар
-  { name: 'Даваахүү',        pw: 'Davaa@2026',    role: 'Малын их эмч',       pages: ['dashboard','register','waiting','exam','inpatient','history'] },
-  { name: 'Нямпүрэв',        pw: 'Nyamp@2026',    role: 'Малын их эмч',       pages: ['dashboard','register','waiting','exam','inpatient','history'] },
-  { name: 'Тансагтөгөлдөр',  pw: 'Tansag@2026',   role: 'Малын их эмч',       pages: ['dashboard','register','waiting','exam','inpatient','history'] },
-  { name: 'Т.Тайванбат',     pw: 'Taivan@2026',   role: 'Малын их эмч',       pages: ['dashboard','register','waiting','exam','inpatient','history'] },
-  { name: 'Гончигдорж',      pw: 'Gonchig@2026',  role: 'Малын их эмч',       pages: ['dashboard','register','waiting','exam','inpatient','history'] },
-  { name: 'Төгөлдөр-Эрдэнэ', pw: 'Togoldor@2026', role: 'Малын их эмч',       pages: ['dashboard','register','waiting','exam','inpatient','history'] },
-  // Бусад
-  { name: 'Дадлагажигч',     pw: 'Intern@1234',   role: 'Дадлагажигч',        pages: ['dashboard','waiting','exam','inpatient','history'] },
-  { name: 'Бүртгэл',         pw: 'Recept@55',     role: 'Бүртгэлийн ажилтан', pages: ['dashboard','register','waiting','history'] },
-  { name: 'Санхүү',          pw: 'Finance@99',    role: 'Санхүү',             pages: ['dashboard','finance','history','report'] },
-  { name: 'Админ',           pw: 'Admin@0001',    role: 'Админ',              pages: ['dashboard','register','waiting','exam','inpatient','finance','kpi','history','report','admin'] }
+  { name: 'Наранбаатар',     pw: '',  role: 'Ерөнхий эмч',        pages: ['dashboard','register','waiting','exam','inpatient','finance','kpi','history','report','admin'] },
+  { name: 'Сайнбилэг',       pw: '',  role: 'Ахлах эмч',          pages: ['dashboard','register','waiting','exam','inpatient','finance','kpi','history','report'] },
+  { name: 'Өсөхбаяр',        pw: '',  role: 'Ахлах эмч',          pages: ['dashboard','register','waiting','exam','inpatient','finance','kpi','history','report'] },
+  { name: 'Даваахүү',        pw: '',  role: 'Малын их эмч',       pages: ['dashboard','register','waiting','exam','inpatient','history'] },
+  { name: 'Нямпүрэв',        pw: '',  role: 'Малын их эмч',       pages: ['dashboard','register','waiting','exam','inpatient','history'] },
+  { name: 'Тансагтөгөлдөр',  pw: '',  role: 'Малын их эмч',       pages: ['dashboard','register','waiting','exam','inpatient','history'] },
+  { name: 'Т.Тайванбат',     pw: '',  role: 'Малын их эмч',       pages: ['dashboard','register','waiting','exam','inpatient','history'] },
+  { name: 'Гончигдорж',      pw: '',  role: 'Малын их эмч',       pages: ['dashboard','register','waiting','exam','inpatient','history'] },
+  { name: 'Төгөлдөр-Эрдэнэ', pw: '', role: 'Малын их эмч',       pages: ['dashboard','register','waiting','exam','inpatient','history'] },
+  { name: 'Дадлагажигч',     pw: '',  role: 'Дадлагажигч',        pages: ['dashboard','waiting','exam','inpatient','history'] },
+  { name: 'Бүртгэл',         pw: '',  role: 'Бүртгэлийн ажилтан', pages: ['dashboard','register','waiting','history'] },
+  { name: 'Санхүү',          pw: '',  role: 'Санхүү',             pages: ['dashboard','finance','history','report'] },
+  { name: 'Админ',           pw: '',  role: 'Админ',              pages: ['dashboard','register','waiting','exam','inpatient','finance','kpi','history','report','admin'] }
 ];
 
 // Боломжит бүх хуудас (эрх тохируулахад ашиглана)
@@ -1151,7 +1167,7 @@ function pagesForRole(role) {
 // LOG SYSTEM
 // ============================================================
 function writeLog(action, targetId, targetName, details, examId) {
-  if (!STATE.user) return;
+  if (!STATE.user) return null;
   const log = {
     id: 'log_' + Date.now() + '_' + Math.random().toString(36).slice(2,6),
     user_name: STATE.user.name || STATE.user.role,
@@ -1159,19 +1175,17 @@ function writeLog(action, targetId, targetName, details, examId) {
     action: action,
     target_id: targetId || '',
     target_name: targetName || '',
-    exam_id: examId || '',                   // тухайн үзлэгтэй холбох (процессын түүхэнд ашиглана)
-    details: details || '',                 // өмнөх→дараах утга, эсвэл cascade тайлбар
+    exam_id: examId || '',
+    details: details || '',
     log_date: todayStr(),
     log_ms: nowMs()
   };
-  // 1) Локал лог-д шууд нэмж, нэн даруй харагдана
   if (!Array.isArray(STATE.logs)) STATE.logs = [];
   STATE.logs.push(log);
-  saveAll();
-  // 2) Sheet рүү sync (Firebase холбосны дараа энд firebase бичилт нэмнэ)
-  trySync('log', log);
-  // 3) Лог viewer нээлттэй бол шинэчилнэ
+  _scheduleLsSave('logs');
+  fbSaveRecord('logs', log);
   if (STATE.activePage === 'admin') { try { renderLogViewer(); } catch(_){} }
+  return log;
 }
 
 // Жижиг туслах: засварласан талбаруудын өмнөх→дараах ялгааг текст болгоно
@@ -1241,25 +1255,34 @@ function doLogin() {
   if (!userName) { if (err) err.textContent = 'Нэвтрэх нэр сонгоно уу'; return; }
   if (!pw)       { if (err) err.textContent = 'Нууц үг оруулна уу'; return; }
   const u = getUsers()[userName];
-  if (!u || pw !== u.pw) {
-    if (err) err.textContent = 'Нууц үг буруу байна';
-    if (pwInput) { pwInput.value = ''; pwInput.focus(); }
+  if (!u) {
+    if (err) err.textContent = 'Нэвтрэх нэр буруу байна';
     return;
   }
-  STATE.user = { name: userName, role: u.role, loginAt: nowMs() };
-  lsSet('mt_user', STATE.user);
-  document.getElementById('login').classList.add('hide');
-  document.getElementById('app').style.display = 'flex';
-  $('#hdr-sub').textContent = userName + ' · ' + u.role;
-  if ($('#drawer-sub')) $('#drawer-sub').textContent = u.role;
-  if (err) err.textContent = '';
-  if (pwInput) pwInput.value = '';
-  initApp();
-  applyRolePermissions();
-  writeLog('Нэвтэрсэн', '', '');
-  if (!canAccess(STATE.activePage || 'dashboard')) {
-    nav('dashboard');
-  }
+  // Async hash шалгалт
+  _checkPassword(pw, u).then(ok => {
+    if (!ok) {
+      if (err) err.textContent = 'Нууц үг буруу байна';
+      if (pwInput) { pwInput.value = ''; pwInput.focus(); }
+      return;
+    }
+    STATE.user = { name: userName, role: u.role, loginAt: nowMs() };
+    lsSet('mt_user', STATE.user);
+    document.getElementById('login').classList.add('hide');
+    document.getElementById('app').style.display = 'flex';
+    $('#hdr-sub').textContent = userName + ' · ' + u.role;
+    if ($('#drawer-sub')) $('#drawer-sub').textContent = u.role;
+    if (err) err.textContent = '';
+    if (pwInput) pwInput.value = '';
+    initApp();
+    applyRolePermissions();
+    writeLog('Нэвтэрсэн', '', '');
+    if (!canAccess(STATE.activePage || 'dashboard')) {
+      nav('dashboard');
+    }
+  }).catch(() => {
+    if (err) err.textContent = 'Нэвтрэх алдаа гарлаа. Дахин оролдоно уу.';
+  });
 }
 
 function logout() {
@@ -1334,7 +1357,10 @@ function softRefresh() {
   if (main) main.scrollTop = scroll;
 }
 
+let __navSetupDone = false;
 function setupNav() {
+  if (__navSetupDone) return; // logout/login дахин дуудагдахад давхар listener нэмэхгүй
+  __navSetupDone = true;
   $$('.ni[data-page]').forEach(n => n.addEventListener('click', () => nav(n.dataset.page)));
   $$('.bn-i[data-page]').forEach(n => n.addEventListener('click', () => nav(n.dataset.page)));
   $('#bn-menu').addEventListener('click', () => {
@@ -1400,7 +1426,7 @@ function renderDashboard() {
   const dateOf = (v) => {
     if (!v) return '';
     if (typeof v === 'string') return v.slice(0,10);
-    try { return new Date(v).toISOString().slice(0,10); } catch(e) { return ''; }
+    try { return localDateStr(new Date(v)); } catch(e) { return ''; }
   };
   const todayKey = todayStr();
   const todayExams = STATE.exams.filter(x => dateOf(x.date) === todayKey);
@@ -1444,10 +1470,10 @@ function renderDashboard() {
   // Staff (HR) — render
   renderStaffSection();
 
-  // Recent exams
+  // Recent exams — сүүлийн 50 л харуулна (бүгдийг render хийхгүй)
   const rl = $('#d-r-list');
-  const recent = [...STATE.exams].sort((a,b) => recTime(b) - recTime(a));
-  $('#d-r-cnt').textContent = recent.length;
+  const recent = [...STATE.exams].sort((a,b) => recTime(b) - recTime(a)).slice(0, 50);
+  $('#d-r-cnt').textContent = STATE.exams.length; // нийт тоог харуулна
   if (recent.length === 0) {
     rl.innerHTML = '<div class="empty"><div class="empty-em">📝</div>Үзлэг хараахан алга</div>';
   } else {
@@ -1546,7 +1572,7 @@ function saveStaffData(data) {
   if (idx >= 0) STATE.staff[idx] = record;
   else STATE.staff.push(record);
   saveAll();
-  trySync('staff', record);
+  fbSaveRecord('staff', record);
 }
 
 function renderStaffSection() {
@@ -1723,7 +1749,7 @@ function updateSchedRowSum(td) {
 
 function saveSchedule() {
   saveAll();
-  trySync('staffSchedule', { month: SCHED_MONTH, data: getSchedMonth() });
+  fbWriteDoc('clinic_config', 'main', { staffSchedule: STATE.staffSchedule, _updatedAt: Date.now() });
   closeModal('schedule-modal');
   renderStaffSection();
   toast('💾 Сарын хуваарь хадгалагдлаа', 'ok');
@@ -1779,7 +1805,7 @@ function openExamDetail(eid) {
   const dateOf = (v) => {
     if (!v) return '—';
     if (typeof v === 'string') return v.slice(0,10);
-    try { return new Date(v).toISOString().slice(0,10); } catch(_) { return String(v); }
+    try { return localDateStr(new Date(v)); } catch(_) { return String(v); }
   };
 
   const _seeFin = canSeeFinance();
@@ -1871,32 +1897,37 @@ function openExamDetail(eid) {
         toast('Үзлэг бүрт дээд тал нь ' + IMG_MAX_PER_EXAM + ' зураг', 'err');
         return;
       }
+      if (!window.__fbReady || !window.__fbUploadImage) {
+        toast('⛔ Firebase холбогдоогүй байна. Зураг хадгалах боломжгүй.', 'err');
+        return;
+      }
       toast('Зураг боловсруулж байна...', 'ok');
+      let successCount = 0;
       for (const file of files) {
         try {
           const dataUrl = await resizeImageFile(file);
           const imgId = uid();
-          if (window.__fbReady && window.__fbUploadImage) {
-            try {
-              const path = 'exam-images/' + e.id + '/' + imgId + '.jpg';
-              const url = await window.__fbUploadImage(path, dataUrl);
-              e.images.push({ id: imgId, url: url, path: path, ms: nowMs() });
-            } catch (upErr) {
-              e.images.push({ id: imgId, data: dataUrl, ms: nowMs() });
-              toast('Storage руу илгээж чадсангүй, түр локалд хадгаллаа', 'err');
-            }
-          } else {
-            e.images.push({ id: imgId, data: dataUrl, ms: nowMs() });
+          const path = 'exam-images/' + e.id + '/' + imgId + '.jpg';
+          try {
+            const url = await window.__fbUploadImage(path, dataUrl);
+            // Зөвхөн URL болон path хадгална — base64 data хадгалахгүй
+            e.images.push({ id: imgId, url: url, path: path, ms: nowMs() });
+            successCount++;
+          } catch (upErr) {
+            // base64 fallback ХОРИОТОЙ — Firestore/localStorage-г дүүргэнэ
+            toast('⛔ Зураг Storage-д илгээж чадсангүй: ' + (upErr.message || 'алдаа') + '. Дахин оролдоно уу.', 'err');
           }
         } catch (err) {
-          toast(err.message || 'Зураг нэмж чадсангүй', 'err');
+          toast(err.message || 'Зураг боловсруулж чадсангүй', 'err');
         }
       }
-      _lightboxImgs = e.images;
-      saveAll();
-      trySync('exam', e);
-      renderExamDetailImages(e);
-      toast('✅ Зураг хадгалагдлаа', 'ok');
+      if (successCount > 0) {
+        _lightboxImgs = e.images;
+        saveAll();
+        fbSaveRecord('exams', e);
+        renderExamDetailImages(e);
+        toast('✅ ' + successCount + ' зураг хадгалагдлаа', 'ok');
+      }
     };
   }
   // Show print button if there's a linked invoice
@@ -2128,10 +2159,9 @@ function submitReg() {
   };
   STATE.waiting.push(wait);
   saveAll();
-  // ⚡ Хүлээлтийн цонхыг нөгөө компьютерт ШУУД харуулна (debounce алгасна)
-  fbPushNow(['horses', 'waiting']);
-  trySync('horse', horse);
-  trySync('waiting', wait);
+  // ⚡ Зөвхөн өөрчлөгдсөн record-уудыг бичнэ
+  fbSaveRecord('horses', horse);
+  fbSaveRecord('waiting', wait);
   writeLog('Морь бүртгэсэн', horse.id, horse.name + ' / ' + horse.owner, 'Дугаар: ' + examNum, examNum);
   toast('✅ Адуу амжилттай бүртгэгдлээ (' + examNum + ')', 'ok');
   clearReg();
@@ -2205,14 +2235,12 @@ function renderWDetail() {
 function removeWaiting() {
   if (!STATE.selectedW) return;
   if (!confirm('Энэ адууг хүлээлгээс хасах уу?')) return;
-  const w = STATE.waiting.find(x => String(x.id) === String(STATE.selectedW));
-  STATE.waiting = STATE.waiting.filter(x => x.id !== STATE.selectedW);
-  _markWaitingRemoved(STATE.selectedW);
-  trySync('remove_waiting', { id: STATE.selectedW });
+  const removedId = STATE.selectedW;
+  STATE.waiting = STATE.waiting.filter(x => x.id !== removedId);
+  _markWaitingRemoved(removedId);
   STATE.selectedW = null;
   saveAll();
-  // ⚡ Хасалтыг нөгөө компьютерт ШУУД харуулна
-  fbPushNow(['waiting']);
+  fbDeleteDoc('waiting', String(removedId));
   updateBadges();
   renderWaiting();
   toast('Хүлээлгээс хасагдлаа', 'ok');
@@ -2509,31 +2537,33 @@ async function addExamImages(fileList) {
     toast('Үзлэг бүрт дээд тал нь ' + IMG_MAX_PER_EXAM + ' зураг', 'err');
     return;
   }
+  if (!window.__fbReady || !window.__fbUploadImage) {
+    toast('⛔ Firebase холбогдоогүй. Зураг хадгалах боломжгүй.', 'err');
+    return;
+  }
   toast('Зураг боловсруулж байна...', 'ok');
+  let successCount = 0;
   for (const file of files) {
     try {
       const dataUrl = await resizeImageFile(file);
       const imgId = uid();
-      // Firebase Storage руу upload хийж, зөвхөн URL-ийг хадгална (Firestore 1MB-д багтахын тулд)
-      if (window.__fbReady && window.__fbUploadImage) {
-        try {
-          const path = 'exam-images/' + e.id + '/' + imgId + '.jpg';
-          const url = await window.__fbUploadImage(path, dataUrl);
-          e.images.push({ id: imgId, url: url, path: path, ms: nowMs() });
-        } catch (upErr) {
-          // Storage амжилтгүй бол base64-аар хадгалаад үлдээнэ (fallback)
-          e.images.push({ id: imgId, data: dataUrl, ms: nowMs() });
-          toast('Storage руу илгээж чадсангүй, түр локалд хадгаллаа', 'err');
-        }
-      } else {
-        e.images.push({ id: imgId, data: dataUrl, ms: nowMs() });
+      const path = 'exam-images/' + e.id + '/' + imgId + '.jpg';
+      try {
+        const url = await window.__fbUploadImage(path, dataUrl);
+        // Зөвхөн URL+path хадгална — base64 data огт хадгалахгүй
+        e.images.push({ id: imgId, url: url, path: path, ms: nowMs() });
+        successCount++;
+      } catch (upErr) {
+        toast('⛔ Зураг Storage-д илгээж чадсангүй: ' + (upErr.message || 'алдаа') + '. Дахин оролдоно уу.', 'err');
       }
     } catch (err) {
-      toast(err.message || 'Зураг нэмж чадсангүй', 'err');
+      toast(err.message || 'Зураг боловсруулж чадсангүй', 'err');
     }
   }
-  renderExamImages();
-  saveAll();
+  if (successCount > 0) {
+    renderExamImages();
+    saveAll();
+  }
 }
 
 // curExam-аас зураг устгах
@@ -2615,7 +2645,7 @@ function removeExamDetailImage(examId, imgId) {
   e.images = e.images.filter(im => im.id !== imgId);
   _lightboxImgs = e.images;
   saveAll();
-  trySync('exam', e);
+  fbSaveRecord('exams', e);
   renderExamDetailImages(e);
   toast('Зураг устгагдлаа', 'ok');
 }
@@ -2684,14 +2714,13 @@ function finishExam() {
   if (doc) {
     doc.exams = (doc.exams||0)+1;
     doc.rev = (doc.rev||0)+total;
-    trySync('doctor', doc);
+    fbSaveRecord('doctors', doc);
   }
   saveAll();
-  // ⚡ Санхүү болон хүлээлтийн өөрчлөлтийг нөгөө компьютерт ШУУД харуулна
-  fbPushNow(['exams_h1', 'exams_h2', 'fins', 'waiting', 'doctors']);
-  trySync('exam', exam);
-  trySync('finance', fin);
-  trySync('remove_waiting', { id: e.waitId });
+  // ⚡ Зөвхөн өөрчлөгдсөн record-уудыг бичнэ
+  fbSaveRecord('exams', exam);
+  fbSaveRecord('fins', fin);
+  fbDeleteDoc('waiting', String(e.waitId));
   writeLog('Үзлэг дуусгасан', exam.id, exam.horse + ' — ' + (exam.docName||''), exam.diagnosis ? ('Онош: ' + exam.diagnosis) : '', exam.examNum);
   STATE.curExam = null;
   STATE.selectedW = null;
@@ -2740,11 +2769,9 @@ function moveToInpatient() {
   STATE.waiting = STATE.waiting.filter(w => w.id !== e.waitId);
   _markWaitingRemoved(e.waitId);
   saveAll();
-  // ⚡ Хэвтэгч болон хүлээлтийн өөрчлөлтийг нөгөө компьютерт ШУУД харуулна
-  fbPushNow(['exams_h1', 'exams_h2', 'inps', 'waiting']);
-  trySync('exam', exam);
-  trySync('inpatient', inp);
-  trySync('remove_waiting', { id: e.waitId });
+  fbSaveRecord('exams', exam);
+  fbSaveRecord('inps', inp);
+  fbDeleteDoc('waiting', String(e.waitId));
   STATE.curExam = null;
   STATE.selectedW = null;
   updateBadges();
@@ -2876,7 +2903,7 @@ function updateDailyFee() {
   const v = parseFloat($('#inp-daily-fee').value);
   i.dailyFee = (isNaN(v) || v < 0) ? DEFAULT_DAILY_FEE : v;
   saveAll();
-  trySync('inpatient', i);
+  fbSaveRecord('inps', i);
   renderInpFinTab(i);
 }
 
@@ -3189,7 +3216,12 @@ function setupInpSvcSearch() {
   inp.oninput = () => {
     const q = inp.value.toLowerCase().trim();
     if (!q) { list.classList.remove('show'); list.innerHTML = ''; return; }
-    const matches = SERVICE_LIST.filter(s => s.name.toLowerCase().includes(q)).slice(0, 12);
+    // SERVICE_LIST биш getAllServices() — Админ тохируулсан үнэ, custom үйлчилгээ зөв орно
+    const allSvcs = getAllServices();
+    const matches = allSvcs
+      .filter(name => name.toLowerCase().includes(q))
+      .slice(0, 12)
+      .map(name => ({ name, price: getSvcPrice(name) }));
     if (matches.length === 0) { list.classList.remove('show'); list.innerHTML = ''; return; }
     list.innerHTML = matches.map(s => `<div class="dd-i" data-name="${escHTML(s.name)}" data-price="${s.price}">${escHTML(s.name)} <span class="muted">${fmt(s.price)}</span></div>`).join('');
     list.classList.add('show');
@@ -3200,7 +3232,7 @@ function setupInpSvcSearch() {
       inp.value = '';
       list.classList.remove('show');
       list.innerHTML = '';
-        inp.focus();
+      inp.focus();
       };
     });
   };
@@ -3273,8 +3305,7 @@ function addInpLog() {
   i.log.push(log);
   i.ms = nowMs();
   saveAll();
-  fbPushNow(['inps']);
-  trySync('inpatient', i);
+  fbSaveRecord('inps', i);
   // Reset form fields
   $('#inp-temp').value = ''; $('#inp-pulse').value = ''; $('#inp-wt').value = '';
   $('#inp-note').value = ''; $('#inp-diag').value = '';
@@ -3291,8 +3322,7 @@ function deleteInpLog(idx) {
   i.log.splice(idx, 1);
   i.ms = nowMs();
   saveAll();
-  fbPushNow(['inps']);
-  trySync('inpatient', i);
+  fbSaveRecord('inps', i);
 }
 
 // Prepayment functions
@@ -3322,8 +3352,7 @@ function saveInpPrepay() {
   // Bump the record's ms so applyArray treats it as fresher than Sheet
   i.ms = nowMs();
   saveAll();
-  fbPushNow(['inps']);
-  trySync('inpatient', i);
+  fbSaveRecord('inps', i);
   closeModal('inp-prepay-modal');
   renderIDetail();
   toast('💵 Урьдчилгаа хадгалагдлаа', 'ok');
@@ -3336,8 +3365,7 @@ function deleteInpPrepay(idx) {
   i.prepayments.splice(idx, 1);
   i.ms = nowMs();
   saveAll();
-  fbPushNow(['inps']);
-  trySync('inpatient', i);
+  fbSaveRecord('inps', i);
   renderIDetail();
 }
 
@@ -3383,13 +3411,11 @@ function cancelInpatient() {
   STATE.waiting.push(wait);
 
   saveAll();
-  // ⚡ Хүлээлэг рүү буцсан мэдээллийг нөгөө компьютерт ШУУД харуулна
-  fbPushNow(['inps', 'waiting', 'exams_h1', 'exams_h2', 'fins']);
-  // Sync — write new waiting; remove cancelled records from Sheet
-  trySync('waiting', wait);
-  if (exam) trySync('remove_exam', { id: exam.id });
-  removedFins.forEach(f => trySync('remove_finance', { id: f.id }));
-  trySync('remove_inpatient', { id: i.id });
+  // Зөвхөн өөрчлөгдсөн record-уудыг бичнэ/устгана
+  fbSaveRecord('waiting', wait);
+  if (exam) fbDeleteDoc('exams', String(exam.id));
+  removedFins.forEach(f => fbDeleteDoc('fins', String(f.id)));
+  fbDeleteDoc('inps', String(i.id));
 
   STATE.selectedI = null;
   updateBadges();
@@ -3515,9 +3541,8 @@ function confirmDischarge() {
 
   saveAll();
   // ⚡ Хэвтэгч гарсан мэдээллийг нөгөө компьютерт ШУУД харуулна
-  fbPushNow(['inps', 'fins']);
-  trySync('inpatient', i);
-  trySync('finance', fin);
+  fbSaveRecord('inps', i);
+  fbSaveRecord('fins', fin);
   closeModal('inp-discharge-modal');
   STATE.selectedI = null;
   STATE.dischargeTarget = null;
@@ -3871,9 +3896,10 @@ function finalizePayment() {
     // Use last non-зээл method as primary
     const last = [...f.payments].reverse().find(p => p.method !== 'зээл');
     f.method = last ? last.method : (f.payments[0] && f.payments[0].method) || '';
-    // Тухайн бичлэгийн огноог ашиглана (өнөөдрийн огноо биш)
-    f.paidDate = f.date || todayStr();
-    f.paidMs = f.date ? new Date(f.date + 'T12:00:00').getTime() : nowMs();
+    // Төлбөр авсан өдрийг өнөөдрийн огноо болгоно — үзлэгийн огноо биш
+    // Мөнгөн урсгалын тайланд зөв тусгагдахын тулд чухал
+    f.paidDate = todayStr();
+    f.paidMs = nowMs();
   } else {
     f.paid = false;
     // Combined method label if partial
@@ -3882,8 +3908,7 @@ function finalizePayment() {
     else f.method = '';
   }
   saveAll();
-  fbPushNow(['fins']);
-  trySync('finance', f);
+  fbSaveRecord('fins', f);
   const linkedExam = STATE.exams.find(x => String(x.id) === String(f.examId));
   const examNumForLog = (linkedExam && linkedExam.examNum) || f.examNum || '';
   const paidNow = getPaidAmount(f);
@@ -3921,8 +3946,7 @@ function saveEditFin() {
   f.ms = nowMs();
   const changes = diffStr(before, f, [{k:'amount',label:'Дүн'},{k:'method',label:'Төлбөрийн хэлбэр'}]);
   saveAll();
-  fbPushNow(['fins']);
-  trySync('finance', f);
+  fbSaveRecord('fins', f);
   writeLog('Санхүү засварласан', f.id, (f.horse||f.examId||''), changes || 'Өөрчлөлтгүй хадгалсан');
   closeModal('edit-modal');
   toast('💾 Хадгалагдлаа', 'ok');
@@ -4338,7 +4362,7 @@ function printInpatientCard() {
   const logs = Array.isArray(i.log) ? [...i.log].sort((a,b) => (a.date||'') > (b.date||'') ? 1 : -1) : [];
   const fee  = getDailyFee(i);
   const days = inpatientDays(i.admittedMs);
-  const admDate   = i.admittedDate  || (i.admittedMs   ? new Date(i.admittedMs).toISOString().slice(0,10)  : '—');
+  const admDate   = i.admittedDate  || (i.admittedMs   ? localDateStr(new Date(i.admittedMs))  : '—');
   const disDate   = i.dischargedDate|| (i.discharged    ? '—' : 'Хэвтэж байна');
   const treatTotal = logs.reduce((a,l) => a + (parseFloat(l.amount)||0), 0);
   const accomTotal = fee * days;
@@ -4421,7 +4445,7 @@ function renderKPI() {
       // Default: this month if not set
       if (!$('#k-from').value) {
         const d = new Date(); d.setDate(1);
-        $('#k-from').value = d.toISOString().slice(0,10);
+        $('#k-from').value = localDateStr(d);
       }
       if (!$('#k-to').value) $('#k-to').value = todayStr();
     } else {
@@ -4724,7 +4748,7 @@ function initReport() {
     const day = now.getDay() || 7;
     const monday = new Date(now);
     monday.setDate(now.getDate() - (day - 1));
-    $('#rp-week').value = monday.toISOString().slice(0,10);
+    $('#rp-week').value = localDateStr(monday);
   }
   if (!$('#rp-month').value) {
     const now = new Date();
@@ -4733,7 +4757,7 @@ function initReport() {
   if (!$('#rp-year').value) $('#rp-year').value = new Date().getFullYear();
   if (!$('#rp-from').value) {
     const d = new Date(); d.setDate(1);
-    $('#rp-from').value = d.toISOString().slice(0,10);
+    $('#rp-from').value = localDateStr(d);
   }
   if (!$('#rp-to').value) $('#rp-to').value = todayStr();
   updateReportPickers();
@@ -4792,8 +4816,8 @@ function genReport() {
   const norm = (v) => {
     if (!v) return '';
     if (typeof v === 'string') return v.slice(0, 10);
-    if (v instanceof Date) return v.toISOString().slice(0, 10);
-    try { return new Date(v).toISOString().slice(0, 10); } catch(e) { return ''; }
+    if (v instanceof Date) return localDateStr(v);
+    try { return localDateStr(new Date(v)); } catch(e) { return ''; }
   };
   const inRange = (v) => {
     const n = norm(v);
@@ -5008,9 +5032,15 @@ function genReport() {
 // ============================================================
 // HISTORY
 // ============================================================
+// Pagination — нэг хуудсанд 50 мөр харуулна
+let __histPage = 0;
+const HIST_PAGE_SIZE = 50;
+
+// Filter өөрчлөгдөхөд pagination-г эхнээс эхлэх
 function clearHistFilter() {
   $('#h-q').value = ''; $('#h-from').value = ''; $('#h-to').value = '';
   if ($('#h-sort')) $('#h-sort').value = 'time_desc';
+  __histPage = 0;
   renderHistory();
 }
 
@@ -5048,38 +5078,63 @@ function renderHistory() {
   else if (sortMode === 'num_asc')   list.sort((a,b) => byNum(a,b,'asc'));
   else                               list.sort((a,b) => recTime(b) - recTime(a)); // time_desc (анхдагч)
 
-  $('#h-cnt').textContent = list.length;
+  // Pagination — 50 мөр харуулна, хуудас солих товч гарна
+  const totalCount = list.length;
+  const totalPages = Math.max(1, Math.ceil(totalCount / HIST_PAGE_SIZE));
+  if (__histPage >= totalPages) __histPage = 0;
+  const pageStart = __histPage * HIST_PAGE_SIZE;
+  const pageList = list.slice(pageStart, pageStart + HIST_PAGE_SIZE);
+
+  $('#h-cnt').textContent = totalCount;
   const tb = $('#h-tb');
   const seeFin = canSeeFinance();
-  // Дүн / Статус баганын толгойг эрхээр нь нуух
   document.querySelectorAll('.h-amt-col').forEach(th => { th.style.display = seeFin ? '' : 'none'; });
-  if (list.length === 0) {
+  if (totalCount === 0) {
     tb.innerHTML = '<tr><td colspan="'+(seeFin?9:7)+'" style="text-align:center;padding:20px;color:var(--muted)">Бүртгэл алга</td></tr>';
-    return;
+  } else {
+    tb.innerHTML = pageList.map((e, i) => {
+      const fin = STATE.fins.find(f => String(f.examId) === String(e.id));
+      const status = fin ? (fin.paid?'Төлсөн':'Хүлээгдэж буй') : '—';
+      const cls = fin && fin.paid ? 'b-g' : 'b-o';
+      const canEdit = STATE.user && (STATE.user.role === 'Ерөнхий эмч' || STATE.user.role === 'Ахлах эмч' || STATE.user.role === 'Админ');
+      const rowNum = pageStart + i + 1;
+      return `
+        <tr data-eid="${escHTML(e.id)}" style="cursor:pointer">
+          <td>${rowNum}</td>
+          <td>${e.examNum?'<span class="badge b-o" style="font-weight:800">'+escHTML(e.examNum)+'</span>':'—'}</td>
+          <td>${escHTML(e.date)}</td>
+          <td class="h-diag" title="${escHTML(e.horse||'')}">${escHTML(e.horse)}</td>
+          <td>${escHTML(e.owner)}</td>
+          <td>${escHTML(e.phone)}</td>
+          <td class="h-diag" title="${escHTML(e.diagnosis||'')}">${escHTML(e.diagnosis)}</td>
+          ${seeFin ? '<td class="bold">'+fmt(e.amount)+'</td>' : ''}
+          ${seeFin ? '<td><span class="badge '+cls+'">'+status+'</span></td>' : ''}
+          ${canEdit ? `<td><button class="btn btn-xs btn-sm" onclick="event.stopPropagation();openEditExam('${e.id}')">✏️</button></td>` : '<td></td>'}
+        </tr>
+      `;
+    }).join('');
+    tb.querySelectorAll('tr[data-eid]').forEach(row => {
+      row.addEventListener('click', () => openExamDetail(row.dataset.eid));
+    });
   }
-  tb.innerHTML = list.map((e,i) => {
-    const fin = STATE.fins.find(f => String(f.examId) === String(e.id));
-    const status = fin ? (fin.paid?'Төлсөн':'Хүлээгдэж буй') : '—';
-    const cls = fin && fin.paid ? 'b-g' : 'b-o';
-    const canEdit = STATE.user && (STATE.user.role === 'Ерөнхий эмч' || STATE.user.role === 'Ахлах эмч' || STATE.user.role === 'Админ');
-    return `
-      <tr data-eid="${escHTML(e.id)}" style="cursor:pointer">
-        <td>${i+1}</td>
-        <td>${e.examNum?'<span class="badge b-o" style="font-weight:800">'+escHTML(e.examNum)+'</span>':'—'}</td>
-        <td>${escHTML(e.date)}</td>
-        <td class="h-diag" title="${escHTML(e.horse||'')}">${escHTML(e.horse)}</td>
-        <td>${escHTML(e.owner)}</td>
-        <td>${escHTML(e.phone)}</td>
-        <td class="h-diag" title="${escHTML(e.diagnosis||'')}">${escHTML(e.diagnosis)}</td>
-        ${seeFin ? '<td class="bold">'+fmt(e.amount)+'</td>' : ''}
-        ${seeFin ? '<td><span class="badge '+cls+'">'+status+'</span></td>' : ''}
-        ${canEdit ? `<td><button class="btn btn-xs btn-sm" onclick="event.stopPropagation();openEditExam('${e.id}')">✏️</button></td>` : '<td></td>'}
-      </tr>
+  // Pagination controls
+  let pagEl = document.getElementById('h-pagination');
+  if (!pagEl) {
+    pagEl = document.createElement('div');
+    pagEl.id = 'h-pagination';
+    pagEl.style.cssText = 'display:flex;align-items:center;gap:8px;padding:8px 0;justify-content:center;flex-wrap:wrap';
+    const tbParent = tb.parentElement;
+    if (tbParent && tbParent.parentElement) tbParent.parentElement.appendChild(pagEl);
+  }
+  if (totalPages <= 1) {
+    pagEl.innerHTML = '';
+  } else {
+    pagEl.innerHTML = `
+      <button class="btn btn-sm" onclick="__histPage=Math.max(0,__histPage-1);renderHistory()" ${__histPage===0?'disabled':''}>← Өмнөх</button>
+      <span style="font-size:13px;color:var(--muted)">${__histPage+1} / ${totalPages} · нийт ${totalCount}</span>
+      <button class="btn btn-sm" onclick="__histPage=Math.min(${totalPages-1},__histPage+1);renderHistory()" ${__histPage>=totalPages-1?'disabled':''}>Дараах →</button>
     `;
-  }).join('');
-  tb.querySelectorAll('tr[data-eid]').forEach(row => {
-    row.addEventListener('click', () => openExamDetail(row.dataset.eid));
-  });
+  }
   updateHistArrows(sortMode);
 }
 
@@ -5098,10 +5153,11 @@ function histSortBy(col) {
   let next;
   if (col === 'num') {
     next = (cur === 'num_desc') ? 'num_asc' : 'num_desc';
-  } else { // date
+  } else {
     next = (cur === 'date_desc') ? 'date_asc' : 'date_desc';
   }
   sel.value = next;
+  __histPage = 0;
   renderHistory();
 }
 
@@ -5426,7 +5482,8 @@ function openUserModal(idx) {
     const u = STATE.users[_editUserIdx];
     document.querySelector('#user-modal .mod-title').textContent = '🔐 Хэрэглэгч засах';
     nameInp.value = u.name || '';
-    pwInp.value = u.pw || '';
+    pwInp.value = ''; // Нууц үгийг хэзээ ч харуулахгүй — хоосон орхивол өөрчлөхгүй
+    pwInp.placeholder = 'Хоосон орхивол нууц үг өөрчлөгдөхгүй';
     if (roleSel) roleSel.value = u.role || ALL_ROLES[0];
     renderUserPages(u.pages || pagesForRole(u.role));
     if (delBtn) delBtn.style.display = '';
@@ -5482,6 +5539,23 @@ function collectUserPages() {
   return out;
 }
 
+// Нууц үгийг SHA-256 hash болгоно (Web Crypto API — browser native)
+async function _hashPassword(pw) {
+  const enc = new TextEncoder();
+  const buf = await crypto.subtle.digest('SHA-256', enc.encode(pw + 'moriton_salt_2026'));
+  return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2,'0')).join('');
+}
+// Login шалгалтыг hash-тай харьцуулах
+async function _checkPassword(inputPw, user) {
+  if (user.pwHash) {
+    const h = await _hashPassword(inputPw);
+    return h === user.pwHash;
+  }
+  // Шилжилтийн үе: pw (plain) талбар байвал — hash руу шилжих хүртэл
+  if (user.pw) return inputPw === user.pw;
+  return false;
+}
+
 function saveUser() {
   if (!canManageUsers()) { toast('Эрх алга', 'err'); return; }
   const name = (document.getElementById('u-name').value || '').trim();
@@ -5490,43 +5564,50 @@ function saveUser() {
   const pages = collectUserPages();
 
   if (!name) { toast('Нэвтрэх нэр оруулна уу', 'err'); return; }
-  if (!pw)   { toast('Нууц үг оруулна уу', 'err'); return; }
+  if (!pw && _editUserIdx === null) { toast('Нууц үг оруулна уу', 'err'); return; }
   if (!pages.length) { toast('Дор хаяж нэг хуудсын эрх сонгоно уу', 'err'); return; }
 
   if (!Array.isArray(STATE.users)) STATE.users = [];
 
-  // Нэр давхцал шалгах (засаж буй хэрэглэгчээс бусдад)
   const dupIdx = STATE.users.findIndex((u, i) => u.name === name && i !== _editUserIdx);
   if (dupIdx !== -1) { toast('Энэ нэртэй хэрэглэгч аль хэдийн байна', 'err'); return; }
 
   const ms = nowMs();
-  if (_editUserIdx !== null && STATE.users[_editUserIdx]) {
-    STATE.users[_editUserIdx] = { name, pw, role, pages, ms };
-    writeLog('Хэрэглэгч заслаа', name, role);
-  } else {
-    STATE.users.push({ name, pw, role, pages, ms });
-    writeLog('Хэрэглэгч нэмлээ', name, role);
-  }
 
-  lsSet('mt_users', STATE.users);
-  // Firebase руу шууд бичнэ. _writer талбарыг нэмснээр echo guard зөв ажиллана:
-  // өөрийн бичсэн snapshot буцаж ирэхэд давтан apply хийхгүй.
-  try {
-    if (window.__fbReady && window.__fbDocFor) {
-      __fbLastWrite['users'] = ms;
-      window.__fbSetDoc(window.__fbDocFor('users'), {
-        _updatedAt: ms,
-        _writer: window.__fbDeviceId || 'unknown', // ⬅ echo guard-д шаардлагатай
-        items: STATE.users
-      })
-        .then(() => { try { flashSync(); } catch(e){} })
-        .catch(err => toast('Firebase алдаа: ' + err.message, 'err'));
+  // Нууц үгийг hash хийж хадгална — plain text Firestore/localStorage-д орохгүй
+  const doSave = async () => {
+    let pwHash;
+    if (pw) {
+      pwHash = await _hashPassword(pw);
+    } else if (_editUserIdx !== null && STATE.users[_editUserIdx]) {
+      // Нууц үг оруулаагүй бол хуучин hash хэвээр үлдэнэ
+      pwHash = STATE.users[_editUserIdx].pwHash || '';
+    } else {
+      pwHash = '';
     }
-  } catch(e) { console.error('user push fail', e); }
-  populateLoginUsers();
-  renderUserList();
-  closeModal('user-modal');
-  toast('✓ Хэрэглэгч хадгалагдлаа. Бүх төхөөрөмжид шинэчлэгдэнэ.', 'ok');
+
+    const userObj = { name, pwHash, role, pages, ms };
+    if (_editUserIdx !== null && STATE.users[_editUserIdx]) {
+      STATE.users[_editUserIdx] = userObj;
+      writeLog('Хэрэглэгч заслаа', name, role);
+    } else {
+      STATE.users.push(userObj);
+      writeLog('Хэрэглэгч нэмлээ', name, role);
+    }
+
+    _scheduleLsSave('users');
+    // Firestore-д pwHash хадгална — pw (plain text) хэзээ ч явахгүй
+    const userRec = { name, pwHash, role, pages, ms, _updatedAt: ms, _writer: window.__fbDeviceId || 'unknown' };
+    fbWriteDoc('users', name, userRec)
+      .then(() => { try { flashSync(); } catch(e){} })
+      .catch(err => toast('Firebase алдаа: ' + err.message, 'err'));
+    populateLoginUsers();
+    renderUserList();
+    closeModal('user-modal');
+    toast('✓ Хэрэглэгч хадгалагдлаа.', 'ok');
+  };
+
+  doSave().catch(err => toast('Алдаа: ' + err.message, 'err'));
 }
 
 function deleteUser() {
@@ -5548,19 +5629,8 @@ function deleteUser() {
   if (!confirm('"' + u.name + '" хэрэглэгчийг устгах уу? Тэр цаашид нэвтэрч чадахгүй.')) return;
 
   STATE.users.splice(_editUserIdx, 1);
-  lsSet('mt_users', STATE.users);
-  try {
-    if (window.__fbReady && window.__fbDocFor) {
-      const ms = nowMs();
-      __fbLastWrite['users'] = ms;
-      window.__fbSetDoc(window.__fbDocFor('users'), {
-        _updatedAt: ms,
-        _writer: window.__fbDeviceId || 'unknown', // ⬅ echo guard-д шаардлагатай
-        items: STATE.users
-      })
-        .catch(err => toast('Firebase алдаа: ' + err.message, 'err'));
-    }
-  } catch(e) { console.error('user push fail', e); }
+  _scheduleLsSave('users');
+  fbDeleteDoc('users', u.name);
   writeLog('Хэрэглэгч устгалаа', u.name, u.role);
   populateLoginUsers();
   renderUserList();
@@ -5571,15 +5641,23 @@ function deleteUser() {
 // ============================================================
 // LOG VIEWER
 // ============================================================
+const LOG_DISPLAY_LIMIT = 200; // Нийт хадгалах, 200 харуулах
+
 function renderLogViewer() {
   const el = document.getElementById('a-log-list');
   if (!el) return;
-  const logs = (STATE.logs || []).slice().sort((a,b) => (b.log_ms||0) - (a.log_ms||0));
+  const allLogs = (STATE.logs || []).slice().sort((a,b) => (b.log_ms||0) - (a.log_ms||0));
+  const logs = allLogs.slice(0, LOG_DISPLAY_LIMIT);
+  // Лог тооны мэдээлэл харуулах
+  const logCountEl = document.getElementById('a-log-count');
+  if (logCountEl) logCountEl.textContent = allLogs.length > LOG_DISPLAY_LIMIT
+    ? `Сүүлийн ${LOG_DISPLAY_LIMIT} лог (нийт ${allLogs.length})`
+    : `Нийт ${allLogs.length} лог`;
   if (!logs.length) {
     el.innerHTML = '<div class="empty"><div class="empty-em">📋</div>Лог байхгүй</div>';
     return;
   }
-  el.innerHTML = logs.slice(0,100).map(l => `
+  el.innerHTML = logs.map(l => `
     <div class="li" style="cursor:default">
       <div class="li-av" style="font-size:18px">📝</div>
       <div class="li-info">
@@ -5631,8 +5709,7 @@ function saveEditHorse() {
     {k:'breed',label:'Үүлдэр'},{k:'age',label:'Нас'},{k:'province',label:'Аймаг'},{k:'soum',label:'Сум'}
   ]);
   saveAll();
-  fbPushNow(['horses']);
-  trySync('horse', h);
+  fbSaveRecord('horses', h);
   writeLog('Морь засварласан', h.id, h.name + ' / ' + h.owner, changes || 'Өөрчлөлтгүй хадгалсан');
   closeModal('edit-horse-modal');
   toast('✅ Хадгалагдлаа', 'ok');
@@ -5649,19 +5726,18 @@ function deleteHorse(id) {
   const linkedExamIds = new Set(linkedExams.map(e => String(e.id)));
   const linkedFins = STATE.fins.filter(f => linkedExamIds.has(String(f.examId)));
 
-  // deletedIds-д бүгдийг тэмдэглэж, sync remove дуудна
+  // deletedIds-д бүгдийг тэмдэглэж, Firestore-оос устгана
   STATE.deletedIds.add(String(id));
-  linkedExams.forEach(e => { STATE.deletedIds.add(String(e.id)); trySync('delete_exam', { id: e.id }); });
-  linkedFins.forEach(f => { STATE.deletedIds.add(String(f.id)); trySync('delete_fin', { id: f.id }); });
+  linkedExams.forEach(e => { STATE.deletedIds.add(String(e.id)); fbDeleteDoc('exams', String(e.id)); });
+  linkedFins.forEach(f => { STATE.deletedIds.add(String(f.id)); fbDeleteDoc('fins', String(f.id)); });
 
-  // Локал массивуудаас хасна → KPI, Санхүү, Түүх бүгд дахин тооцогдоно
+  // Локал массивуудаас хасна
   STATE.horses = STATE.horses.filter(x => x.id !== id);
   STATE.exams  = STATE.exams.filter(x => !linkedExamIds.has(String(x.id)));
   STATE.fins   = STATE.fins.filter(x => !linkedFins.some(f => f.id === x.id));
 
   saveAll();
-  fbPushNow(['horses', 'exams_h1', 'exams_h2', 'fins']);
-  trySync('delete_horse', { id });
+  fbDeleteDoc('horses', String(id));
   writeLog('Морь устгасан', id, h.name + ' / ' + h.owner,
     `Холбоотойгоор устсан: ${linkedExams.length} үзлэг, ${linkedFins.length} санхүү`);
   closeModal('edit-horse-modal');
@@ -5794,12 +5870,13 @@ function saveEditExam() {
       f.amount = e.amount;
       f.services = afterSvcStr;
       f.ms = nowMs();
-      trySync('finance', f);
+      fbSaveRecord('fins', f);
     });
   }
   saveAll();
-  fbPushNow(['exams_h1', 'exams_h2', 'fins']);
-  trySync('exam', e);
+  fbSaveRecord('exams', e);
+  // Засварлагдсан санхүүгийн бичлэгүүдийг бичнэ
+  STATE.fins.filter(f => String(f.examId) === String(e.id)).forEach(f => fbSaveRecord('fins', f));
   writeLog('Үзлэг засварласан', e.id, e.horse + ' — ' + (e.docName||''), allChanges || 'Өөрчлөлтгүй хадгалсан');
   closeModal('edit-exam-modal');
   toast('✅ Хадгалагдлаа', 'ok');
@@ -5818,33 +5895,31 @@ function deleteExam(id) {
   const linkedFins = STATE.fins.filter(f => String(f.examId) === String(id));
   linkedFins.forEach(f => {
     STATE.deletedIds.add(String(f.id));
-    trySync('delete_fin', { id: f.id });
+    fbDeleteDoc('fins', String(f.id));
   });
-  // Холбоотой хэвтэн эмчлэх бичлэгүүдийг мөн арчина (cascade)
   const linkedInps = STATE.inps.filter(i => String(i.examId) === String(id));
   linkedInps.forEach(i => {
     STATE.deletedIds.add(String(i.id));
-    trySync('delete_inp', { id: i.id });
+    fbDeleteDoc('inps', String(i.id));
   });
-  // Архивлана — устгахаасаа өмнө бүтэн хувийг хадгална (зөвхөн Админ харна)
-  // Зураг хасна (Firestore 1MB лимит + localStorage хэмнэнэ)
   const examCopy = JSON.parse(JSON.stringify(e));
   if (Array.isArray(examCopy.images)) examCopy.imageCount = examCopy.images.length;
   delete examCopy.images;
-  STATE.deletedExams.push({
+  const archRec = {
     _archId: String(e.id),
     exam: examCopy,
     fins: JSON.parse(JSON.stringify(linkedFins)),
     inps: JSON.parse(JSON.stringify(linkedInps)),
     deletedAt: nowMs(),
     deletedBy: (STATE.user && (STATE.user.name || STATE.user.role)) || ''
-  });
+  };
+  STATE.deletedExams.push(archRec);
   STATE.exams = STATE.exams.filter(x => x.id !== id);
   STATE.fins = STATE.fins.filter(x => String(x.examId) !== String(id));
   STATE.inps = STATE.inps.filter(x => String(x.examId) !== String(id));
   saveAll();
-  fbPushNow(['exams_h1', 'exams_h2', 'fins', 'inps', 'deletedExams']);
-  trySync('delete_exam', { id });
+  fbDeleteDoc('exams', String(id));
+  fbSaveRecord('deletedExams', Object.assign({ id: archRec._archId }, archRec));
   writeLog('Үзлэг устгасан', id, (e.horse||'') + ' — ' + (e.docName||''),
     `Дүн: ${e.amount||0}; холбоотой ${linkedFins.length} санхүү, ${linkedInps.length} хэвтэн эмчлэх устсан`);
   closeModal('edit-exam-modal');
@@ -5862,14 +5937,7 @@ function addDoc() {
   const doc = { id: uid(), name, role, exams: 0, rev: 0, ms: nowMs() };
   STATE.doctors.push(doc);
   lsSet('mt_doctors', STATE.doctors);
-  // Firebase руу шууд бичнэ (_writer нэмсэн)
-  if (window.__fbReady && window.__fbDocFor && !__fbApplyingRemote) {
-    const payload = { _updatedAt: doc.ms, _writer: window.__fbDeviceId || 'unknown', items: STATE.doctors };
-    window.__fbSetDoc(window.__fbDocFor('doctors'), payload)
-      .then(() => { __fbLastWrite['doctors'] = doc.ms; try { flashSync(); } catch(e){} })
-      .catch(err => toast('Firebase алдаа: ' + err.message, 'err'));
-  }
-  trySync('doctor', doc);
+  fbSaveRecord('doctors', doc);
   $('#a-doc-name').value = '';
   toast('✅ Эмч нэмэгдлээ', 'ok');
   renderAdmin();
@@ -5881,6 +5949,7 @@ function delDoc(id) {
   if (!confirm('Энэ эмчийг устгах уу?')) return;
   STATE.doctors = STATE.doctors.filter(d => d.id !== id);
   saveAll();
+  fbDeleteDoc('doctors', String(id));
   writeLog('Эмч устгасан', id, d ? d.name : '', '');
   renderAdmin();
   toast('Устгагдлаа', 'ok');
@@ -6059,87 +6128,21 @@ function flashSync() {
   lastSyncOk = nowMs();
 }
 
-let syncPending = 0;  // Count of in-flight POST requests — don't poll while > 0
 
-function trySync(sheet, data) {
-  return;  // ⛔ Apps Script/Sheets sync УНТРААСАН — зөвхөн Firebase ашиглана
-  if (!STATE.syncURL) return;
-  // Зураг (base64) нь Google Sheets-ийн нүдний хязгаараас (50k тэмдэгт) том тул
-  // Sheets руу илгээхгүй. Зураг localStorage-д (дараа нь Firestore-д) хадгалагдана.
-  let payload = data;
-  if (data && typeof data === 'object' && Array.isArray(data.images)) {
-    payload = Object.assign({}, data);
-    delete payload.images;
-  }
-  syncPending++;
-  fetch(STATE.syncURL, {
-    method: 'POST',
-    mode: 'no-cors',
-    body: JSON.stringify({ sheet, data: payload })
-  }).then(() => { syncPending = Math.max(0, syncPending - 1); flashSync(); })
-    .catch(() => { syncPending = Math.max(0, syncPending - 1); });
-}
+
+// trySync — Apps Script sync устгагдсан, Firebase ашиглана
+function trySync(sheet, data) { /* no-op: Firebase fbSaveRecord ашиглана */ }
 
 function manualSync() {
-  // ⛔ Apps Script-ийн оронд Firebase-аас шууд татна
-  if (!window.__fbReady || !window.__fbDocFor) {
+  if (!window.__fbReady) {
     toast('Firebase холбогдоогүй байна', 'err');
     return;
   }
-  toast('☁️ Татаж байна...', 'ok');
-  // onSnapshot аль хэдийн real-time сонсож байгаа тул flashSync-аар л баталгаажуулна
   try { flashSync(); } catch(e){}
   toast('✅ Firebase-тэй синк хийгдсэн', 'ok');
-  return;
-
-  // ↓↓↓ ХУУЧИН Apps Script код (ажиллахгүй) ↓↓↓
-  if (!STATE.syncURL) {
-    toast('Sync URL тохируулаагүй байна', 'err');
-    nav('admin');
-    return;
-  }
-  window[cb] = function(json) {
-    try {
-      if (json && json.ok && json.data) {
-        const d = json.data;
-        const stats = applySheetData(d);
-        saveAll();
-        updateBadges();
-        // re-render current page
-        nav(STATE.activePage);
-        flashSync();
-        const total = stats.added + stats.updated;
-        const removedMsg = stats.removed > 0 ? ' (' + stats.removed + ' устгасан)' : '';
-        toast('✅ Татагдлаа: ' + total + ' бичлэг' + removedMsg, 'ok');
-      } else {
-        toast('Алдаа: ' + (json && json.error ? json.error : 'тодорхойгүй'), 'err');
-      }
-    } catch(e) {
-      toast('Алдаа: ' + e.message, 'err');
-    }
-    delete window[cb];
-  };
-  const s = document.createElement('script');
-  s.src = STATE.syncURL + (STATE.syncURL.includes('?') ? '&' : '?') + 'action=getAll&callback=' + cb;
-  s.onerror = ()=> { toast('Холбогдож чадсангүй. URL шалгана уу', 'err'); delete window[cb]; };
-  document.body.appendChild(s);
-  setTimeout(()=> { try { document.body.removeChild(s); } catch(e){} }, 15000);
 }
 
-/**
- * Apply data from Sheet — Sheet is the source of truth.
- * - Items in Sheet: added or updated locally
- * - Items NOT in Sheet but in local: REMOVED (because they were deleted in Sheet)
- *   EXCEPT: items added/updated locally within last 30s — these are "in flight"
- *   to Sheet and protected from deletion.
- * Returns { added, updated, removed } counts.
- */
-// Format a Date object as local YYYY-MM-DD (NOT UTC)
-function localDateStr(d) {
-  return d.getFullYear() + '-' +
-    String(d.getMonth() + 1).padStart(2, '0') + '-' +
-    String(d.getDate()).padStart(2, '0');
-}
+// Format a Date object as local YYYY-MM-DD (NOT UTC) — backward compat alias
 
 function normalizeDateField(v) {
   if (!v) return '';
@@ -6320,28 +6323,9 @@ function applySheetData(d) {
   return stats;
 }
 
-let pollInterval = 5000;
-let pollTimer;
-function startPolling() {
-  return;  // ⛔ Apps Script polling УНТРААСАН — Firebase onSnapshot real-time синк ашиглана
-  clearTimeout(pollTimer);
-  pollTimer = setTimeout(() => {
-    // Sync-in-flight байвал эсвэл tab нуугдсан бол poll хийхгүй
-    if (!document.hidden && STATE.syncURL && syncPending === 0) {
-      silentSync();
-    }
-    if (document.hidden) {
-      pollInterval = 60000;   // tab нуугдсан үед 1 минут
-    } else {
-      pollInterval = 15000;   // идэвхтэй үед 15 секунд
-    }
-    startPolling();
-  }, pollInterval);
-}
 
-function bumpActivity() {
-  // No need to speed up — sync runs every 10s
-}
+
+function bumpActivity() { /* no-op */ }
 
 // ============================================================
 // INIT
@@ -6351,42 +6335,10 @@ function initApp() {
   loadAll();
   updateBadges();
   renderDashboard();
-  startPolling();
 
   document.addEventListener('mousemove', bumpActivity, { passive: true });
   document.addEventListener('touchstart', bumpActivity, { passive: true });
   document.addEventListener('visibilitychange', () => { if (!document.hidden) bumpActivity(); });
-
-  // Auto-pull data on first open if sync URL is configured
-  if (STATE.syncURL) {
-    setTimeout(() => silentSync(), 800);
-  }
-}
-
-function silentSync() {
-  return;  // ⛔ Apps Script pull УНТРААСАН — Firebase onSnapshot ашиглана
-  if (!STATE.syncURL) return;
-  if (syncPending > 0) return;  // POST-ууд дуусаагүй байна — poll хийхгүй, устгахаас сэргийлнэ
-  const ts = nowMs();
-  const cb = 'cb_silent_' + ts;
-  window[cb] = function(json) {
-    try {
-      if (json && json.ok && json.data) {
-        applySheetData(json.data);
-        saveAll();
-        updateBadges();
-        // Re-render current page so deletions show up — but preserve scroll/forms
-        softRefresh();
-        flashSync();
-      }
-    } catch(e) {}
-    delete window[cb];
-  };
-  const s = document.createElement('script');
-  s.src = STATE.syncURL + (STATE.syncURL.includes('?') ? '&' : '?') + 'action=getAll&callback=' + cb;
-  s.onerror = () => { delete window[cb]; };
-  document.body.appendChild(s);
-  setTimeout(() => { try { document.body.removeChild(s); } catch(e){} }, 15000);
 }
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -6429,16 +6381,37 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 // ============================================================
-// FIREBASE FIRESTORE SYNC — өгөгдлийн real-time синк
-// ⚠️ Document бүр 1MB хязгаартай тул талбар бүрийг ТУСДАА
-//    document болгоно: clinic/horses, clinic/exams, ...
+// FIREBASE FIRESTORE SYNC — Collection/Document архитектур
+// Бүртгэл бүр тусдаа document — хязгааргүй өсөх боломжтой
+//
+// Бүтэц:
+//   horses/{horseId}         — морь бүр тусдаа document
+//   exams/{examId}           — үзлэг бүр тусдаа document
+//   fins/{finId}             — санхүү бүр тусдаа document
+//   inps/{inpId}             — хэвтэн бүр тусдаа document
+//   waiting/{waitId}         — хүлээлт бүр тусдаа document
+//   staff/{staffId}          — ажилтан бүр тусдаа document
+//   doctors/{doctorId}       — эмч бүр тусдаа document
+//   users/{userName}         — хэрэглэгч бүр тусдаа document
+//   logs/{logId}             — лог бүр тусдаа document
+//   deletedExams/{archId}    — устгасан үзлэг бүр тусдаа document
+//   clinic_config/main       — тохиргоо (servicePrices, customServices...)
 // ============================================================
-let __fbApplyingRemote = false;   // remote-оос ачаалж байх үед буцааж бичихгүй
-let __fbApplyingTimer  = null;    // debounce reset — олон key зэрэг ирэх үед блокийг сунгана
-const __fbPushTimers = {};        // түлхүүр бүрд тусдаа debounce таймер
-const __fbLastWrite = {};         // түлхүүр бүрд сүүлд бичсэн агшин
 
-// Waiting устгасан ID-уудын нэгдсэн бүртгэл (multi-device sync)
+// Firestore SDK функцүүд (firebase.js-ээс)
+function _fbCol(name) {
+  if (!window.__fbCol) return null;
+  return window.__fbCol(name);
+}
+function _fbColDoc(colName, docId) {
+  if (!window.__fbColDoc) return null;
+  return window.__fbColDoc(colName, docId);
+}
+
+let __fbApplyingRemote = false;
+let __fbApplyingTimer  = null;
+
+// Waiting устгасан ID-уудын нэгдсэн бүртгэл
 const __fbRemovedWaiting = new Set(
   (() => { try { return JSON.parse(localStorage.getItem('mt_removed_waiting') || '[]'); } catch(e) { return []; } })()
 );
@@ -6448,437 +6421,404 @@ function _markWaitingRemoved(id) {
   try { localStorage.setItem('mt_removed_waiting', JSON.stringify([...__fbRemovedWaiting])); } catch(e) {}
 }
 
-// Firestore-д хадгалах STATE-ийн талбарууд
-// FB_OP_KEYS: saveAll() → fbPush() дуудагдах болгонд push хийгдэх operational дата
-// 'users' энд байхгүй — хэрэглэгч бүртгэлийн ажилтан saveAll хийх бүрд
-// Device 2-ын хуучин users list нь Device 1-д нэмсэн шинэ хэрэглэгчийг дарж бичих аюултай.
-// users-ийг зөвхөн saveUser()/deleteUser()-с шууд push хийнэ.
-// exams document 1MB хязгаараас давсан тул хоёр хэсэгт хуваана:
-// exams_h1 → 2026-01~04 (хуучин),  exams_h2 → 2026-05~одоо (шинэ)
-// STATE.exams нэг нэгдсэн array хэвээр — зөвхөн Firestore-д хоёр document болно.
-const FB_OP_KEYS  = ['horses','waiting','exams_h1','exams_h2','fins','inps','doctors','staff','logs','staffSchedule','deletedExams','servicePrices','customServices','removedServices'];
-const FB_KEYS = [...FB_OP_KEYS, 'users']; // fbStartListening бүх key сонсоно
-
-// localStorage түлхүүрийн харгалзаа
-const LS_MAP = {
-  horses: 'mt_horses', waiting: 'mt_waiting', exams: 'mt_exams',
-  fins: 'mt_fins', inps: 'mt_inps', doctors: 'mt_doctors',
-  staff: 'mt_staff_list', users: 'mt_users', logs: 'mt_logs', staffSchedule: 'mt_staff_schedule',
-  deletedExams: 'mt_deleted_exams', servicePrices: 'mt_service_prices',
-  customServices: 'mt_custom_services', removedServices: 'mt_removed_services'
-};
-
-// Firestore-оос сүүлд ирсэн зүйлсийн тоо (хоосон бичилтээс хамгаалахад ашиглана)
+// Firestore-аас сүүлд ирсэн тооны бүртгэл (хоосон бичилтээс хамгаалах)
 const __fbRemoteCount = {};
 
-// Нэг түлхүүрийг (нэг document) Firestore руу бичих
-function fbPushKey(key) {
-  if (!window.__fbReady || !window.__fbDocFor) return Promise.resolve();
-  // exams_h1/h2: STATE.exams-г огноогоор хуваан тус тусдаа document-д бичнэ
-  let val;
-  if (key === 'exams_h1') {
-    val = (STATE.exams || []).filter(e => (e.date || '') < '2026-05');
-  } else if (key === 'exams_h2') {
-    val = (STATE.exams || []).filter(e => (e.date || '') >= '2026-05');
-  } else {
-    val = STATE[key] != null ? STATE[key] : ((key === 'staffSchedule' || key === 'servicePrices') ? {} : []);
-  }
-  // 🛡️ ХАМГААЛАЛТ: Firestore-д их дата байхад локал хоосон бол ДАРЖ БИЧИХГҮЙ.
-  // Энэ нь localStorage алдагдах үед бүх датаг устгахаас сэргийлнэ.
-  if (Array.isArray(val) && val.length === 0 && (__fbRemoteCount[key] || 0) >= 5) {
-    console.warn('[FB] 🛡️ ' + key + ' хоосон тул бичсэнгүй (Firestore-д ' + __fbRemoteCount[key] + ' зүйл байна). Дата хамгаалагдлаа.');
-    try { toast('⚠️ ' + key + ' хоосон тул хадгалсангүй (дата хамгаалагдлаа)', 'err'); } catch(e){}
-    return Promise.resolve();
-  }
-  __fbLastWrite[key] = Date.now();
-  const payload = { _updatedAt: __fbLastWrite[key], _writer: window.__fbDeviceId || 'unknown', items: val };
-  // waiting document-д устгасан ID-уудыг хамт хадгалах (multi-device sync)
-  if (key === 'waiting') payload._removedIds = [...__fbRemovedWaiting];
-  return window.__fbSetDoc(window.__fbDocFor(key), payload)
-    .then(() => { try { flashSync(); } catch(e){} })
-    .catch(err => { console.error('[FB] ❌ ' + key + ' бичих алдаа:', err.message); try { toast('FB алдаа (' + key + '): ' + err.message, 'err'); } catch(e){} });
-}
-
-// Бүх түлхүүр (debounce-той) — saveAll дараа дуудагдана
-let __fbAllTimer = null;
-function fbPush() {
-  if (!window.__fbReady) return;
-  if (__fbApplyingRemote) return;
-  clearTimeout(__fbAllTimer);
-  __fbAllTimer = setTimeout(() => {
-    // ⚠️ users энд байхгүй — saveUser()/deleteUser()-с тусад нь push хийнэ.
-    // Ингэснээр нэг компьютер дээрх хуучин users list нь өөр компьютерт
-    // нэмсэн шинэ хэрэглэгч/эрхийг дарж бичихгүй.
-    FB_OP_KEYS.forEach(k => fbPushKey(k));
-  }, 100); // 600→100ms: ерийн автомат save-д хангалттай жижиг debounce
-}
-
-// Шууд push — debounce байхгүй, __fbApplyingRemote-г тоохгүй.
-// Хэрэглэгчийн идэвхтэй үйлдэл (бүртгэл, үзлэг дуусгах, хасах)-д дуудна.
-// Ингэснээр UI нь Firestore-д бичигдэх хугацааны хариу маш хурдан болно.
-function fbPushNow(keys) {
-  if (!window.__fbReady || !window.__fbDocFor) return;
-  clearTimeout(__fbAllTimer); // хойшлогдсон ерийн push-г цуцалж давхардлаас зайлсхийнэ
-  const toPush = keys || FB_OP_KEYS;
-  toPush.forEach(k => fbPushKey(k));
-}
-
-// Албадан бүгдийг шууд бичих (миграци/гар товчинд)
-function fbForcePush() {
-  if (!window.__fbReady || !window.__fbDocFor) {
-    console.warn('[FB] Firebase бэлэн биш'); return;
-  }
-  const counts = FB_KEYS.map(k => k + ':' + ((STATE[k]||[]).length || 0)).join(', ');
-  console.log('[FB] Бичиж байна →', counts);
-  return Promise.all(FB_KEYS.map(k => fbPushKey(k)))
-    .then(() => { console.log('[FB] ✅ Амжилттай бичигдлээ'); try { toast('☁️ Firebase-д бүх дата хадгаллаа', 'ok'); } catch(e){} })
-    .catch(err => { console.error('[FB] ❌ Бичих алдаа:', err); });
-}
-window.fbForcePush = fbForcePush;
-
-// softRefresh debounce — fbApplyKey нь олон key зэрэг шинэчлэгдэх үед
-// UI-г зөвхөн нэг удаа дахин зурна (14 удаагийн оронд). UX мэдэгдэхүйц хурдасна.
+// softRefresh debounce — 500ms: анхны ачаалалд олон document ирэхэд нэг удаа render хийнэ
 let __fbRefreshTimer = null;
+let __fbInitialLoadDone = false; // анхны snapshot дуусах хүртэл render хийхгүй
 function _fbDebouncedRefresh() {
+  if (!__fbInitialLoadDone) return; // анхны ачаалал дуусаагүй бол алгасна
   clearTimeout(__fbRefreshTimer);
   __fbRefreshTimer = setTimeout(() => {
     if (STATE.user) softRefresh();
-  }, 60); // 120→60ms
+  }, 500);
+}
+// Анхны ачаалал — collection бүрийн эхний snapshot ирмэгц тэмдэглэнэ
+// 3 секундын fixed delay биш, бодит snapshot тоолох аргыг ашиглана
+const FB_COLLECTIONS_COUNT = 10; // horses, exams, fins, inps, waiting, staff, doctors, users, logs, deletedExams
+let __fbSnapshotsDone = 0;
+function _fbMarkInitialLoadDone() {
+  // Backup: хэрэв snapshot бүх collection дээр ирэхгүй бол 5 секундын дараа нэг удаа render
+  const backupTimer = setTimeout(() => {
+    if (!__fbInitialLoadDone) {
+      __fbInitialLoadDone = true;
+      if (STATE.user) softRefresh();
+    }
+  }, 5000);
+  // Snapshot counter — collection бүрийн эхний snapshot ирэхэд нэмэгдэнэ
+  window.__fbOnFirstSnapshot = function() {
+    __fbSnapshotsDone++;
+    if (__fbSnapshotsDone >= FB_COLLECTIONS_COUNT && !__fbInitialLoadDone) {
+      clearTimeout(backupTimer);
+      __fbInitialLoadDone = true;
+      if (STATE.user) softRefresh();
+    }
+  };
 }
 
-// Нэг document-оос ирсэн өгөгдлийг STATE-д буулгах
-function fbApplyKey(key, items, removedIds) {
+// ── Debounced localStorage save ────────────────────────────────
+// Firestore-аас 1000 document ирэхэд 1000 удаа lsSet дуудахгүй.
+// Сүүлийн document ирснээс 400ms хойш нэг удаа хадгална.
+let __lsSaveTimer = null;
+const __lsDirtyKeys = new Set(); // аль collection-уудыг хадгалах хэрэгтэйг тэмдэглэнэ
+
+const LS_KEY_MAP = {
+  horses: 'mt_horses', exams: 'mt_exams', fins: 'mt_fins',
+  inps: 'mt_inps', waiting: 'mt_waiting',
+  staff: 'mt_staff_list', doctors: 'mt_doctors',
+  users: 'mt_users', logs: 'mt_logs',
+  deletedExams: 'mt_deleted_exams'
+};
+
+function _scheduleLsSave(colName) {
+  if (colName) __lsDirtyKeys.add(colName);
+  clearTimeout(__lsSaveTimer);
+  __lsSaveTimer = setTimeout(() => {
+    __lsDirtyKeys.forEach(col => {
+      const lsKey = LS_KEY_MAP[col];
+      if (!lsKey) return;
+      if (col === 'users') lsSet(lsKey, STATE.users || []);
+      else if (col === 'logs') lsSet(lsKey, STATE.logs || []);
+      else if (col === 'deletedExams') lsSet(lsKey, STATE.deletedExams || []);
+      else if (STATE[col] !== undefined) lsSet(lsKey, STATE[col] || []);
+    });
+    __lsDirtyKeys.clear();
+  }, 400);
+}
+
+
+function fbWriteDoc(colName, docId, data) {
+  if (!window.__fbSetDoc || !window.__fbColDoc) return Promise.resolve();
+  const ref = window.__fbColDoc(colName, docId);
+  return window.__fbSetDoc(ref, data)
+    .then(() => { try { flashSync(); } catch(e){} })
+    .catch(err => {
+      console.error('[FB] ❌ ' + colName + '/' + docId + ' бичих алдаа:', err.message);
+      try { toast('FB алдаа (' + colName + '): ' + err.message, 'err'); } catch(e){}
+    });
+}
+
+// ── Нэг document устгах (deleteDoc) ──────────────────────────
+function fbDeleteDoc(colName, docId) {
+  if (!window.__fbDeleteDoc || !window.__fbColDoc) return Promise.resolve();
+  const ref = window.__fbColDoc(colName, docId);
+  return window.__fbDeleteDoc(ref)
+    .catch(err => console.error('[FB] ❌ устгах алдаа ' + colName + '/' + docId + ':', err.message));
+}
+
+// ── Нэг бичлэгийг Firestore-д бичих ─────────────────────────
+// colName: 'horses' | 'exams' | 'fins' | 'inps' | 'waiting' | 'staff' | 'doctors' | 'users' | 'logs' | 'deletedExams'
+function fbSaveRecord(colName, record) {
+  if (!record || !record.id) return Promise.resolve();
+  const docId = String(record.id);
+  const payload = Object.assign({}, record, {
+    _updatedAt: Date.now(),
+    _writer: window.__fbDeviceId || 'unknown'
+  });
+  return fbWriteDoc(colName, docId, payload);
+}
+
+// ── Бүх collection-г STATE-аас дахин бичих (migration/force) ─
+function fbForcePush() {
+  if (!window.__fbReady) { console.warn('[FB] Firebase бэлэн биш'); return; }
+  console.log('[FB] Force push эхэллээ...');
+  const colMap = {
+    horses: STATE.horses || [],
+    exams: STATE.exams || [],
+    fins: STATE.fins || [],
+    inps: STATE.inps || [],
+    waiting: STATE.waiting || [],
+    staff: STATE.staff || [],
+    doctors: STATE.doctors || [],
+    logs: STATE.logs || [],
+    deletedExams: STATE.deletedExams || [],
+  };
+  const promises = [];
+  for (const [col, arr] of Object.entries(colMap)) {
+    for (const rec of arr) {
+      if (rec && rec.id) promises.push(fbSaveRecord(col, rec));
+    }
+  }
+  // users: name-ийг ID болгоно
+  for (const u of (STATE.users || [])) {
+    if (u && u.name) {
+      promises.push(fbWriteDoc('users', u.name, Object.assign({}, u, {
+        _updatedAt: Date.now(), _writer: window.__fbDeviceId || 'unknown'
+      })));
+    }
+  }
+  // clinic_config
+  promises.push(fbWriteDoc('clinic_config', 'main', {
+    servicePrices: STATE.servicePrices || {},
+    customServices: STATE.customServices || [],
+    removedServices: STATE.removedServices || [],
+    staffSchedule: STATE.staffSchedule || {},
+    _updatedAt: Date.now()
+  }));
+  Promise.all(promises).then(() => {
+    const total = promises.length;
+    console.log('[FB] Force push дууслаа. Бичсэн:', total, 'document');
+    try { toast('✅ Firestore-д бичлаа: ' + total + ' document', 'ok'); } catch(e){}
+  });
+}
+window.fbForcePush = fbForcePush;
+
+// ── fbPushNow — тодорхой collection-уудыг STATE-аас дахин бичих ─
+// Хуучин кодтой нийцтэй байлгах — ['horses','exams_h1','exams_h2','fins',...] гэж дуудагдана
+// fbPushNow() — хуучин дуудлагуудтай нийцтэй байлгах no-op.
+// Бичих нь call site дээр fbSaveRecord(col, record) -ээр шууд хийгдэнэ.
+function fbPushNow(keys) { /* no-op: writes now happen via fbSaveRecord at call site */ }
+
+// fbPush() — хуучин код дуудах газруудтай нийцтэй байлгах no-op.
+// Firestore руу бичих нь fbSaveRecord(col, record) -ээр л хийгдэнэ.
+// fbForcePush() нь зөвхөн Admin гараар дуудах тохиолдолд ажиллана.
+let __fbAllTimer = null;
+function fbPush() { /* no-op: use fbSaveRecord() for targeted writes */ }
+
+// ── flashSync helper ───────────────────────────────────────────
+function flashSync() {
+  try {
+    const el = document.getElementById('sync-dot');
+    if (!el) return;
+    el.classList.add('synced');
+    clearTimeout(window.__flashSyncTimer);
+    window.__flashSyncTimer = setTimeout(() => el.classList.remove('synced'), 1500);
+  } catch(e) {}
+}
+
+// ── Firestore-ээс ирсэн document-г STATE-д нэгтгэх ───────────
+function fbApplyRecord(colName, docData) {
+  if (!docData) return;
   __fbApplyingRemote = true;
   try {
-    if (key === 'staffSchedule') {
-      if (items && typeof items === 'object') STATE.staffSchedule = items;
-    } else if (key === 'servicePrices') {
-      // Үйлчилгээний үнэ — объект, шууд орлуулна
-      if (items && typeof items === 'object' && !Array.isArray(items)) {
-        STATE.servicePrices = items;
-        try { if (STATE.activePage === 'admin' && typeof renderServicePrices === 'function') renderServicePrices(); } catch(e){}
+    if (colName === 'clinic_config') {
+      if (docData.servicePrices && typeof docData.servicePrices === 'object') {
+        STATE.servicePrices = docData.servicePrices;
       }
-    } else if (key === 'customServices' || key === 'removedServices') {
-      // Нэрсийн жагсаалт — union (давхцалгүй нэгтгэнэ)
-      if (Array.isArray(items)) {
-        __fbRemoteCount[key] = items.length;
-        const set = new Set([...(STATE[key] || []), ...items].map(String));
-        STATE[key] = [...set];
-        try { if (typeof renderServicePrices === 'function' && document.getElementById('service-prices-modal')?.classList.contains('show')) renderServicePrices(); } catch(e){}
+      if (Array.isArray(docData.customServices)) {
+        const set = new Set([...(STATE.customServices || []), ...docData.customServices].map(String));
+        STATE.customServices = [...set];
       }
-    } else if (key === 'users') {
-      // Хэрэглэгчид нэрээр merge хийнэ — pw болон pages алдагдахаас сэргийлнэ.
-      // 🔑 ms timestamp-аар аль нь шинэ болохыг шийднэ (remote-always-wins биш).
-      // Ингэснээр нэг компьютер дахь эрхийн өөрчлөлтийг өөр компьютерийн
-      // хуучин snapshot дарж бичихгүй.
-      if (Array.isArray(items) && items.length > 0) {
-        __fbRemoteCount[key] = items.length;
-        const byName = {};
-        (STATE.users || []).forEach(u => { if (u && u.name) byName[u.name] = u; });
-        items.forEach(u => {
-          if (!u || !u.name) return;
-          const lc = byName[u.name];
-          if (!lc) { byName[u.name] = u; return; }
-          // ms timestamp-аар аль нь шинэ болохыг шийдэх
-          const remoteMs = parseFloat(u.ms) || 0;
-          const localMs  = parseFloat(lc.ms) || 0;
-          if (remoteMs > localMs) {
-            // Remote шинэ → remote-ийг авна, гэхдээ pw алдагдахаас хамгаална
-            byName[u.name] = Object.assign({}, u, { pw: u.pw || lc.pw || '' });
-          }
-          // Local шинэ эсвэл тэнцүү → локалаа хадгална (remote дарж бичихгүй)
-        });
-        const mergedUsers = Object.values(byName);
-        STATE.users = mergedUsers;
-        // 🔄 Self-healing: local-д remote-д байхгүй хэрэглэгч байвал Firestore-д
-        // буцааж бичнэ — ингэснээр өөр device-ын хуучин push-ийн улмаас алдагдсан
-        // хэрэглэгч автоматаар сэргэнэ.
-        if (mergedUsers.length > items.length) {
-          clearTimeout(window.__fbUserHealTimer);
-          window.__fbUserHealTimer = setTimeout(() => {
-            if (!__fbApplyingRemote && window.__fbReady && window.__fbDocFor) {
-              const healMs = Date.now();
-              __fbLastWrite['users'] = healMs;
-              window.__fbSetDoc(window.__fbDocFor('users'), {
-                _updatedAt: healMs,
-                _writer: window.__fbDeviceId || 'heal',
-                items: STATE.users
-              }).catch(() => {});
-            }
-          }, 800);
-        }
-        try { populateLoginUsers(); } catch(e){}
-        try { if (STATE.activePage === 'admin' && typeof renderUserList === 'function') renderUserList(); } catch(e){}
+      if (Array.isArray(docData.removedServices)) {
+        const set = new Set([...(STATE.removedServices || []), ...docData.removedServices].map(String));
+        STATE.removedServices = [...set];
       }
-    } else if (key === 'logs') {
-      // Лог append-only — id-аар нэгтгэж (union), алдагдахаас сэргийлнэ
-      if (Array.isArray(items)) {
-        __fbRemoteCount[key] = items.length;
-        const byId = {};
-        (STATE.logs || []).forEach(l => { if (l && l.id) byId[l.id] = l; });
-        items.forEach(l => { if (l && l.id) byId[l.id] = l; });
-        let merged = Object.values(byId).sort((a,b) => (a.log_ms||0) - (b.log_ms||0));
-        if (merged.length > 1000) merged = merged.slice(-1000);
-        STATE.logs = merged;
-        try { if (STATE.activePage === 'admin' && typeof renderLogViewer === 'function') renderLogViewer(); } catch(e){}
+      if (docData.staffSchedule && typeof docData.staffSchedule === 'object') {
+        STATE.staffSchedule = docData.staffSchedule;
       }
-    } else if (key === 'deletedExams') {
-      // Устгасан үзлэгийн архив — append-only, _archId-аар нэгтгэнэ (union)
-      if (Array.isArray(items)) {
-        __fbRemoteCount[key] = items.length;
-        const byId = {};
-        const keyOf = a => String(a && (a._archId || (a.exam && a.exam.id) || a.deletedAt) || '');
-        (STATE.deletedExams || []).forEach(a => { const k = keyOf(a); if (k) byId[k] = a; });
-        items.forEach(a => { const k = keyOf(a); if (k) byId[k] = a; });
-        let merged = Object.values(byId).sort((x,y) => (x.deletedAt||0) - (y.deletedAt||0));
-        if (merged.length > 500) merged = merged.slice(-500);
-        STATE.deletedExams = merged;
-        try { if (STATE.activePage === 'admin' && typeof renderDeletedExams === 'function') renderDeletedExams(); } catch(e){}
-      }
-    } else if (key === 'waiting' && Array.isArray(items)) {
-      __fbRemoteCount['waiting'] = items.length;
-      // _removedIds: нөгөө компьютерийн устгасан ID-уудыг авч локал set-тэй нэгтгэнэ
-      if (Array.isArray(removedIds)) {
-        removedIds.forEach(id => _markWaitingRemoved(id));
-      }
-      // Remote болон локал аль алинаас устгасан ID-уудыг хасна
-      const filteredIncoming = items
-        .map(normalizeRow)
-        .filter(r => r && r.id != null && !__fbRemovedWaiting.has(String(r.id)));
-      const localFiltered = (STATE.waiting || []).filter(l => l && l.id != null && !__fbRemovedWaiting.has(String(l.id)));
-      // id-аар union merge, ms-ээр шинийг сонгох
-      const byIdW = {};
-      localFiltered.forEach(l => { if (l.id != null) byIdW[String(l.id)] = l; });
-      filteredIncoming.forEach(r => {
-        if (r == null || r.id == null) return;
-        const id = String(r.id);
-        const lc = byIdW[id];
-        if (!lc) { byIdW[id] = r; return; }
-        if ((parseFloat(r.ms) || 0) >= (parseFloat(lc.ms) || 0)) byIdW[id] = r;
-      });
-      STATE.waiting = Object.values(byIdW);
-    } else if (key === 'exams_h1' || key === 'exams_h2') {
-      // exams_h1/h2 хоёулаа STATE.exams-д нэгтгэнэ (union merge by id)
-      if (Array.isArray(items)) {
-        __fbRemoteCount[key] = items.length;
-        const incoming = items.map(normalizeRow)
-          .filter(r => !(STATE.deletedIds instanceof Set && STATE.deletedIds.has(String(r.id))));
-        const byId = {};
-        (STATE.exams || []).forEach(e => { if (e && e.id != null) byId[String(e.id)] = e; });
-        incoming.forEach(r => {
-          if (r == null || r.id == null) return;
-          const id = String(r.id);
-          const lc = byId[id];
-          if (!lc) { byId[id] = r; return; }
-          const lcMs = parseFloat(lc.ms) || 0;
-          const rMs  = parseFloat(r.ms)  || 0;
-          if (rMs >= lcMs) {
-            const ARRAY_FIELDS = ['prepayments','payments','log','services','meds','images'];
-            ARRAY_FIELDS.forEach(f => {
-              if ((!Array.isArray(r[f]) || r[f].length === 0) && Array.isArray(lc[f]) && lc[f].length) r[f] = lc[f];
-            });
-            byId[id] = r;
-          }
-        });
-        STATE.exams = Object.values(byId);
-      }
-    } else if (Array.isArray(items)) {
-      __fbRemoteCount[key] = items.length;
-      // 🛡️ UNION MERGE — real-time multi-device орчинд өгөгдөл алдагдахаас сэргийлнэ.
-      // Remote-аар бүхэлд нь орлуулахын оронд id-аар нэгтгэж, ms-ээр хамгийн шинийг сонгоно.
-      // Ингэснээр нэг төхөөрөмжийн шинэ адуу/үзлэгийг өөр төхөөрөмжийн хуучин snapshot устгахгүй.
-      const incoming = items.map(normalizeRow)
-        .filter(r => !(STATE.deletedIds instanceof Set && STATE.deletedIds.has(String(r.id))));
-      const byId = {};
-      // Эхлээд локал бичлэгүүд
-      (STATE[key] || []).forEach(l => { if (l && l.id != null) byId[String(l.id)] = l; });
-      // Дараа нь remote — зөвхөн remote нь ШИНЭ (ms их) бол л дарж бичнэ
-      incoming.forEach(r => {
-        if (r == null || r.id == null) return;
-        const id = String(r.id);
-        const lc = byId[id];
-        if (!lc) { byId[id] = r; return; }
-        const lcMs = parseFloat(lc.ms) || 0;
-        const rMs  = parseFloat(r.ms)  || 0;
-        if (rMs >= lcMs) {
-          // Remote шинэ — гэхдээ локал дахь array талбаруудыг хамгаалж нэгтгэнэ
-          const ARRAY_FIELDS = ['prepayments','payments','log','services','meds','images'];
-          ARRAY_FIELDS.forEach(f => {
-            if ((!Array.isArray(r[f]) || r[f].length === 0) && Array.isArray(lc[f]) && lc[f].length) {
-              r[f] = lc[f];
-            }
-          });
-          byId[id] = r;
-        }
-        // Локал шинэ эсвэл тэнцүү бол локалаа хадгална (юу ч хийхгүй)
-      });
-      STATE[key] = Object.values(byId);
+      lsSet('mt_service_prices', STATE.servicePrices);
+      lsSet('mt_custom_services', STATE.customServices);
+      lsSet('mt_removed_services', STATE.removedServices);
+      lsSet('mt_staff_schedule', STATE.staffSchedule);
+      try { if (STATE.activePage === 'admin' && typeof renderServicePrices === 'function') renderServicePrices(); } catch(e){}
+      return;
     }
-    // exams_h1/h2 хоёулаа нэг localStorage key-д хадгалана
-    if (key === 'exams_h1' || key === 'exams_h2') {
-      lsSet('mt_exams', STATE.exams || []);
+
+    if (colName === 'users') {
+      // users: name-ийг ID болгосон — document data нь хэрэглэгчийн объект
+      const u = docData;
+      if (!u.name) return;
+      const existing = (STATE.users || []).findIndex(x => x.name === u.name);
+      if (existing >= 0) {
+        const lc = STATE.users[existing];
+        const remoteMs = parseFloat(u._updatedAt) || 0;
+        const localMs  = parseFloat(lc._updatedAt) || 0;
+        if (remoteMs > localMs) {
+          // pwHash хадгална — pw (plain text) хэзээ ч merge хийхгүй
+          STATE.users[existing] = Object.assign({}, u, { pwHash: u.pwHash || lc.pwHash || '' });
+          // Шилжилтийн үе: хуучин pw талбар байвал хадгалж үлдээнэ
+          if (!u.pwHash && (u.pw || lc.pw)) STATE.users[existing].pw = u.pw || lc.pw;
+        }
+      } else {
+        if (!STATE.users) STATE.users = [];
+        STATE.users.push(u);
+      }
+      _scheduleLsSave('users');
+      try { populateLoginUsers(); } catch(e){}
+      try { if (STATE.activePage === 'admin' && typeof renderUserList === 'function') renderUserList(); } catch(e){}
+      return;
+    }
+
+    if (colName === 'logs') {
+      const l = docData;
+      if (!l.id) return;
+      if (!STATE.logs) STATE.logs = [];
+      const idx = STATE.logs.findIndex(x => x.id === l.id);
+      if (idx < 0) STATE.logs.push(l);
+      if (STATE.logs.length > LOG_DISPLAY_LIMIT) STATE.logs = STATE.logs.slice(-LOG_DISPLAY_LIMIT);
+      _scheduleLsSave('logs');
+      try { if (STATE.activePage === 'admin' && typeof renderLogViewer === 'function') renderLogViewer(); } catch(e){}
+      return;
+    }
+
+    if (colName === 'deletedExams') {
+      const a = docData;
+      const key = String(a._archId || (a.exam && a.exam.id) || a.deletedAt || '');
+      if (!key) return;
+      if (!STATE.deletedExams) STATE.deletedExams = [];
+      const idx = STATE.deletedExams.findIndex(x => {
+        const k = String(x._archId || (x.exam && x.exam.id) || x.deletedAt || '');
+        return k === key;
+      });
+      if (idx < 0) STATE.deletedExams.push(a);
+      if (STATE.deletedExams.length > 500) STATE.deletedExams = STATE.deletedExams.slice(-500);
+      _scheduleLsSave('deletedExams');
+      try { if (STATE.activePage === 'admin' && typeof renderDeletedExams === 'function') renderDeletedExams(); } catch(e){}
+      return;
+    }
+
+    if (colName === 'waiting') {
+      const r = normalizeRow(docData);
+      if (!r || r.id == null) return;
+      // Устгасан бол алгасна
+      if (__fbRemovedWaiting.has(String(r.id))) return;
+      if (!STATE.waiting) STATE.waiting = [];
+      const idx = STATE.waiting.findIndex(x => String(x.id) === String(r.id));
+      if (idx < 0) {
+        STATE.waiting.push(r);
+      } else {
+        const lc = STATE.waiting[idx];
+        const remoteMs = parseFloat(r.ms) || 0;
+        const localMs  = parseFloat(lc.ms) || 0;
+        if (remoteMs >= localMs) STATE.waiting[idx] = r;
+      }
+      _scheduleLsSave('waiting');
+      return;
+    }
+
+    // Ерөнхий тохиолдол: horses, exams, fins, inps, staff, doctors
+    const lsKeyMap = {
+      horses: 'mt_horses', exams: 'mt_exams', fins: 'mt_fins',
+      inps: 'mt_inps', staff: 'mt_staff_list', doctors: 'mt_doctors'
+    };
+    const r = normalizeRow(docData);
+    if (!r || r.id == null) return;
+    // Устгасан бол алгасна
+    if (STATE.deletedIds instanceof Set && STATE.deletedIds.has(String(r.id))) return;
+    if (!STATE[colName]) STATE[colName] = [];
+    const idx = STATE[colName].findIndex(x => String(x.id) === String(r.id));
+    if (idx < 0) {
+      STATE[colName].push(r);
     } else {
-      lsSet(LS_MAP[key], STATE[key] || ((key === 'staffSchedule' || key === 'servicePrices') ? {} : []));
+      const lc = STATE[colName][idx];
+      const remoteMs = parseFloat(r.ms) || 0;
+      const localMs  = parseFloat(lc.ms) || 0;
+      if (remoteMs >= localMs) {
+        // Remote шинэ — array талбаруудыг хамгаалж нэгтгэнэ
+        const ARRAY_FIELDS = ['prepayments','payments','log','services','meds','images'];
+        ARRAY_FIELDS.forEach(f => {
+          if ((!Array.isArray(r[f]) || r[f].length === 0) && Array.isArray(lc[f]) && lc[f].length) r[f] = lc[f];
+        });
+        STATE[colName][idx] = r;
+      }
     }
-    updateBadges();
-    _fbDebouncedRefresh(); // debounce-тай: олон key зэрэг шинэчлэгдэх үед UI нэг удаа дахин зурна
-    try { flashSync(); } catch(e){}
+    _scheduleLsSave(colName);
+
   } catch(e) {
-    console.error('[FB] fbApplyKey алдаа (' + key + '):', e);
+    console.error('[FB] fbApplyRecord алдаа (' + colName + '):', e);
   } finally {
-    // Debounce reset: 13 key зэрэг ирэх үед per-call setTimeout нь нийт 800ms+ блоклодог байсан.
-    // Одоо сүүлийн key ирснээс 200ms хойш л reset хийнэ → блок 200ms-д хязгаарлагдана.
     clearTimeout(__fbApplyingTimer);
     __fbApplyingTimer = setTimeout(() => { __fbApplyingRemote = false; }, 200);
   }
+  updateBadges();
+  _fbDebouncedRefresh();
+  try { flashSync(); } catch(e){}
 }
 
-// onSnapshot — түлхүүр (document) бүрийг тусад нь сонсох
-const __fbUnsubs = {};
-function fbStartListening() {
-  if (!window.__fbReady || !window.__fbDocFor) return;
-  // ⚡ Users-г ШУУД нэг удаа унших (getDoc) — onSnapshot хүлээхгүйгээр
-  // login dropdown-г хурдан бөглөнө. Ялангуяа cache цэвэрлэсний дараа.
-  if (typeof window.__fbGetDoc === 'function' && !(STATE.users && STATE.users.length)) {
-    window.__fbGetDoc(window.__fbDocFor('users'))
-      .then(snap => {
-        if (snap.exists() && Array.isArray(snap.data().items) && snap.data().items.length) {
-          fbApplyKey('users', snap.data().items);
-        }
-      })
-      .catch(() => {});
+// ── Устгагдсан document-г STATE-аас хасах ────────────────────
+function fbRemoveRecord(colName, docId) {
+  __fbApplyingRemote = true;
+  try {
+    if (colName === 'waiting') {
+      STATE.waiting = (STATE.waiting || []).filter(x => String(x.id) !== String(docId));
+      _markWaitingRemoved(docId);
+      _scheduleLsSave('waiting');
+    } else if (STATE[colName] && Array.isArray(STATE[colName])) {
+      STATE[colName] = STATE[colName].filter(x => String(x.id) !== String(docId));
+      STATE.deletedIds.add(String(docId));
+      const lsKeyMap = {
+        horses: 'mt_horses', exams: 'mt_exams', fins: 'mt_fins',
+        inps: 'mt_inps', staff: 'mt_staff_list', doctors: 'mt_doctors'
+      };
+      _scheduleLsSave(colName);
+    }
+  } catch(e) {
+    console.error('[FB] fbRemoveRecord алдаа:', e);
+  } finally {
+    clearTimeout(__fbApplyingTimer);
+    __fbApplyingTimer = setTimeout(() => { __fbApplyingRemote = false; }, 200);
   }
-  FB_KEYS.forEach(key => {
-    if (__fbUnsubs[key]) return;
-    __fbUnsubs[key] = window.__fbOnSnapshot(window.__fbDocFor(key), (snap) => {
-      if (!snap.exists()) return;  // document хоосон бол алгасна
-      const data = snap.data();
-      // Firestore-д хэдэн зүйл байгааг үргэлж тэмдэглэнэ (echo байсан ч)
-      if (Array.isArray(data.items)) __fbRemoteCount[key] = data.items.length;
-      // Өөрийн дөнгөж бичсэн өөрчлөлт буцаж ирвэл (echo) алгасах.
-      // Device ID-аар таних нь timestamp-ийн зөрүүгээс найдвартай.
-      const isMyEcho = data._writer
-        && data._writer === window.__fbDeviceId
-        && data._updatedAt
-        && (Date.now() - data._updatedAt) < 5000;
-      if (isMyEcho) return;
-      fbApplyKey(key, data.items, data._removedIds);
-    }, (err) => console.error('[FB] onSnapshot алдаа (' + key + '):', err));
+  updateBadges();
+  _fbDebouncedRefresh();
+}
+
+// ── onSnapshot — collection бүрийг сонсох ─────────────────────
+const __fbUnsubs = {};
+
+const FB_COLLECTIONS = [
+  'horses', 'exams', 'fins', 'inps', 'waiting',
+  'staff', 'doctors', 'users', 'logs', 'deletedExams'
+];
+
+function fbStartListening() {
+  if (!window.__fbReady || !window.__fbColListen) return;
+  _fbMarkInitialLoadDone(); // анхны ачаалал дуусах хүртэл render хийхгүй
+
+  // clinic_config — нэг document
+  if (!__fbUnsubs['clinic_config'] && window.__fbDocListen && window.__fbColDoc) {
+    __fbUnsubs['clinic_config'] = window.__fbDocListen(
+      window.__fbColDoc('clinic_config', 'main'),
+      (snap) => {
+        if (!snap.exists()) return;
+        const data = snap.data();
+        if (data._writer === window.__fbDeviceId && (Date.now() - (data._updatedAt||0)) < 5000) return;
+        fbApplyRecord('clinic_config', data);
+      },
+      (err) => console.error('[FB] clinic_config сонсох алдаа:', err)
+    );
+  }
+
+  // users — нэг удаа getDoc хийж хурдан ачаалах
+  if (window.__fbGetDoc && window.__fbColDoc && !(STATE.users && STATE.users.length)) {
+    // users collection-г query хийж бүгдийг татна
+    if (window.__fbColQuery) {
+      window.__fbColQuery('users').then(docs => {
+        docs.forEach(d => fbApplyRecord('users', d.data()));
+      }).catch(() => {});
+    }
+  }
+
+  // Collection бүрийг сонсох — эхний snapshot ирмэгц __fbOnFirstSnapshot дуудна
+  FB_COLLECTIONS.forEach(colName => {
+    if (__fbUnsubs[colName]) return;
+    let _firstSnap = false; // энэ collection-ийн эхний snapshot ирсэн эсэх
+    __fbUnsubs[colName] = window.__fbColListen(colName, (changes) => {
+      // Эхний snapshot тэмдэглэх
+      if (!_firstSnap) {
+        _firstSnap = true;
+        if (typeof window.__fbOnFirstSnapshot === 'function') window.__fbOnFirstSnapshot();
+      }
+      changes.forEach(({ type, docId, data }) => {
+        if (type === 'removed') {
+          fbRemoveRecord(colName, docId);
+        } else {
+          if (data._writer === window.__fbDeviceId && (Date.now() - (data._updatedAt||0)) < 5000) return;
+          fbApplyRecord(colName, data);
+        }
+      });
+    }, (err) => console.error('[FB] onSnapshot алдаа (' + colName + '):', err));
   });
 }
 
-// ============================================================
-// НЭГ УДААГИЙН МИГРАЦИ: Google Sheets → Firebase
-// ============================================================
-function migrateSheetsToFirebase() {
-  const url = SCRIPT_URL;
-  if (!url) { toast('Sheets URL алга', 'err'); return; }
-  if (!window.__fbReady || !window.__fbDocFor) { toast('Firebase бэлэн биш', 'err'); return; }
-  toast('☁️ Sheets-ээс татаж байна...', 'ok');
-  console.log('[MIGRATE] Sheets-ээс татаж эхэллээ:', url);
+// ── fbFlashSync helper (UI dot) ────────────────────────────────
+window.fbForcePush = fbForcePush;
+window.fbPushNow   = fbPushNow;
+window.fbPush      = fbPush;
 
-  const ts = nowMs();
-  const cb = 'cb_migrate_' + ts;
-  window[cb] = function(json) {
-    try {
-      if (json && json.ok && json.data) {
-        const d = json.data;
-        console.log('[MIGRATE] Sheets дата ирлээ:', d);
-        if (Array.isArray(d.horses))  STATE.horses  = d.horses.map(normalizeRow);
-        if (Array.isArray(d.waiting)) STATE.waiting = d.waiting.map(normalizeRow);
-        if (Array.isArray(d.exams))   STATE.exams   = d.exams.map(normalizeRow);
-        if (Array.isArray(d.fins))    STATE.fins    = d.fins.map(normalizeRow);
-        if (Array.isArray(d.inps))    STATE.inps    = d.inps.map(normalizeRow);
-        if (Array.isArray(d.doctors) && d.doctors.length) STATE.doctors = d.doctors.map(normalizeRow);
-        if (Array.isArray(d.staff))   STATE.staff   = d.staff.map(normalizeRow);
-        saveAll();
-        updateBadges();
-        softRefresh();
-        const counts = ['horses','waiting','exams','fins','inps','doctors','staff']
-          .map(k => k + ':' + (STATE[k]||[]).length).join(', ');
-        console.log('[MIGRATE] STATE дүүрлээ →', counts);
-        toast('✅ Sheets-ээс татлаа. Firebase руу бичиж байна...', 'ok');
-        fbForcePush();
-      } else {
-        console.error('[MIGRATE] Алдаатай хариу:', json);
-        toast('Алдаа: ' + (json && json.error ? json.error : 'дата ирсэнгүй'), 'err');
-      }
-    } catch(e) {
-      console.error('[MIGRATE] алдаа:', e);
-      toast('Алдаа: ' + e.message, 'err');
-    }
-    delete window[cb];
-  };
-  const s = document.createElement('script');
-  s.src = url + (url.includes('?') ? '&' : '?') + 'action=getAll&callback=' + cb;
-  s.onerror = () => { toast('Sheets-тэй холбогдсонгүй', 'err'); console.error('[MIGRATE] script load error'); delete window[cb]; };
-  document.body.appendChild(s);
-  setTimeout(() => { try { document.body.removeChild(s); } catch(e){} }, 20000);
-}
-window.migrateSheetsToFirebase = migrateSheetsToFirebase;
-
-// ============================================================
-// Хуучин base64 зургуудыг Firebase Storage руу зөөх (нэг удаагийн)
-// exams document доторх том base64 зургуудыг Storage руу upload хийж,
-// зөвхөн URL үлдээж document-ийг хөнгөлнө.
-// ============================================================
-async function migrateImagesToStorage() {
-  if (!window.__fbReady || !window.__fbUploadImage) {
-    toast('Firebase Storage бэлэн биш байна', 'err');
-    return;
-  }
-  const exams = Array.isArray(STATE.exams) ? STATE.exams : [];
-  let totalImgs = 0, moved = 0, failed = 0, examsWithImgs = 0;
-  // base64 зурагтай үзлэгүүдийг тоолох
-  for (const e of exams) {
-    if (Array.isArray(e.images) && e.images.some(im => im && im.data && !im.url)) examsWithImgs++;
-  }
-  if (!examsWithImgs) {
-    toast('Зөөх base64 зураг олдсонгүй', 'ok');
-    return;
-  }
-  if (!confirm(examsWithImgs + ' үзлэгийн base64 зургийг Storage руу зөөх үү? Энэ хэдэн минут болж магадгүй.')) return;
-  toast('🖼️ Зураг зөөж эхэллээ...', 'ok');
-  console.log('[IMG-MIGRATE] эхэллээ. Үзлэг:', examsWithImgs);
-
-  for (const e of exams) {
-    if (!Array.isArray(e.images)) continue;
-    for (let i = 0; i < e.images.length; i++) {
-      const im = e.images[i];
-      if (!im || !im.data || im.url) continue; // зөвхөн base64-ийг зөөнө
-      totalImgs++;
-      try {
-        const imgId = im.id || uid();
-        const path = 'exam-images/' + e.id + '/' + imgId + '.jpg';
-        const url = await window.__fbUploadImage(path, im.data);
-        // base64-ийг устгаж, URL-ээр солино
-        e.images[i] = { id: imgId, url: url, path: path, ms: im.ms || nowMs() };
-        moved++;
-        if (moved % 5 === 0) {
-          toast('🖼️ ' + moved + ' зураг зөөгдлөө...', 'ok');
-          console.log('[IMG-MIGRATE] зөөгдсөн:', moved);
-        }
-      } catch (err) {
-        failed++;
-        console.error('[IMG-MIGRATE] алдаа:', e.id, err);
-      }
-    }
-  }
-  saveAll();          // локалд хадгална (override-аар Firestore руу түлхэнэ)
-  fbForcePush();      // шууд бүх key-г дахин бичих (одоо хөнгөн болсон)
-  console.log('[IMG-MIGRATE] дууслаа. Нийт:', totalImgs, 'Зөөсөн:', moved, 'Алдаа:', failed);
-  toast('✅ Дууслаа: ' + moved + ' зураг зөөв' + (failed ? (', ' + failed + ' алдаа') : ''), failed ? 'err' : 'ok');
-}
-window.migrateImagesToStorage = migrateImagesToStorage;
-
-// saveAll()-г override: локал хадгалсны дараа Firestore руу автоматаар түлхэнэ
-if (typeof saveAll === 'function') {
-  const __origSaveAll = saveAll;
-  saveAll = function() {
-    __origSaveAll.apply(this, arguments);
-    fbPush();
-  };
-}
+// saveAll() — зөвхөн localStorage cache хадгалана.
+// Firebase руу бичихгүй — тэр нь fbSaveRecord(col, record) -ээр хийгдэнэ.
+// fbForcePush() нь зөвхөн Admin migration/emergency-д ашиглагдана.
 
 // Firebase бэлэн болмогц сонсож эхлэх
 if (window.__fbReady) {
