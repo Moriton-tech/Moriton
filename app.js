@@ -5056,7 +5056,14 @@ function renderHistory() {
   const to = $('#h-to').value;
   const sortMode = ($('#h-sort') && $('#h-sort').value) || 'time_desc';
   let list = [...STATE.exams];
-  if (q) list = list.filter(e => (e.horse+' '+e.owner+' '+e.phone+' '+e.diagnosis+' '+(e.examNum||'')).toLowerCase().includes(q));
+  if (q) {
+    // Морины ИАБД-г хайлтад оруулна (horses-оос horseId-аар олно)
+    const iabdOf = (e) => {
+      const h = STATE.horses.find(x => String(x.id) === String(e.horseId) || x.name === e.horse);
+      return (h && h.iabd) ? h.iabd : '';
+    };
+    list = list.filter(e => (e.horse+' '+e.owner+' '+e.phone+' '+e.diagnosis+' '+(e.examNum||'')+' '+iabdOf(e)).toLowerCase().includes(q));
+  }
   if (from) list = list.filter(e => e.date >= from);
   if (to) list = list.filter(e => e.date <= to);
 
