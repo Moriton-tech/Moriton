@@ -3649,14 +3649,18 @@ function renderFinance() {
   if (STATE.activeFTab === 'paid') {
     const tb = $('#fin-paid-tb');
     if (paid.length === 0) {
-      tb.innerHTML = '<tr><td colspan="9" style="text-align:center;padding:20px;color:var(--muted)">Бүртгэл алга</td></tr>';
+      tb.innerHTML = '<tr><td colspan="10" style="text-align:center;padding:20px;color:var(--muted)">Бүртгэл алга</td></tr>';
     } else {
-      tb.innerHTML = paid.map((f,i) => `
+      tb.innerHTML = paid.map((f,i) => {
+        const h = STATE.horses.find(x => String(x.id) === String(f.horseId) || x.name === f.horse);
+        const iabd = (h && h.iabd) ? h.iabd : '';
+        return `
         <tr>
           <td>${i+1}</td>
           <td>${f.examNum?'<span class="badge b-o" style="font-weight:800">'+escHTML(f.examNum)+'</span>':'—'}</td>
           <td>${escHTML(f.paidDate||f.date)}</td>
-          <td>${escHTML(f.horse)}</td>
+          <td>${iabd?escHTML(iabd):'<span class="muted">—</span>'}</td>
+          <td style="max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escHTML(f.horse||'')}">${escHTML(f.horse)}</td>
           <td>${escHTML(f.owner)}</td>
           <td class="bold">${fmt(f.amount)}</td>
           <td><span class="badge b-a">${methodIcon(f.method)} ${escHTML(f.method)}</span></td>
@@ -3666,7 +3670,8 @@ function renderFinance() {
             <button class="btn btn-xs" onclick="editFin('${escHTML(f.id)}')">✏️</button>
           </td>
         </tr>
-      `).join('');
+      `;
+      }).join('');
     }
   }
 
@@ -4072,7 +4077,7 @@ function printInvoice(id) {
   const soum     = (ex && ex.soum)     || (w && w.soum)     || (horse && horse.soum)     || (f.soum)     || '';
   const iabd     = (horse && horse.iabd) || ''; // Ирсэн адууны бүртгэлийн дугаар
 
-  // Condition
+  // Condition (гараар тэмдэглэх — идэвхитэй / сэргэлэн цовоо / ноомойрсон)
   const cSain = '', cDund = '', cMuu = '';
 
   // Date display — full YYYY/MM/DD
@@ -4113,6 +4118,9 @@ function printInvoice(id) {
   const adviceListHTML = adviceLines.length
     ? '<ul class="uz-advice-list">' + adviceLines.map(l => `<li>${escHTML(l)}</li>`).join('') + '</ul>'
     : '<div class="muted" style="font-size:8pt">&nbsp;</div>';
+  const adviceListInlineHTML = adviceLines.length
+    ? '<ul style="margin:1mm 0 0;padding-left:5mm;font-size:8pt;line-height:1.5">' + adviceLines.map(l => `<li style="margin-bottom:0.5mm">${escHTML(l)}</li>`).join('') + '</ul>'
+    : '<div style="font-size:8pt">&nbsp;</div>';
   // Эмийн жорыг доор тусад нь (хэрэв байвал)
   const medsAdviceHTML = medsArr.length
     ? `<div style="font-size:7.5pt;font-weight:700;margin-top:1.5mm">Хэрэглэх эм:</div>${medsListHTML}`
@@ -4152,10 +4160,10 @@ function printInvoice(id) {
       <tr>
         <td class="lbl" style="vertical-align:top;width:36mm">
           <div><b>Биеийн ерөнхий байдал:</b></div>
-          <div class="uz-cond">Тохиолдол:
-            <span class="uz-cb ${cSain?'checked':''}">${cSain}</span>Сайн
-            <span class="uz-cb ${cDund?'checked':''}">${cDund}</span>Дунд зэрэг
-            <span class="uz-cb ${cMuu?'checked':''}">${cMuu}</span>Муу
+          <div class="uz-cond">
+            <span class="uz-cb ${cSain?'checked':''}">${cSain}</span>Идэвхитэй
+            <span class="uz-cb ${cDund?'checked':''}">${cDund}</span>Сэргэлэн цовоо
+            <span class="uz-cb ${cMuu?'checked':''}">${cMuu}</span>Ноомойрсон
           </div>
           <div class="uz-vitals-block" style="margin-top:2mm">
             <div>Биеийн халуун: <b>${temp}</b></div>
@@ -4168,18 +4176,20 @@ function printInvoice(id) {
           <div style="margin-top:1mm;line-height:1.5;white-space:pre-wrap;font-size:8pt">${escHTML(anamText) || '&nbsp;\n&nbsp;\n&nbsp;'}</div>
         </td>
       </tr>
-      <tr>
-        <td colspan="4" class="lbl" style="height:12mm;vertical-align:top">
-          Онош: <span style="font-weight:400;white-space:pre-wrap">${escHTML(diag||'')}</span>
-        </td>
-      </tr>
-      <tr>
-        <td colspan="4" class="lbl" style="vertical-align:top">
-          Хийсэн үйлчилгээ:
-          <div class="uz-svc-block">${svcRowsHTML}</div>
-        </td>
-      </tr>
     </table>
+
+    <!-- Онош / Үйлчилгээ / Зөвлөгөө — хүснэгтгүй -->
+    <div class="uz-block" style="margin-top:2mm;font-size:8pt">
+      <div><b>Онош:</b> <span style="font-weight:400;white-space:pre-wrap">${escHTML(diag||'')}</span></div>
+    </div>
+    <div class="uz-block" style="margin-top:2mm;font-size:8pt">
+      <div><b>Хийсэн үйлчилгээ:</b></div>
+      <div class="uz-svc-block">${svcRowsHTML}</div>
+    </div>
+    <div class="uz-block" style="margin-top:2mm;font-size:8pt">
+      <div><b>Эмчийн өгсөн зөвлөгөө:</b></div>
+      ${adviceListInlineHTML}
+    </div>
 
     <!-- Dotted note lines -->
     <div class="uz-dotlines">${leftDots}</div>
@@ -4260,7 +4270,7 @@ function printInvoice(id) {
     </div>
 
     <!-- Advice / note area -->
-    <div style="font-size:8pt;font-weight:700;margin-bottom:1mm">Эмнэлэг, зөвлөгөө</div>
+    <div style="font-size:8pt;font-weight:700;margin-bottom:1mm">Эмчилгээ, зөвлөгөө</div>
     <div class="uz-right-note-area">${rightAdviceHTML}</div>
 
     <!-- Payment summary -->
@@ -5108,7 +5118,7 @@ function renderHistory() {
   const seeFin = canSeeFinance();
   document.querySelectorAll('.h-amt-col').forEach(th => { th.style.display = seeFin ? '' : 'none'; });
   if (totalCount === 0) {
-    tb.innerHTML = '<tr><td colspan="'+(seeFin?9:7)+'" style="text-align:center;padding:20px;color:var(--muted)">Бүртгэл алга</td></tr>';
+    tb.innerHTML = '<tr><td colspan="'+(seeFin?10:8)+'" style="text-align:center;padding:20px;color:var(--muted)">Бүртгэл алга</td></tr>';
   } else {
     tb.innerHTML = pageList.map((e, i) => {
       const fin = STATE.fins.find(f => String(f.examId) === String(e.id));
@@ -5116,12 +5126,15 @@ function renderHistory() {
       const cls = fin && fin.paid ? 'b-g' : 'b-o';
       const canEdit = STATE.user && (STATE.user.role === 'Ерөнхий эмч' || STATE.user.role === 'Ахлах эмч' || STATE.user.role === 'Админ');
       const rowNum = pageStart + i + 1;
+      const h = STATE.horses.find(x => String(x.id) === String(e.horseId) || x.name === e.horse);
+      const iabd = (h && h.iabd) ? h.iabd : '';
       return `
         <tr data-eid="${escHTML(e.id)}" style="cursor:pointer">
           <td>${rowNum}</td>
           <td>${e.examNum?'<span class="badge b-o" style="font-weight:800">'+escHTML(e.examNum)+'</span>':'—'}</td>
           <td>${escHTML(e.date)}</td>
-          <td class="h-diag" title="${escHTML(e.horse||'')}">${escHTML(e.horse)}</td>
+          <td>${iabd?escHTML(iabd):'<span class="muted">—</span>'}</td>
+          <td class="h-diag" title="${escHTML(e.horse||'')}" style="max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escHTML(e.horse)}</td>
           <td>${escHTML(e.owner)}</td>
           <td>${escHTML(e.phone)}</td>
           <td class="h-diag" title="${escHTML(e.diagnosis||'')}">${escHTML(e.diagnosis)}</td>

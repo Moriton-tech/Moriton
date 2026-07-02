@@ -629,10 +629,10 @@
         <div class="ftab hidden" data-ftab="paid">
           <div class="card">
             <div class="ch">✅ Төлөгдсөн бүртгэлүүд</div>
-            <div class="tbl-wrap">
-              <table>
+            <div class="tbl-wrap" style="overflow-x:auto;-webkit-overflow-scrolling:touch">
+              <table style="min-width:760px">
                 <thead><tr>
-                  <th>#</th><th>Дугаар</th><th>Огноо</th><th>Адуу</th><th>Эзэн</th><th>Дүн</th><th>Хэлбэр</th><th>Цаг</th><th>Үйлдэл</th>
+                  <th style="width:36px">#</th><th style="width:88px">Дугаар</th><th style="width:100px">Огноо</th><th style="width:96px">ИАБД</th><th style="width:150px;max-width:150px">Адуу</th><th style="width:120px">Эзэн</th><th>Дүн</th><th>Хэлбэр</th><th>Цаг</th><th style="width:88px">Үйлдэл</th>
                 </tr></thead>
                 <tbody id="fin-paid-tb"></tbody>
               </table>
@@ -827,13 +827,14 @@
 
         <div class="card">
           <div class="ch">📜 Бүртгэлүүд <span class="ch-r" id="h-cnt">0</span></div>
-          <div class="tbl-wrap">
-            <table>
+          <div class="tbl-wrap" style="overflow-x:auto;-webkit-overflow-scrolling:touch">
+            <table style="min-width:820px">
               <thead><tr>
-                <th>#</th>
-                <th class="h-sortable" onclick="histSortBy('num')" style="cursor:pointer;user-select:none">Дугаар <span id="h-ar-num" class="h-arrow"></span></th>
-                <th class="h-sortable" onclick="histSortBy('date')" style="cursor:pointer;user-select:none">Огноо <span id="h-ar-date" class="h-arrow"></span></th>
-                <th>Зүс</th><th>Эзэн</th><th>Утас</th><th>Онош</th><th class="h-amt-col">Дүн</th><th class="h-amt-col">Статус</th><th></th>
+                <th style="width:36px">#</th>
+                <th class="h-sortable" onclick="histSortBy('num')" style="cursor:pointer;user-select:none;width:88px">Дугаар <span id="h-ar-num" class="h-arrow"></span></th>
+                <th class="h-sortable" onclick="histSortBy('date')" style="cursor:pointer;user-select:none;width:100px">Огноо <span id="h-ar-date" class="h-arrow"></span></th>
+                <th style="width:96px">ИАБД</th>
+                <th style="width:150px;max-width:150px">Зүс</th><th style="width:120px">Эзэн</th><th style="width:100px">Утас</th><th>Онош</th><th class="h-amt-col">Дүн</th><th class="h-amt-col">Статус</th><th style="width:44px"></th>
               </tr></thead>
               <tbody id="h-tb"></tbody>
             </table>
