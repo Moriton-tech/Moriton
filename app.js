@@ -4029,16 +4029,21 @@ function printInvoice(id) {
   const resp  = ex && ex.resp  ? ex.resp  : '...............';
   const wt    = ex && ex.wt    ? ex.wt    : '...............';
 
-  // Meds string — support both {name,note} objects and plain strings
-  let medsStr = '';
+  // Meds — support both {name,note} objects and plain strings
+  let medsArr = [];
   if (ex && Array.isArray(ex.meds) && ex.meds.length) {
-    medsStr = ex.meds.map(m => {
+    medsArr = ex.meds.map(m => {
       if (typeof m === 'object' && m.name) return m.name + (m.note ? ' — ' + m.note : '');
       return m;
-    }).join('\n');
+    }).filter(Boolean);
   } else if (ex && typeof ex.meds === 'string' && ex.meds.trim()) {
-    medsStr = ex.meds;
+    // мөр эсвэл таслалаар салгаж жагсаалт болгоно
+    medsArr = ex.meds.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
   }
+  const medsStr = medsArr.join('\n');
+  const medsListHTML = medsArr.length
+    ? '<ul style="margin:1mm 0 0;padding-left:5mm;font-size:8pt;line-height:1.5">' + medsArr.map(m => `<li style="margin-bottom:0.5mm">${escHTML(m)}</li>`).join('') + '</ul>'
+    : '<div style="font-size:8pt">&nbsp;</div>';
 
   // Services as string for left panel
   const svcStr = services.map(s => s.name || '').filter(Boolean).join(', ') || '................................';
@@ -4109,8 +4114,8 @@ function printInvoice(id) {
     ? '<ul class="uz-advice-list">' + adviceLines.map(l => `<li>${escHTML(l)}</li>`).join('') + '</ul>'
     : '<div class="muted" style="font-size:8pt">&nbsp;</div>';
   // Эмийн жорыг доор тусад нь (хэрэв байвал)
-  const medsAdviceHTML = medsStr
-    ? `<div style="font-size:7.5pt;font-weight:700;margin-top:1.5mm">Хэрэглэх эм:</div><div style="font-size:8pt;white-space:pre-wrap">${escHTML(medsStr)}</div>`
+  const medsAdviceHTML = medsArr.length
+    ? `<div style="font-size:7.5pt;font-weight:700;margin-top:1.5mm">Хэрэглэх эм:</div>${medsListHTML}`
     : '';
   const rightAdviceHTML = adviceListHTML + medsAdviceHTML;
 
@@ -4180,9 +4185,9 @@ function printInvoice(id) {
     <div class="uz-dotlines">${leftDots}</div>
 
     <!-- Meds row -->
-    <div class="uz-field-row">
-      <span class="uz-lbl">Хэрэглэсэн эм тариа, эмчилгэ /эмийн тун/:</span>
-      <span class="uz-ul">${escHTML(medsStr)}</span>
+    <div class="uz-med-block" style="margin-top:2mm">
+      <div class="uz-lbl" style="font-weight:700;font-size:8pt">Хэрэглэсэн эм тариа, эмчилгэ /эмийн тун/:</div>
+      ${medsListHTML}
     </div>
 
     <!-- Payment row -->
@@ -4281,7 +4286,7 @@ function printInvoice(id) {
         <div class="uz-bank-info">
           Данс: Морьтон адууны тов ХХК<br>
           Торийн банк 102030102030,<br>
-          Хаан банк 5040416530
+          Хаан банк 5040416540
         </div>
       </div>
     </div>
@@ -4432,7 +4437,7 @@ function printInpatientCard() {
     <div style="border-top:0.5pt solid #000;padding-top:2mm;min-width:50mm;text-align:center">Үйлчлүүлэгч</div>
     <div style="border-top:0.5pt solid #000;padding-top:2mm;min-width:50mm;text-align:center">Хянасан менежер</div>
   </div>
-  <div style="margin-top:6mm;font-size:7.5pt;color:#666;text-align:center">Морьтон адууны тов ХХК · Торийн банк 102030102030 · Хаан банк 5040416530</div>
+  <div style="margin-top:6mm;font-size:7.5pt;color:#666;text-align:center">Морьтон адууны тов ХХК · Торийн банк 102030102030 · Хаан банк 5040416540</div>
 </div>`;
   setTimeout(() => window.print(), 150);
 }
