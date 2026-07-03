@@ -2821,11 +2821,17 @@ function inpatientDays(admittedMs, atMs) {
 }
 
 function renderInpatient() {
+  ensureInpCardStyles();
   const active = STATE.inps.filter(i => !i.discharged);
   $('#inp-sub').textContent = active.length + ' адуу хэвтэж байна';
   const list = $('#inp-list');
+  // Жагсаалтын хайрцгийг карт-grid болгоно (index.html засалгүйгээр)
+  list.style.display = 'grid';
+  list.style.gridTemplateColumns = 'repeat(auto-fill, minmax(240px, 1fr))';
+  list.style.gap = '12px';
+  list.style.alignItems = 'start';
   if (active.length === 0) {
-    list.innerHTML = '<div class="empty"><div class="empty-em">🏥</div>Хэвтэж буй адуу алга</div>';
+    list.innerHTML = '<div class="empty" style="grid-column:1/-1"><div class="empty-em">🏥</div>Хэвтэж буй адуу алга</div>';
     $('#inp-detail-card').classList.add('hidden');
     return;
   }
@@ -2833,29 +2839,72 @@ function renderInpatient() {
     const days = inpatientDays(i.admittedMs);
     // Одоогийн гүйлгээ үлдэгдэл (үзлэг + эмчилгээ + хоног − урьдчилгаа) — ресепшнд сэрэмжлүүлэг
     const due = Math.max(0, getInpFullTotal(i) - getInpPrepaidTotal(i));
+    const dClass = days > 40 ? 'inpc-days-long' : days > 20 ? 'inpc-days-warn' : '';
     return `
-      <div class="li" data-id="${i.id}">
-        <div class="li-stripe" style="background:var(--purple)"></div>
-        <div class="li-av" style="background:var(--purple-soft)">🏥</div>
-        <div class="li-info">
-          <div class="li-name">${escHTML(i.horse)} <span class="muted" style="font-weight:600">· ${escHTML(i.owner)}</span></div>
-          <div class="li-sub">${escHTML(i.diagnosis)}</div>
+      <div class="inpc ${due > 0 ? 'inpc-due' : ''}" data-id="${i.id}">
+        <div class="inpc-top">
+          <div class="inpc-av">🐴</div>
+          <div class="inpc-names">
+            <div class="inpc-horse">${escHTML(i.horse)}</div>
+            <div class="inpc-owner">Эзэн: <b>${escHTML(i.owner)}</b></div>
+          </div>
+          <div class="inpc-days ${dClass}">${days} хоног</div>
         </div>
-        <div class="li-r">
-          <span class="badge b-p">${days} хоног</span>
-          <div class="li-time">${escHTML(i.admittedDate)}</div>
-          <div class="li-time" style="font-weight:800;color:${due > 0 ? 'var(--red)' : 'var(--green)'}">${due > 0 ? fmt(due) + ' дутуу' : 'Төлбөр бүрэн'}</div>
+        <div class="inpc-diag">${escHTML(i.diagnosis || '—')}</div>
+        <div class="inpc-foot">
+          <span class="inpc-adm">${escHTML(i.admittedDate || '')}</span>
+          <span class="inpc-pay ${due > 0 ? 'inpc-pay-due' : 'inpc-pay-ok'}">${due > 0 ? fmt(due) + ' дутуу' : 'Төлбөр бүрэн'}</span>
         </div>
       </div>
     `;
   }).join('');
-  list.querySelectorAll('.li').forEach(el => el.onclick = () => {
+  list.querySelectorAll('.inpc').forEach(el => el.onclick = () => {
     STATE.selectedI = String(el.dataset.id);
-    list.querySelectorAll('.li').forEach(x => x.classList.toggle('sel', x.dataset.id === STATE.selectedI));
+    list.querySelectorAll('.inpc').forEach(x => x.classList.toggle('sel', x.dataset.id === STATE.selectedI));
     renderIDetail();
   });
   if (STATE.selectedI != null) STATE.selectedI = String(STATE.selectedI);
-  if (STATE.selectedI) renderIDetail();
+  if (STATE.selectedI) {
+    list.querySelectorAll('.inpc').forEach(x => x.classList.toggle('sel', x.dataset.id === STATE.selectedI));
+    renderIDetail();
+  }
+}
+
+// Картын CSS-ийг <head>-д нэг удаа суулгана — index.html засах шаардлагагүй
+function ensureInpCardStyles() {
+  if (document.getElementById('inpc-styles')) return;
+  const st = document.createElement('style');
+  st.id = 'inpc-styles';
+  st.textContent = `
+  .inpc{background:var(--card,#fff);border:1px solid var(--border,#e9e6f0);border-radius:13px;
+    border-left:4px solid var(--purple,#7c5cbf);padding:12px 13px 10px;cursor:pointer;
+    display:flex;flex-direction:column;gap:8px;
+    box-shadow:0 1px 3px rgba(40,30,70,.06),0 5px 14px rgba(40,30,70,.05);
+    transition:transform .12s ease,box-shadow .12s ease,border-color .12s ease}
+  .inpc:hover{transform:translateY(-2px);box-shadow:0 4px 10px rgba(40,30,70,.1),0 10px 24px rgba(40,30,70,.09)}
+  .inpc.inpc-due{border-left-color:var(--red,#c0483f)}
+  .inpc.sel{border-color:var(--purple,#7c5cbf);box-shadow:0 0 0 2px var(--purple-soft,#efeaf9),0 4px 10px rgba(40,30,70,.1)}
+  .inpc-top{display:flex;align-items:flex-start;gap:9px}
+  .inpc-av{width:38px;height:38px;border-radius:10px;flex-shrink:0;background:var(--purple-soft,#efeaf9);
+    display:flex;align-items:center;justify-content:center;font-size:19px}
+  .inpc-names{flex:1;min-width:0}
+  .inpc-horse{font-size:13.5px;font-weight:800;line-height:1.25;overflow:hidden;text-overflow:ellipsis}
+  .inpc-owner{font-size:11.5px;color:var(--muted,#8a8398);margin-top:1px}
+  .inpc-owner b{color:var(--purple,#7c5cbf);font-weight:700}
+  .inpc-days{font-size:10.5px;font-weight:800;padding:3px 8px;border-radius:7px;white-space:nowrap;flex-shrink:0;
+    background:var(--purple-soft,#efeaf9);color:var(--purple,#7c5cbf)}
+  .inpc-days-warn{background:var(--orange-soft,#fcf3e0);color:var(--orange-dark,#b57708)}
+  .inpc-days-long{background:var(--red-soft,#fbeae8);color:var(--red,#c0483f)}
+  .inpc-diag{font-size:11.5px;color:var(--muted,#5b5468);line-height:1.45;background:var(--input,#faf9fc);
+    border:1px solid var(--border,#e9e6f0);border-radius:8px;padding:6px 8px;
+    display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;min-height:34px}
+  .inpc-foot{display:flex;align-items:center;justify-content:space-between;gap:6px;
+    padding-top:6px;border-top:1px solid var(--border,#e9e6f0);font-size:10.5px;color:var(--muted,#8a8398)}
+  .inpc-pay{font-weight:800;padding:2px 7px;border-radius:6px;font-size:10.5px;white-space:nowrap}
+  .inpc-pay-ok{background:var(--green-soft,#e6f6ee);color:var(--green,#2f9e6f)}
+  .inpc-pay-due{background:var(--red-soft,#fbeae8);color:var(--red,#c0483f)}
+  `;
+  document.head.appendChild(st);
 }
 
 // ============================================================
