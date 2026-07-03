@@ -2820,8 +2820,20 @@ function inpatientDays(admittedMs, atMs) {
   return Math.max(1, days);
 }
 
+// Байрлан эмчлүүлэх жагсаалт: 1 хуудсанд харуулах картын тоо
+const INP_PER_PAGE = 20;
+let INP_PAGE = 1;
+
+function inpGoPage(n) {
+  INP_PAGE = n;
+  renderInpatient();
+  const list = $('#inp-list');
+  if (list && list.scrollIntoView) list.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
 function renderInpatient() {
   ensureInpCardStyles();
+  ensureInpDrawer();
   const active = STATE.inps.filter(i => !i.discharged);
   $('#inp-sub').textContent = active.length + ' адуу хэвтэж байна';
   const list = $('#inp-list');
@@ -2832,10 +2844,32 @@ function renderInpatient() {
   list.style.alignItems = 'start';
   if (active.length === 0) {
     list.innerHTML = '<div class="empty" style="grid-column:1/-1"><div class="empty-em">🏥</div>Хэвтэж буй адуу алга</div>';
-    $('#inp-detail-card').classList.add('hidden');
+    closeInpDrawer();
     return;
   }
-  list.innerHTML = active.map(i => {
+
+  // ===== Хуудаслалт =====
+  const totalPages = Math.max(1, Math.ceil(active.length / INP_PER_PAGE));
+  if (INP_PAGE > totalPages) INP_PAGE = totalPages;
+  if (INP_PAGE < 1) INP_PAGE = 1;
+  const pageItems = active.slice((INP_PAGE - 1) * INP_PER_PAGE, INP_PAGE * INP_PER_PAGE);
+
+  let pagerHTML = '';
+  if (totalPages > 1) {
+    const nums = [];
+    for (let n = 1; n <= totalPages; n++) {
+      nums.push(`<button type="button" class="inpc-pg ${n === INP_PAGE ? 'on' : ''}" onclick="inpGoPage(${n})">${n}</button>`);
+    }
+    pagerHTML = `
+      <div class="inpc-pager" style="grid-column:1/-1">
+        <button type="button" class="inpc-pg" ${INP_PAGE <= 1 ? 'disabled' : ''} onclick="inpGoPage(${INP_PAGE - 1})">‹</button>
+        ${nums.join('')}
+        <button type="button" class="inpc-pg" ${INP_PAGE >= totalPages ? 'disabled' : ''} onclick="inpGoPage(${INP_PAGE + 1})">›</button>
+        <span class="inpc-pg-info">${(INP_PAGE - 1) * INP_PER_PAGE + 1}–${Math.min(INP_PAGE * INP_PER_PAGE, active.length)} / ${active.length}</span>
+      </div>`;
+  }
+
+  list.innerHTML = pageItems.map(i => {
     const days = inpatientDays(i.admittedMs);
     // Одоогийн гүйлгээ үлдэгдэл (үзлэг + эмчилгээ + хоног − урьдчилгаа) — ресепшнд сэрэмжлүүлэг
     const due = Math.max(0, getInpFullTotal(i) - getInpPrepaidTotal(i));
@@ -2857,20 +2891,85 @@ function renderInpatient() {
         </div>
       </div>
     `;
-  }).join('');
+  }).join('') + pagerHTML;
+
+  // Карт дарахад drawer нээж дэлгэрэнгүйг харуулна
   list.querySelectorAll('.inpc').forEach(el => el.onclick = () => {
     STATE.selectedI = String(el.dataset.id);
     list.querySelectorAll('.inpc').forEach(x => x.classList.toggle('sel', x.dataset.id === STATE.selectedI));
     renderIDetail();
+    openInpDrawer();
   });
+
   if (STATE.selectedI != null) STATE.selectedI = String(STATE.selectedI);
-  if (STATE.selectedI) {
+  const selStillActive = STATE.selectedI && active.find(x => String(x.id) === STATE.selectedI);
+  if (!selStillActive) {
+    // Гарсан/устгагдсан бол drawer-ийг хаана
+    closeInpDrawer();
+  } else {
     list.querySelectorAll('.inpc').forEach(x => x.classList.toggle('sel', x.dataset.id === STATE.selectedI));
-    renderIDetail();
+    // Drawer нээлттэй байвал агуулгыг нь шинэчилнэ (нээхгүй)
+    if (isInpDrawerOpen()) renderIDetail();
   }
 }
 
-// Картын CSS-ийг <head>-д нэг удаа суулгана — index.html засах шаардлагагүй
+// ============================================================
+// INPATIENT — drawer (дэлгэрэнгүйг баруун талаас гулсуулж нээх)
+// ============================================================
+
+// #inp-detail-card-ийг index.html дахь байрнаас нь drawer руу зөөнө.
+// DOM node зөөхөд ID болон event listener бүгд хэвээр үлддэг тул
+// доторх таб, маягт, товчнууд өөрчлөлтгүй ажиллана.
+function ensureInpDrawer() {
+  if ($('#inp-drawer')) return;
+  const detail = $('#inp-detail-card');
+  if (!detail) return;
+  // Хуучин хоёр баганат байрлалыг задалж жагсаалтад бүтэн өргөн өгнө
+  const parentEl = detail.parentElement;
+  const overlay = document.createElement('div');
+  overlay.id = 'inp-drawer-overlay';
+  const drawer = document.createElement('div');
+  drawer.id = 'inp-drawer';
+  drawer.innerHTML = `
+    <div id="inp-drawer-head">
+      <button id="inp-drawer-close" type="button">✕ Хаах</button>
+    </div>
+    <div id="inp-drawer-body"></div>`;
+  document.body.appendChild(overlay);
+  document.body.appendChild(drawer);
+  drawer.querySelector('#inp-drawer-body').appendChild(detail);
+  if (parentEl) {
+    parentEl.style.display = 'block';
+    parentEl.style.gridTemplateColumns = 'none';
+  }
+  overlay.onclick = closeInpDrawer;
+  drawer.querySelector('#inp-drawer-close').onclick = closeInpDrawer;
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape' && isInpDrawerOpen() && !document.querySelector('.modal.open, .modal:not(.hidden) .modal-box')) closeInpDrawer();
+  });
+}
+
+function openInpDrawer() {
+  ensureInpDrawer();
+  const d = $('#inp-detail-card');
+  if (d) d.classList.remove('hidden');
+  const o = $('#inp-drawer-overlay'), w = $('#inp-drawer');
+  if (o) o.classList.add('open');
+  if (w) { w.classList.add('open'); w.scrollTop = 0; }
+}
+
+function closeInpDrawer() {
+  const o = $('#inp-drawer-overlay'), w = $('#inp-drawer');
+  if (o) o.classList.remove('open');
+  if (w) w.classList.remove('open');
+}
+
+function isInpDrawerOpen() {
+  const w = $('#inp-drawer');
+  return !!(w && w.classList.contains('open'));
+}
+
+// Картын болон drawer-ийн CSS-ийг <head>-д нэг удаа суулгана — index.html засах шаардлагагүй
 function ensureInpCardStyles() {
   if (document.getElementById('inpc-styles')) return;
   const st = document.createElement('style');
@@ -2903,6 +3002,28 @@ function ensureInpCardStyles() {
   .inpc-pay{font-weight:800;padding:2px 7px;border-radius:6px;font-size:10.5px;white-space:nowrap}
   .inpc-pay-ok{background:var(--green-soft,#e6f6ee);color:var(--green,#2f9e6f)}
   .inpc-pay-due{background:var(--red-soft,#fbeae8);color:var(--red,#c0483f)}
+  .inpc-pager{display:flex;align-items:center;justify-content:center;gap:6px;flex-wrap:wrap;padding:14px 0 4px}
+  .inpc-pg{min-width:34px;height:34px;padding:0 10px;border:1px solid var(--border,#e9e6f0);
+    background:var(--card,#fff);color:var(--muted,#5b5468);border-radius:9px;font-size:13px;font-weight:700;
+    cursor:pointer;font-family:inherit}
+  .inpc-pg:hover:not(:disabled){border-color:var(--purple,#7c5cbf);color:var(--purple,#7c5cbf)}
+  .inpc-pg.on{background:var(--purple,#7c5cbf);border-color:var(--purple,#7c5cbf);color:#fff}
+  .inpc-pg:disabled{opacity:.4;cursor:default}
+  .inpc-pg-info{font-size:11.5px;color:var(--muted,#8a8398);margin-left:8px}
+  #inp-drawer-overlay{position:fixed;inset:0;background:rgba(30,22,55,.42);
+    opacity:0;pointer-events:none;transition:opacity .2s ease;z-index:390}
+  #inp-drawer-overlay.open{opacity:1;pointer-events:auto}
+  #inp-drawer{position:fixed;top:0;right:0;height:100%;width:min(680px,100vw);
+    background:var(--bg,#f5f4f8);box-shadow:-8px 0 30px rgba(30,22,55,.18);
+    transform:translateX(100%);transition:transform .25s ease;z-index:391;
+    overflow-y:auto;padding:12px 16px 40px;box-sizing:border-box}
+  #inp-drawer.open{transform:translateX(0)}
+  #inp-drawer-head{display:flex;justify-content:flex-end;position:sticky;top:0;z-index:2;padding:2px 0 8px}
+  #inp-drawer-close{border:1px solid var(--border,#e9e6f0);background:var(--card,#fff);
+    color:var(--muted,#5b5468);border-radius:9px;padding:7px 14px;font-size:12.5px;font-weight:700;
+    cursor:pointer;font-family:inherit;box-shadow:0 2px 8px rgba(30,22,55,.12)}
+  #inp-drawer-close:hover{border-color:var(--red,#c0483f);color:var(--red,#c0483f)}
+  #inp-drawer #inp-detail-card{margin:0}
   `;
   document.head.appendChild(st);
 }
