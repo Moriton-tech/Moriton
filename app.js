@@ -1324,6 +1324,10 @@ function nav(p, opts) {
   // close drawer
   $('#drawer').classList.remove('show');
   $('#drawer-bd').classList.remove('show');
+  // Байрлан эмчлүүлэх drawer нь body-д амьдардаг тул хуудас солиход тусад нь хаана.
+  // samePage үед хаахгүй — sync-ийн улмаас нав дахин дуудагдахад эмчийн бичиж буй
+  // маягтын drawer гэнэт хаагдахаас сэргийлнэ.
+  if (!samePage && typeof closeInpDrawer === 'function') closeInpDrawer();
   // page-specific renders
   if (p === 'dashboard') renderDashboard();
   if (p === 'register') initRegPage();
@@ -2938,10 +2942,10 @@ function ensureInpDrawer() {
   document.body.appendChild(overlay);
   document.body.appendChild(drawer);
   drawer.querySelector('#inp-drawer-body').appendChild(detail);
-  if (parentEl) {
-    parentEl.style.display = 'block';
-    parentEl.style.gridTemplateColumns = 'none';
-  }
+  // ⚠ parent-ийн display-д ГАР ХҮРЭХГҮЙ! Энэ нь .page контейнер тул inline display
+  // тавьбал хуудас солих (.active) логикийг дарж, бүх таб дээр харагддаг алдаа гарна.
+  // Хоёр баганат grid байсан бол нэг багана болгоно — grid биш бол энэ нөлөөгүй.
+  if (parentEl) parentEl.style.gridTemplateColumns = '1fr';
   overlay.onclick = closeInpDrawer;
   drawer.querySelector('#inp-drawer-close').onclick = closeInpDrawer;
   document.addEventListener('keydown', e => {
