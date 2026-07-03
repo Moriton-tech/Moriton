@@ -2831,6 +2831,8 @@ function renderInpatient() {
   }
   list.innerHTML = active.map(i => {
     const days = inpatientDays(i.admittedMs);
+    // Одоогийн гүйлгээ үлдэгдэл (үзлэг + эмчилгээ + хоног − урьдчилгаа) — ресепшнд сэрэмжлүүлэг
+    const due = Math.max(0, getInpFullTotal(i) - getInpPrepaidTotal(i));
     return `
       <div class="li" data-id="${i.id}">
         <div class="li-stripe" style="background:var(--purple)"></div>
@@ -2842,6 +2844,7 @@ function renderInpatient() {
         <div class="li-r">
           <span class="badge b-p">${days} хоног</span>
           <div class="li-time">${escHTML(i.admittedDate)}</div>
+          <div class="li-time" style="font-weight:800;color:${due > 0 ? 'var(--red)' : 'var(--green)'}">${due > 0 ? fmt(due) + ' дутуу' : 'Төлбөр бүрэн'}</div>
         </div>
       </div>
     `;
@@ -2996,6 +2999,9 @@ function renderInpTreatTab(i) {
   }
   if ($('#inp-log-date') && !$('#inp-log-date').value) $('#inp-log-date').value = todayStr();
 
+  // ⤵ "Өмнөх өдрийг татах" товчийг маягтын дээр нэг удаа суулгана (index.html засах шаардлагагүй)
+  ensureCopyPrevBtn();
+
   // INP_DRAFT-г зөвхөн хэвтэн эмчлэх сонголт өөрчлөгдсөн үед reset хийнэ
   if (!INP_DRAFT._inpId || INP_DRAFT._inpId !== String(i.id)) {
     INP_DRAFT = { meds: [], services: [], _inpId: String(i.id) };
@@ -3024,6 +3030,7 @@ function renderInpTreatTab(i) {
             <span class="bold" style="font-size:13px">📅 ${escHTML(l.date||'—')} · ${escHTML(l.docName||'—')}</span>
             <span class="row" style="gap:6px">
               <span class="badge b-o">${fmt(l.amount||0)}</span>
+              <button class="btn btn-xs" onclick="copyInpDayByIdx(${realIdx})" title="Энэ өдрийн эмчилгээг маягтад татах">⤵</button>
               <button class="btn btn-r btn-xs" onclick="deleteInpLog(${realIdx})">✕</button>
             </span>
           </div>
@@ -3328,6 +3335,66 @@ function deleteInpLog(idx) {
   i.ms = nowMs();
   saveAll();
   fbSaveRecord('inps', i);
+  renderIDetail();
+}
+
+// ============================================================
+// INPATIENT — өмнөх өдрийн эмчилгээг татах
+// ============================================================
+
+// "Өмнөх өдрийг татах" товчийг маягтын дээр DOM-д нэг удаа суулгана
+function ensureCopyPrevBtn() {
+  if ($('#inp-copy-prev-btn')) return;
+  const dateEl = $('#inp-log-date');
+  if (!dateEl) return;
+  const host = dateEl.closest('.fg') || dateEl.parentElement;
+  if (!host || !host.parentElement) return;
+  const btn = document.createElement('button');
+  btn.id = 'inp-copy-prev-btn';
+  btn.type = 'button';
+  btn.textContent = '⤵ Өмнөх өдрийн эмчилгээг татах';
+  btn.style.cssText = 'display:block;width:100%;margin:0 0 10px;padding:9px;border:1px dashed var(--orange,#c98a1a);' +
+    'background:var(--orange-soft,#fcf3e0);color:var(--orange-dark,#b57708);border-radius:8px;' +
+    'font-weight:700;font-size:12.5px;cursor:pointer;font-family:inherit';
+  btn.onclick = copyPrevInpDay;
+  host.parentElement.insertBefore(btn, host);
+}
+
+// Хамгийн сүүлийн бичлэгийг маягтад буулгана
+function copyPrevInpDay() {
+  const i = STATE.inps.find(x => String(x.id) === String(STATE.selectedI));
+  if (!i || !Array.isArray(i.log) || i.log.length === 0) {
+    toast('Татах өмнөх бичлэг алга', 'err'); return;
+  }
+  const prev = [...i.log].sort((a, b) =>
+    (a.ms || new Date(a.date).getTime() || 0) - (b.ms || new Date(b.date).getTime() || 0)
+  ).pop();
+  fillInpFormFromLog(prev);
+  toast('⤵ Өмнөх өдрийн эмчилгээ татагдлаа', 'ok');
+}
+
+// Түүхийн тодорхой бичлэгийг маягтад буулгана (log массивын индексээр)
+function copyInpDayByIdx(idx) {
+  const i = STATE.inps.find(x => String(x.id) === String(STATE.selectedI));
+  if (!i || !Array.isArray(i.log) || !i.log[idx]) return;
+  fillInpFormFromLog(i.log[idx]);
+  toast('⤵ ' + (i.log[idx].date || '') + '-ны эмчилгээ татагдлаа', 'ok');
+}
+
+function fillInpFormFromLog(src) {
+  const i = STATE.inps.find(x => String(x.id) === String(STATE.selectedI));
+  if (!i || !src) return;
+  if ($('#inp-diag')) $('#inp-diag').value = src.diagnosis || '';
+  if ($('#inp-note')) $('#inp-note').value = src.note || '';
+  // Vitals (халуун/судас/жин)-ыг зориуд ХУУЛАХГҮЙ — өдөр бүр шинээр хэмжинэ
+  INP_DRAFT = {
+    services: Array.isArray(src.services) ? src.services.map(s => ({ name: s.name, price: parseFloat(s.price) || 0 })) : [],
+    meds: Array.isArray(src.meds) ? src.meds.map(m => ({ name: (m.name || m), note: m.note || '', price: parseFloat(m.price) || 0 })) : [],
+    _inpId: String(i.id)
+  };
+  renderInpDraftServices();
+  renderInpDraftMeds();
+  recomputeInpDayAmt();
 }
 
 // Prepayment functions
@@ -3482,17 +3549,41 @@ function dischargeInpatient() {
       <div class="row" style="justify-content:space-between;font-size:13px;margin-bottom:4px">
         <span>💊 Эмчилгээ (${logs.length} бичлэг):</span><span class="bold">${fmt(treatmentTotal)}</span>
       </div>
+      <div class="row" id="inp-dis-hm-row" style="justify-content:space-between;font-size:13px;margin-bottom:4px;display:none">
+        <span>🏠 Гэрийн эм:</span><span class="bold" id="inp-dis-hm">0₮</span>
+      </div>
       <div class="row" style="justify-content:space-between;font-size:14px;margin-bottom:4px;padding-top:6px;border-top:1px solid var(--border)">
-        <span class="bold">Нийт дүн:</span><span class="bold">${fmt(grandTotal)}</span>
+        <span class="bold">Нийт дүн:</span><span class="bold" id="inp-dis-grand">${fmt(grandTotal)}</span>
       </div>
       <div class="row" style="justify-content:space-between;font-size:13px;margin-bottom:4px">
         <span>Төлсөн урьдчилгаа:</span><span class="bold" style="color:var(--green)">−${fmt(prepaid)}</span>
       </div>
       <div class="row" style="justify-content:space-between;font-size:18px;font-weight:900;padding-top:6px;border-top:2px solid var(--border)">
-        <span>Үлдэгдэл төлөх:</span><span style="color:${due>0?'var(--red)':'var(--green)'}">${fmt(due)}</span>
+        <span>Үлдэгдэл төлөх:</span><span id="inp-dis-due" style="color:${due>0?'var(--red)':'var(--green)'}">${fmt(due)}</span>
       </div>
     </div>
+
+    <div class="ch" style="margin-top:14px">📋 Эзэнд өгөх заавар (гарах хуудсанд хэвлэгдэнэ)</div>
+    <div class="fld"><label>Гэрийн арчилгаа</label>
+      <textarea class="inp" id="inp-dis-homecare" rows="3" placeholder="Хөдөлгөөн хязгаарлах хугацаа, хооллолт, шарх арчлах заавар..."></textarea>
+    </div>
+    <div class="fld" style="margin-top:8px"><label>Гэрт өгөх эм (үнэ бичвэл нийт дүнд нэмэгдэнэ)</label>
+      <div id="inp-homemed-list"></div>
+      <button class="btn btn-xs" type="button" onclick="addHomeMedRow()">+ Эм нэмэх</button>
+    </div>
+    <div class="fld" style="margin-top:8px"><label>Дараагийн хяналтын огноо</label>
+      <input class="inp" type="date" id="inp-dis-followup">
+    </div>
   `;
+  // Live тооцоололд ашиглах суурь дүн (гэрийн эм нэмэгдэхэд нийт/үлдэгдэл шууд шинэчлэгдэнэ)
+  DIS_BASE = { grand: grandTotal, prepaid: prepaid };
+  // Сүүлийн өдрийн эмийг гэрийн эм болгож урьдчилан бөглөнө — эмч ихэвчлэн сүүлд хэрэглэсэн эмээ үргэлжлүүлдэг.
+  // Үнийг хоосон үлдээнэ: зөвхөн бодитоор олгосон эмэнд үнэ бичнэ.
+  if ($('#inp-homemed-list')) {
+    $('#inp-homemed-list').innerHTML = '';
+    const lastLog = (Array.isArray(i.log) && i.log.length) ? i.log[i.log.length - 1] : null;
+    ((lastLog && Array.isArray(lastLog.meds)) ? lastLog.meds : []).forEach(m => addHomeMedRow(m.name || m, m.note || '', ''));
+  }
   STATE.dischargeTarget = i.id;
   openModal('inp-discharge-modal');
 }
@@ -3500,6 +3591,16 @@ function dischargeInpatient() {
 function confirmDischarge() {
   const i = STATE.inps.find(x => String(x.id) === String(STATE.dischargeTarget));
   if (!i) return;
+  // 📋 Эзэнд өгөх заавар + гэрийн эм — modal-аас цуглуулж inp дээр хадгална
+  // (fbSaveRecord('inps', i) доор дуудагддаг тул Firestore-т автоматаар орно)
+  const homeMeds = collectHomeMeds();
+  const homeMedsTotal = homeMeds.reduce((a, m) => a + (parseFloat(m.price) || 0), 0);
+  i.dischargeInfo = {
+    homecare: ($('#inp-dis-homecare') ? $('#inp-dis-homecare').value : '').trim(),
+    homeMeds: homeMeds,
+    followUpDate: $('#inp-dis-followup') ? $('#inp-dis-followup').value : '',
+    ms: nowMs()
+  };
   i.discharged = true;
   i.dischargedMs = nowMs();
   i.dischargedDate = todayStr();
@@ -3509,7 +3610,8 @@ function confirmDischarge() {
   const examFee = parseFloat(i.initialAmount)||0;
   const treatmentTotal = getInpDailyTotal(i);
   const accommodation = dailyFee * days;
-  const grandTotal = examFee + treatmentTotal + accommodation;
+  // 🔗 Гэрийн эм санхүүд орно: fin.amount-д нэмэгдэж, Авлага/Төлөгдсөн таб зөв тоо харуулна
+  const grandTotal = examFee + treatmentTotal + accommodation + homeMedsTotal;
   const payments = getInpPrepayments(i).map(p => ({
     amount: parseFloat(p.amount)||0,
     method: p.method,
@@ -3533,7 +3635,7 @@ function confirmDischarge() {
     horse: i.horse, owner: i.owner, phone: i.phone,
     docName: i.docName,
     amount: grandTotal,
-    services: 'Хэвтэн эмчилгээ ' + days + ' хоног',
+    services: 'Хэвтэн эмчилгээ ' + days + ' хоног' + (homeMedsTotal > 0 ? ' + гэрийн эм' : ''),
     paid: due === 0 && payments.length > 0,
     method: payments.length === 0 ? '' : (payments.length === 1 ? payments[0].method : 'хосолсон'),
     payments: payments,
@@ -3549,11 +3651,148 @@ function confirmDischarge() {
   fbSaveRecord('inps', i);
   fbSaveRecord('fins', fin);
   closeModal('inp-discharge-modal');
+  const dischargedId = i.id;
   STATE.selectedI = null;
   STATE.dischargeTarget = null;
   updateBadges();
   toast(due > 0 ? '🚪 Гарлаа · ' + fmt(due) + ' үлдэгдэлтэй' : '🚪 Гарлаа · төлбөр бүрэн', 'ok');
   renderInpatient();
+  // 📋 Эзэнд өгөх гарах хуудсыг шууд хэвлэхийг санал болгоно
+  setTimeout(() => {
+    if (confirm('📋 Эзэнд өгөх гарах хуудсыг хэвлэх үү?')) printOwnerSheet(dischargedId);
+  }, 350);
+}
+
+// ============================================================
+// DISCHARGE — эзэнд өгөх заавар, гэрийн эм, гарах хуудас
+// ============================================================
+
+// Гарах modal-ын live тооцооллын суурь дүн
+let DIS_BASE = { grand: 0, prepaid: 0 };
+
+// Гэрийн эмийн мөр нэмэх (гарах modal дотор)
+function addHomeMedRow(name = '', note = '', price = '') {
+  const wrap = $('#inp-homemed-list');
+  if (!wrap) return;
+  const div = document.createElement('div');
+  div.className = 'homemed-line';
+  div.style.cssText = 'display:flex;gap:6px;margin-bottom:5px;align-items:center;flex-wrap:wrap';
+  div.innerHTML = `
+    <input class="inp" placeholder="Эмийн нэр" value="${escHTML(name)}" style="flex:1;min-width:90px">
+    <input class="inp" placeholder="Заавар: өдөрт 2 удаа, 5 хоног" value="${escHTML(note)}" style="flex:1.4;min-width:130px">
+    <input class="inp" type="number" placeholder="₮" value="${escHTML(String(price))}" style="width:84px" oninput="updateDischargeTotals()">
+    <button class="btn btn-r btn-xs" type="button">✕</button>`;
+  div.querySelector('button').onclick = () => { div.remove(); updateDischargeTotals(); };
+  wrap.appendChild(div);
+}
+
+function collectHomeMeds() {
+  return [...document.querySelectorAll('#inp-homemed-list .homemed-line')].map(l => {
+    const ins = l.querySelectorAll('input');
+    return { name: ins[0].value.trim(), note: ins[1].value.trim(), price: parseFloat(ins[2].value) || 0 };
+  }).filter(m => m.name);
+}
+
+// Гэрийн эмийн үнэ өөрчлөгдөх бүрд Нийт / Үлдэгдэл-ийг шинэчилнэ
+function updateDischargeTotals() {
+  const hmTotal = collectHomeMeds().reduce((a, m) => a + (parseFloat(m.price) || 0), 0);
+  const grand = DIS_BASE.grand + hmTotal;
+  const due = Math.max(0, grand - DIS_BASE.prepaid);
+  const hmRow = $('#inp-dis-hm-row');
+  if (hmRow) hmRow.style.display = hmTotal > 0 ? '' : 'none';
+  if ($('#inp-dis-hm')) $('#inp-dis-hm').textContent = fmt(hmTotal);
+  if ($('#inp-dis-grand')) $('#inp-dis-grand').textContent = fmt(grand);
+  const dueEl = $('#inp-dis-due');
+  if (dueEl) { dueEl.textContent = fmt(due); dueEl.style.color = due > 0 ? 'var(--red)' : 'var(--green)'; }
+}
+
+/**
+ * printOwnerSheet — эмнэлгээс гарах үед эзэнд өгөх хуудас.
+ *  Эмнэлзүйн мэдээллийг inp-ээс, төлбөрийг fin-ээс авна:
+ *  fin-ийг examId-аар олж getPaidAmount/getDueAmount-ыг ашигласнаар
+ *  Санхүү (Авлага/Төлөгдсөн) таб-тай яг ижил дүн гарна.
+ *  Дараа нь Авлага дээр төлбөр нэмэгдвэл дахин хэвлэхэд үлдэгдэл автоматаар зөв болно.
+ */
+function printOwnerSheet(inpId) {
+  const i = STATE.inps.find(x => String(x.id) === String(inpId || STATE.selectedI));
+  if (!i) { toast('Хэвтэн эмчилгээний бичлэг олдсонгүй', 'err'); return; }
+  const info = i.dischargeInfo || {};
+
+  // 🔗 Санхүүгийн холбоос
+  const fin = STATE.fins.find(f => String(f.examId) === String(i.examId));
+  const total = fin ? (parseFloat(fin.amount) || 0) : getInpFullTotal(i, i.dischargedMs);
+  const paid  = fin ? getPaidAmount(fin) : getInpPrepaidTotal(i);
+  const due   = fin ? getDueAmount(fin)  : Math.max(0, total - paid);
+
+  const days = inpatientDays(i.admittedMs, i.dischargedMs);
+  const medRows = (info.homeMeds || []).map((m, idx) => `<tr>
+      <td style="text-align:center;border:0.5pt solid #000;padding:2mm">${idx + 1}</td>
+      <td style="border:0.5pt solid #000;padding:2mm;font-weight:700">${escHTML(m.name)}</td>
+      <td style="border:0.5pt solid #000;padding:2mm">${escHTML(m.note || '—')}</td>
+    </tr>`).join('');
+
+  $('#print-area').innerHTML = `
+<div style="width:210mm;min-height:297mm;font-family:'Times New Roman',serif;font-size:10pt;color:#000;padding:12mm 14mm;box-sizing:border-box">
+  <div style="text-align:center;border-bottom:2pt solid #000;padding-bottom:4mm;margin-bottom:5mm">
+    <div style="font-size:13pt;font-weight:900;text-transform:uppercase;letter-spacing:1px">Морьтон үндэсний адууны эмнэлэг</div>
+    <div style="font-size:10pt;margin-top:2mm;font-weight:700">Эмнэлгээс гарах үеийн заавар — эзэнд өгөх хуудас</div>
+  </div>
+  <div style="display:flex;flex-wrap:wrap;gap:4mm;margin-bottom:5mm;font-size:9pt">
+    <div style="flex:1;min-width:45mm"><b>Адуу:</b> ${escHTML(i.horse || '—')}</div>
+    <div style="flex:1;min-width:45mm"><b>Эзэн:</b> ${escHTML(i.owner || '—')}</div>
+    <div style="flex:1;min-width:45mm"><b>Эмчлэгч эмч:</b> ${escHTML(i.docName || '—')}</div>
+    <div style="flex:1;min-width:45mm"><b>Хэвтсэн:</b> ${escHTML(i.admittedDate || '—')} (${days} хоног)</div>
+    <div style="flex:1;min-width:45mm"><b>Гарсан:</b> ${escHTML(i.dischargedDate || todayStr())}</div>
+    <div style="flex:1;min-width:45mm"><b>Онош:</b> ${escHTML(i.diagnosis || '—')}</div>
+  </div>
+
+  <div style="font-weight:900;font-size:10.5pt;border-bottom:1pt solid #000;padding-bottom:1mm;margin-bottom:2mm">🏠 Гэрийн арчилгаа</div>
+  <div style="font-size:9.5pt;line-height:1.7;white-space:pre-wrap;min-height:22mm;margin-bottom:5mm">${escHTML(info.homecare || '—')}</div>
+
+  <div style="font-weight:900;font-size:10.5pt;border-bottom:1pt solid #000;padding-bottom:1mm;margin-bottom:2mm">💊 Гэрт үргэлжлүүлэх эм</div>
+  ${medRows ? `<table style="width:100%;border-collapse:collapse;font-size:9pt;margin-bottom:5mm">
+    <thead><tr>
+      <th style="background:#022438;color:#fff;border:0.5pt solid #000;padding:2mm;width:8mm">№</th>
+      <th style="background:#022438;color:#fff;border:0.5pt solid #000;padding:2mm;width:50mm">Эмийн нэр</th>
+      <th style="background:#022438;color:#fff;border:0.5pt solid #000;padding:2mm">Хэрэглэх заавар</th>
+    </tr></thead><tbody>${medRows}</tbody></table>`
+    : '<div style="font-size:9pt;color:#555;margin-bottom:5mm">Гэрт үргэлжлүүлэх эм байхгүй.</div>'}
+
+  <div style="border:1pt solid #000;padding:3mm 4mm;margin-bottom:5mm;font-size:10pt">
+    <b>📅 Дараагийн хяналтын үзлэг:</b>
+    <span style="font-size:11pt;font-weight:900;margin-left:3mm">${escHTML(info.followUpDate || '____________')}</span>
+    <div style="font-size:8pt;color:#555;margin-top:1mm">Заасан өдөр эмнэлэгт хяналтын үзлэгт ирнэ үү.</div>
+  </div>
+
+  <div style="font-weight:900;font-size:10.5pt;border-bottom:1pt solid #000;padding-bottom:1mm;margin-bottom:2mm">💰 Төлбөрийн хураангуй</div>
+  <table style="width:60%;border-collapse:collapse;font-size:9.5pt;margin-bottom:6mm">
+    <tr><td style="padding:1.5mm 0">Нийт дүн:</td><td style="text-align:right;font-weight:700">${fmt(total)}</td></tr>
+    <tr><td style="padding:1.5mm 0">Төлсөн:</td><td style="text-align:right;font-weight:700;color:#2f7a52">${fmt(paid)}</td></tr>
+    <tr style="border-top:1pt solid #000"><td style="padding:1.5mm 0;font-weight:900">Үлдэгдэл:</td><td style="text-align:right;font-weight:900;font-size:11pt;${due > 0 ? 'color:#a33' : ''}">${fmt(due)}</td></tr>
+  </table>
+  ${due > 0 ? '<div style="font-size:8.5pt;border:0.5pt solid #999;padding:2mm 3mm;margin-bottom:6mm">Үлдэгдэл төлбөрийг: Торийн банк 102030102030 · Хаан банк 5040416540 (Морьтон адууны тов ХХК) дансанд шилжүүлнэ үү.</div>' : ''}
+
+  <div style="display:flex;justify-content:space-between;margin-top:12mm;font-size:9pt">
+    <div style="border-top:0.5pt solid #000;padding-top:2mm;min-width:55mm;text-align:center">Эмч: ${escHTML(i.docName || '')}</div>
+    <div style="border-top:0.5pt solid #000;padding-top:2mm;min-width:55mm;text-align:center">Хүлээн авсан эзэн</div>
+  </div>
+  <div style="margin-top:6mm;font-size:7.5pt;color:#666;text-align:center">Морьтон адууны тов ХХК · Хэвлэсэн: ${escHTML(todayStr())}</div>
+</div>`;
+  setTimeout(() => window.print(), 150);
+}
+
+// Санхүүгээс (Төлөгдсөн / Авлага) дахин хэвлэх — fin → examId → inp
+function printOwnerSheetByFin(finId) {
+  const f = STATE.fins.find(x => String(x.id) === String(finId));
+  if (!f) return;
+  const i = STATE.inps.find(x => String(x.examId) === String(f.examId));
+  if (!i) { toast('Хэвтэн эмчилгээний бичлэг олдсонгүй', 'err'); return; }
+  printOwnerSheet(i.id);
+}
+
+// Энэ fin-д харгалзах гарсан хэвтэгч бий эсэх (товч харуулах нөхцөл)
+function hasOwnerSheet(f) {
+  return !!STATE.inps.find(x => String(x.examId) === String(f.examId) && x.discharged);
 }
 
 // ============================================================
@@ -3667,6 +3906,7 @@ function renderFinance() {
           <td>${f.paidMs?fmtTime(f.paidMs):'—'}</td>
           <td>
             <button class="btn btn-xs" onclick="printInvoice('${escHTML(f.id)}')">🖨</button>
+            ${hasOwnerSheet(f) ? `<button class="btn btn-xs" onclick="printOwnerSheetByFin('${escHTML(f.id)}')" title="Эзэнд өгөх гарах хуудас">📋</button>` : ''}
             <button class="btn btn-xs" onclick="editFin('${escHTML(f.id)}')">✏️</button>
           </td>
         </tr>
@@ -3724,7 +3964,8 @@ function renderRecvDetail() {
       <div class="fld"><label>Үлдэгдэл</label><div style="font-size:18px;font-weight:900;color:var(--red)">${fmt(due)}</div></div>
     </div>
     ${renderPaymentsList(f)}
-    <div class="row" style="justify-content:flex-end;margin-top:14px">
+    <div class="row" style="justify-content:flex-end;gap:8px;margin-top:14px">
+      ${hasOwnerSheet(f) ? `<button class="btn" onclick="printOwnerSheetByFin('${escHTML(f.id)}')">📋 Эзэнд өгөх хуудас</button>` : ''}
       <button class="btn btn-g" onclick="markPaid('${escHTML(f.id)}')">💰 Төлбөр нэмэх</button>
     </div>
   `;
@@ -4382,13 +4623,20 @@ function printInpatientCard() {
 
   const logs = Array.isArray(i.log) ? [...i.log].sort((a,b) => (a.date||'') > (b.date||'') ? 1 : -1) : [];
   const fee  = getDailyFee(i);
-  const days = inpatientDays(i.admittedMs);
-  const admDate   = i.admittedDate  || (i.admittedMs   ? localDateStr(new Date(i.admittedMs))  : '—');
-  const disDate   = i.dischargedDate|| (i.discharged    ? '—' : 'Хэвтэж байна');
+  const days = inpatientDays(i.admittedMs, i.dischargedMs);
+  const admDate = i.admittedDate || (i.admittedMs ? localDateStr(new Date(i.admittedMs)) : '—');
+  const disDate = i.dischargedDate || (i.discharged ? '—' : 'Хэвтэж байна');
+
+  // ⚠ Санхүү таб болон гарах нэхэмжлэхтэй ИЖИЛ томьёо: үзлэг + эмчилгээ + хоног
+  const examFee    = parseFloat(i.initialAmount) || 0;
   const treatTotal = logs.reduce((a,l) => a + (parseFloat(l.amount)||0), 0);
   const accomTotal = fee * days;
-  const prepaid    = Array.isArray(i.prepayments) ? i.prepayments.reduce((a,p) => a + (parseFloat(p.amount)||0), 0) : 0;
-  const grandTotal = treatTotal + accomTotal;
+  const homeMedsTotal = (i.dischargeInfo && Array.isArray(i.dischargeInfo.homeMeds))
+    ? i.dischargeInfo.homeMeds.reduce((a,m) => a + (parseFloat(m.price)||0), 0) : 0;
+  const grandTotal = examFee + treatTotal + accomTotal + homeMedsTotal;
+  const prepays    = getInpPrepayments(i);
+  const prepaid    = prepays.reduce((a,p) => a + (parseFloat(p.amount)||0), 0);
+  const due        = Math.max(0, grandTotal - prepaid);
 
   const rows = logs.map((l, idx) => {
     const svcs = Array.isArray(l.services) ? l.services.map(s => escHTML(s.name||'') + (s.price ? ` (${fmt(s.price)})` : '')).join(', ') : '';
@@ -4404,10 +4652,28 @@ function printInpatientCard() {
     </tr>`;
   }).join('');
 
-  const accomRow = fee > 0 ? `<tr style="background:#f0f0f0"><td colspan="3" style="text-align:right;font-weight:700">Хоногийн хөлс (${days}×${fmt(fee)})</td><td colspan="2"></td><td style="text-align:right;font-weight:700">${fmt(accomTotal)}</td></tr>` : '';
+  // №0 мөр — хүлээн авсан үзлэг (initialAmount-ыг дэвтэрт ил харуулна)
+  const examRow = `<tr>
+      <td style="text-align:center">0</td>
+      <td style="text-align:center;white-space:nowrap">${escHTML(admDate)}</td>
+      <td style="text-align:center;font-size:8pt">${escHTML(i.docName||'—')}</td>
+      <td><b>Хэвтэн эмчлэхээр хүлээн авав.</b>${i.diagnosis?`<div style="font-size:7.5pt;color:#555">${escHTML(i.diagnosis)}</div>`:''}</td>
+      <td style="font-size:7.5pt;color:#555">Анхны үзлэг</td>
+      <td style="text-align:right;font-weight:700">${fmt(examFee)}</td>
+    </tr>`;
+
+  const accomRow = fee > 0 ? `<tr style="background:#f0eef7"><td colspan="5" style="text-align:right;font-weight:700;padding:2mm;border:0.5pt solid #000">Хоногийн хөлс (${days} × ${fmt(fee)})</td><td style="text-align:right;font-weight:700;padding:2mm;border:0.5pt solid #000">${fmt(accomTotal)}</td></tr>` : '';
+
+  const homeMedRow = homeMedsTotal > 0 ? `<tr style="background:#f0eef7"><td colspan="5" style="text-align:right;font-weight:700;padding:2mm;border:0.5pt solid #000">Гэрт өгсөн эм</td><td style="text-align:right;font-weight:700;padding:2mm;border:0.5pt solid #000">${fmt(homeMedsTotal)}</td></tr>` : '';
+
+  const prepayRows = prepays.map(p => `<tr>
+      <td colspan="4" style="border:0.5pt solid #000"></td>
+      <td style="text-align:right;padding:2mm;border:0.5pt solid #000">${escHTML(p.date||'')} · ${escHTML(p.method||'')}</td>
+      <td style="text-align:right;padding:2mm;border:0.5pt solid #000;color:#2f7a52">−${fmt(p.amount)}</td>
+    </tr>`).join('');
 
   $('#print-area').innerHTML = `
-<div style="width:210mm;min-height:297mm;font-family:'Times New Roman',serif;font-size:9.5pt;color:#000;padding:8mm 10mm;box-sizing:border-box">
+<div style="width:210mm;min-height:297mm;font-family:'Times New Roman',serif;font-size:9.5pt;color:#000;padding:10mm 12mm;box-sizing:border-box">
   <div style="text-align:center;border-bottom:2pt solid #000;padding-bottom:4mm;margin-bottom:5mm">
     <div style="font-size:13pt;font-weight:900;text-transform:uppercase;letter-spacing:1px">Морьтон үндэсний адууны эмнэлэг</div>
     <div style="font-size:9pt;margin-top:2mm">Хэвтэн эмчлэх тасгийн эмчилгээний дэвтэр</div>
@@ -4420,10 +4686,9 @@ function printInpatientCard() {
     <div style="flex:1;min-width:40mm"><b>Хэвтсэн:</b> ${escHTML(admDate)}</div>
     <div style="flex:1;min-width:40mm"><b>Гарсан:</b> ${escHTML(disDate)}</div>
     <div style="flex:1;min-width:40mm"><b>Нийт хоног:</b> ${days}</div>
-    <div style="flex:1;min-width:40mm"><b>УУД:</b> ${escHTML(i.examNum||'—')}</div>
+    <div style="flex:1;min-width:40mm"><b>УУД №:</b> ${escHTML(i.examNum||'—')}</div>
   </div>
-  ${(i.diagnosis||i.note)?`<div style="margin-bottom:4mm;font-size:8.5pt;border:0.5pt solid #ccc;padding:2mm 3mm">${i.diagnosis?`<b>Оруулах онош:</b> ${escHTML(i.diagnosis)}<br>`:''}${i.note?`<b>Анхны тэмдэглэл:</b> ${escHTML(i.note)}`:''}</div>`:''}
-  <table style="width:100%;border-collapse:collapse;font-size:8.5pt;margin-bottom:6mm">
+  <table style="width:100%;border-collapse:collapse;font-size:8.5pt;margin-bottom:4mm">
     <thead><tr>
       <th style="background:#022438;color:#fff;padding:2mm;border:0.5pt solid #000;width:6mm">№</th>
       <th style="background:#022438;color:#fff;padding:2mm;border:0.5pt solid #000;width:18mm">Огноо</th>
@@ -4433,21 +4698,24 @@ function printInpatientCard() {
       <th style="background:#022438;color:#fff;padding:2mm;border:0.5pt solid #000;width:18mm">Дүн ₮</th>
     </tr></thead>
     <tbody>
-      ${rows||'<tr><td colspan="6" style="text-align:center;color:#888;padding:4mm">Бүртгэл алга</td></tr>'}
+      ${examRow}
+      ${rows}
       ${accomRow}
-      <tr style="border-top:1.5pt solid #000">
-        <td colspan="3" style="text-align:right;font-weight:900;font-size:10pt;padding:2mm;border:0.5pt solid #000">НИЙТ ДҮН</td>
-        <td colspan="2" style="text-align:right;font-size:8pt;color:#555;padding:2mm;border:0.5pt solid #000">${prepaid>0?`Урьдчилгаа: ${fmt(prepaid)}`:''}</td>
-        <td style="text-align:right;font-weight:900;font-size:11pt;padding:2mm;border:0.5pt solid #000">${fmt(grandTotal)}</td>
-      </tr>
+      ${homeMedRow}
     </tbody>
+  </table>
+  <table style="width:100%;border-collapse:collapse;font-size:9pt;margin-bottom:8mm">
+    <tr><td colspan="4" style="border:0.5pt solid #000"></td><td style="text-align:right;font-weight:900;padding:2mm;border:0.5pt solid #000">НИЙТ ДҮН</td><td style="text-align:right;font-weight:900;padding:2mm;border:0.5pt solid #000;width:24mm">${fmt(grandTotal)}</td></tr>
+    ${prepayRows}
+    <tr><td colspan="4" style="border:0.5pt solid #000"></td><td style="text-align:right;padding:2mm;border:0.5pt solid #000">Төлсөн урьдчилгаа</td><td style="text-align:right;padding:2mm;border:0.5pt solid #000;color:#2f7a52">−${fmt(prepaid)}</td></tr>
+    <tr><td colspan="4" style="border:0.5pt solid #000"></td><td style="text-align:right;font-weight:900;font-size:10pt;padding:2mm;border:0.5pt solid #000;background:#f7ede9">ҮЛДЭГДЭЛ ТӨЛӨХ</td><td style="text-align:right;font-weight:900;font-size:11pt;padding:2mm;border:0.5pt solid #000;background:#f7ede9">${fmt(due)}</td></tr>
   </table>
   <div style="display:flex;justify-content:space-between;margin-top:10mm;font-size:8.5pt">
     <div style="border-top:0.5pt solid #000;padding-top:2mm;min-width:50mm;text-align:center">Эмч: ${escHTML(i.docName||'')}</div>
     <div style="border-top:0.5pt solid #000;padding-top:2mm;min-width:50mm;text-align:center">Үйлчлүүлэгч</div>
     <div style="border-top:0.5pt solid #000;padding-top:2mm;min-width:50mm;text-align:center">Хянасан менежер</div>
   </div>
-  <div style="margin-top:6mm;font-size:7.5pt;color:#666;text-align:center">Морьтон адууны тов ХХК · Торийн банк 102030102030 · Хаан банк 5040416540</div>
+  <div style="margin-top:6mm;font-size:7.5pt;color:#666;text-align:center">Морьтон адууны тов ХХК · Торийн банк 102030102030 · Хаан банк 5040416540 · Хэвлэсэн: ${escHTML(todayStr())}</div>
 </div>`;
   setTimeout(() => window.print(), 150);
 }
