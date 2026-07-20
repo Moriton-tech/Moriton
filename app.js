@@ -2245,7 +2245,7 @@ function removeWaiting() {
   if (!STATE.selectedW) return;
   if (!confirm('Энэ адууг хүлээлгээс хасах уу?')) return;
   const removedId = STATE.selectedW;
-  STATE.waiting = STATE.waiting.filter(x => x.id !== removedId);
+  STATE.waiting = STATE.waiting.filter(x => String(x.id) !== String(removedId));
   _markWaitingRemoved(removedId);
   STATE.selectedW = null;
   saveAll();
@@ -2716,7 +2716,7 @@ function finishExam() {
   };
   STATE.fins.push(fin);
   // remove from waiting
-  STATE.waiting = STATE.waiting.filter(w => w.id !== e.waitId);
+  STATE.waiting = STATE.waiting.filter(w => String(w.id) !== String(e.waitId));
   _markWaitingRemoved(e.waitId);
   // update doctor stats
   const doc = STATE.doctors.find(d => String(d.id) === String(e.docId));
@@ -2775,7 +2775,7 @@ function moveToInpatient() {
     discharged: false
   };
   STATE.inps.push(inp);
-  STATE.waiting = STATE.waiting.filter(w => w.id !== e.waitId);
+  STATE.waiting = STATE.waiting.filter(w => String(w.id) !== String(e.waitId));
   _markWaitingRemoved(e.waitId);
   saveAll();
   fbSaveRecord('exams', exam);
@@ -6931,6 +6931,7 @@ function _fbMarkInitialLoadDone() {
     if (!__fbInitialLoadDone) {
       __fbInitialLoadDone = true;
       if (STATE.user) softRefresh();
+      try { _fbRetryPendingWrites(); } catch(e) {}
     }
   }, 5000);
   // Snapshot counter — collection бүрийн эхний snapshot ирэхэд нэмэгдэнэ
@@ -6940,6 +6941,8 @@ function _fbMarkInitialLoadDone() {
       clearTimeout(backupTimer);
       __fbInitialLoadDone = true;
       if (STATE.user) softRefresh();
+      // Өмнөх session-д сервэрт хүрч амжаагүй бичилтүүдийг дахин илгээнэ
+      try { _fbRetryPendingWrites(); } catch(e) {}
     }
   };
 }
@@ -6975,11 +6978,37 @@ function _scheduleLsSave(colName) {
 }
 
 
+// ── Сервэрт хараахан баталгаажаагүй бичилтүүд (offline хамгаалалт) ──
+// setDoc-ийн promise нь зөвхөн сервэр хүлээж авсны ДАРАА биелдэг.
+// Бичихийн өмнө урьдчилж тэмдэглээд, амжилттай болмогц арилгана.
+// Таб хаагдаж бичилт сервэрт хүрээгүй бол дараагийн нээлтэд дахин илгээнэ.
+const __fbPendingWrites = (() => {
+  try { return JSON.parse(localStorage.getItem('mt_pending_writes') || '{}'); } catch(e) { return {}; }
+})();
+function _savePendingWrites() {
+  try { localStorage.setItem('mt_pending_writes', JSON.stringify(__fbPendingWrites)); } catch(e) {}
+}
+function _markPending(colName, docId) {
+  if (!__fbPendingWrites[colName]) __fbPendingWrites[colName] = {};
+  __fbPendingWrites[colName][String(docId)] = Date.now();
+  _savePendingWrites();
+}
+function _clearPending(colName, docId) {
+  if (__fbPendingWrites[colName] && __fbPendingWrites[colName][String(docId)] !== undefined) {
+    delete __fbPendingWrites[colName][String(docId)];
+    _savePendingWrites();
+  }
+}
+function _isPending(colName, docId) {
+  return !!(__fbPendingWrites[colName] && __fbPendingWrites[colName][String(docId)] !== undefined);
+}
+
 function fbWriteDoc(colName, docId, data) {
   if (!window.__fbSetDoc || !window.__fbColDoc) return Promise.resolve();
+  _markPending(colName, docId);
   const ref = window.__fbColDoc(colName, docId);
   return window.__fbSetDoc(ref, data)
-    .then(() => { try { flashSync(); } catch(e){} })
+    .then(() => { _clearPending(colName, docId); try { flashSync(); } catch(e){} })
     .catch(err => {
       console.error('[FB] ❌ ' + colName + '/' + docId + ' бичих алдаа:', err.message);
       try { toast('FB алдаа (' + colName + '): ' + err.message, 'err'); } catch(e){}
@@ -7240,6 +7269,90 @@ function fbRemoveRecord(colName, docId) {
   _fbDebouncedRefresh();
 }
 
+// ── Анхны snapshot-той локал кэшийг ТУЛГАХ (reconcile) ────────
+// Firestore-ийн анхны snapshot зөвхөн ОДОО сервэр дээр байгаа doc-уудыг
+// агуулдаг тул өөр компьютер дээр устгагдсан бичлэгт 'removed' event ирдэггүй.
+// Ийм stale бичлэг localStorage кэшэд үлдэж, компьютер бүр өөр өөр
+// "Хүлээгдэж буй" жагсаалт харуулдаг байсан. Энэ функц үүнийг засна:
+//   1. Локалд байгаа ч сервэрт байхгүй waiting бичлэгийг хасна
+//      (энэ төхөөрөмжөөс бичигдээд сервэрт хүрч амжаагүй pending бичлэгийг
+//       хасахгүй — харин дахин илгээнэ)
+//   2. Устгасан гэж тэмдэглэсэн (tombstone) боловч сервэрт үлдсэн doc-ийн
+//      устгалыг дахин илгээнэ (устгал offline үед сервэрт хүрээгүй тохиолдол)
+//   3. Зорилгоо биелүүлсэн tombstone-уудыг цэвэрлэнэ
+function _fbReconcileWaiting(remoteIds) {
+  const remote = new Set((remoteIds || []).map(String));
+  let changed = false;
+  STATE.waiting = (STATE.waiting || []).filter(w => {
+    const id = String(w.id);
+    if (remote.has(id)) return true;
+    if (_isPending('waiting', id) && !__fbRemovedWaiting.has(id)) {
+      fbSaveRecord('waiting', w); // сервэрт хүрээгүй бичлэг — дахин илгээнэ
+      return true;
+    }
+    changed = true;
+    return false; // өөр компьютер дээр устгагдсан stale бичлэг
+  });
+  let tsChanged = false;
+  [...__fbRemovedWaiting].forEach(id => {
+    if (remote.has(String(id))) {
+      fbDeleteDoc('waiting', String(id)); // устгал сервэрт хүрээгүй байсан — дахин устгана
+    } else {
+      __fbRemovedWaiting.delete(id);
+      tsChanged = true;
+    }
+  });
+  if (tsChanged) {
+    try { localStorage.setItem('mt_removed_waiting', JSON.stringify([...__fbRemovedWaiting])); } catch(e) {}
+  }
+  if (changed) {
+    _scheduleLsSave('waiting');
+    updateBadges();
+    _fbDebouncedRefresh();
+  }
+}
+
+// ── Сервэрт хүрээгүй үлдсэн бичилтүүдийг дахин илгээх ─────────
+// Анхны ачаалал дууссаны дараа нэг удаа дуудагдана.
+// (waiting-ийг _fbReconcileWaiting өөрөө шийддэг тул энд алгасна)
+function _fbRetryPendingWrites() {
+  try {
+    for (const colName of Object.keys(__fbPendingWrites)) {
+      if (colName === 'waiting' || colName === 'clinic_config') continue;
+      const ids = Object.keys(__fbPendingWrites[colName] || {});
+      for (const docId of ids) {
+        let rec = null;
+        if (colName === 'users') {
+          rec = (STATE.users || []).find(u => u && u.name && safeDocId(u.name) === docId);
+          if (rec) {
+            fbWriteDoc('users', docId, Object.assign({}, rec, {
+              _updatedAt: Date.now(), _writer: window.__fbDeviceId || 'unknown'
+            }));
+            continue;
+          }
+        } else if (Array.isArray(STATE[colName])) {
+          rec = STATE[colName].find(x => x && String(x.id) === String(docId));
+          if (rec) { fbSaveRecord(colName, rec); continue; }
+        }
+        // Бичлэг STATE-д олдсонгүй — pending тэмдэглэгээг цэвэрлэнэ
+        _clearPending(colName, docId);
+      }
+    }
+    // clinic_config pending байвал тохиргоог бүхэлд нь дахин бичнэ
+    if (__fbPendingWrites['clinic_config'] && Object.keys(__fbPendingWrites['clinic_config']).length) {
+      fbWriteDoc('clinic_config', 'main', {
+        servicePrices: STATE.servicePrices || {},
+        customServices: STATE.customServices || [],
+        removedServices: STATE.removedServices || [],
+        staffSchedule: STATE.staffSchedule || {},
+        _updatedAt: Date.now()
+      });
+    }
+  } catch(e) {
+    console.error('[FB] pending retry алдаа:', e);
+  }
+}
+
 // ── onSnapshot — collection бүрийг сонсох ─────────────────────
 const __fbUnsubs = {};
 
@@ -7280,7 +7393,7 @@ function fbStartListening() {
   FB_COLLECTIONS.forEach(colName => {
     if (__fbUnsubs[colName]) return;
     let _firstSnap = false; // энэ collection-ийн эхний snapshot ирсэн эсэх
-    __fbUnsubs[colName] = window.__fbColListen(colName, (changes) => {
+    __fbUnsubs[colName] = window.__fbColListen(colName, (changes, allIds, isFirst) => {
       // Эхний snapshot тэмдэглэх
       if (!_firstSnap) {
         _firstSnap = true;
@@ -7294,6 +7407,9 @@ function fbStartListening() {
           fbApplyRecord(colName, data);
         }
       });
+      // Анхны snapshot дээр локал кэшийг сервэртэй тулгана —
+      // өөр компьютер дээр устгагдсан stale бичлэгүүдийг хасна
+      if (isFirst && colName === 'waiting') _fbReconcileWaiting(allIds);
     }, (err) => console.error('[FB] onSnapshot алдаа (' + colName + '):', err));
   });
 }

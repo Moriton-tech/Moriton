@@ -47,16 +47,25 @@ window.__fbColQuery = async (colName) => {
 };
 
 // ── Collection real-time сонсох ────────────────────────────────
-// callback: (changes: [{type, docId, data}]) дуудна
+// callback: (changes: [{type, docId, data}], allIds, isFirst) дуудна
+//   allIds  — сервэр дээр ОДОО байгаа бүх document ID (reconcile хийхэд)
+//   isFirst — энэ collection-ийн анхны snapshot мөн эсэх
+// Анхны snapshot ХООСОН байсан ч заавал callback дуудна — эс бөгөөс
+// локал кэштэй тулгах (reconcile) боломжгүй болж, компьютер бүр
+// өөр өөр жагсаалт харуулдаг.
 window.__fbColListen = (colName, callback, onError) => {
   const colRef = collection(db, colName);
+  let firstSnap = true;
   return onSnapshot(colRef, (snap) => {
     const changes = snap.docChanges().map(change => ({
       type: change.type,       // 'added' | 'modified' | 'removed'
       docId: change.doc.id,
       data: change.doc.data()
     }));
-    if (changes.length > 0) callback(changes);
+    const allIds = snap.docs.map(d => d.id);
+    const isFirst = firstSnap;
+    firstSnap = false;
+    if (changes.length > 0 || isFirst) callback(changes, allIds, isFirst);
   }, onError || (() => {}));
 };
 
