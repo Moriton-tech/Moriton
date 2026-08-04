@@ -10,6 +10,16 @@
 <meta name="apple-mobile-web-app-title" content="Морьтон">
 <meta name="mobile-web-app-capable" content="yes">
 <title>Морьтон Адууны Төв</title>
+
+<!-- ============================================================
+     PWA — суулгаж болох програм болгох (manifest + icon)
+     ============================================================ -->
+<link rel="manifest" href="manifest.json?v=20260731">
+<link rel="icon" href="icons/favicon.ico" sizes="any">
+<link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
+<link rel="icon" type="image/png" sizes="512x512" href="icons/icon-512.png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800;900&display=swap" rel="stylesheet">
@@ -93,6 +103,7 @@
         <div class="ni" data-page="waiting"><div class="ni-icon">⏳</div><div class="ni-label">Хүлээж байгаа</div><span class="ni-badge" id="bdg-w">0</span></div>
         <div class="ni" data-page="exam"><div class="ni-icon">🩺</div><div class="ni-label">Үзлэг / Эмчилгээ</div></div>
         <div class="ni" data-page="inpatient"><div class="ni-icon">🏥</div><div class="ni-label">Хэвтэн эмчлүүлэх</div><span class="ni-badge b-p" id="bdg-i">0</span></div>
+        <div class="ni" data-page="lab"><div class="ni-icon">🧪</div><div class="ni-label">Шинжилгээ</div><span class="ni-badge b-a" id="bdg-lab">0</span></div>
       </div>
       <div class="sb-section">Бүртгэл</div>
       <div class="sb-list">
@@ -129,6 +140,7 @@
         <div class="ni" data-page="waiting"><div class="ni-icon">⏳</div><div class="ni-label">Хүлээж байгаа</div><span class="ni-badge" id="bdg-w2">0</span></div>
         <div class="ni" data-page="exam"><div class="ni-icon">🩺</div><div class="ni-label">Үзлэг / Эмчилгээ</div></div>
         <div class="ni" data-page="inpatient"><div class="ni-icon">🏥</div><div class="ni-label">Хэвтэн эмчлүүлэх</div><span class="ni-badge b-p" id="bdg-i2">0</span></div>
+        <div class="ni" data-page="lab"><div class="ni-icon">🧪</div><div class="ni-label">Шинжилгээ</div><span class="ni-badge b-a" id="bdg-lab2">0</span></div>
       </div>
       <div class="sb-section" style="color:var(--gold);opacity:0.85">Бүртгэл</div>
       <div class="sb-list">
@@ -566,6 +578,35 @@
         </div>
       </section>
 
+      <!-- ====== LAB (ШИНЖИЛГЭЭ) ====== -->
+      <section class="page" id="page-lab">
+        <div class="ph">
+          <div class="ph-l">
+            <div class="ph-title">🧪 Шинжилгээ</div>
+            <div class="ph-sub" id="lab-sub">0 хүлээгдэж буй</div>
+          </div>
+          <div class="ph-r">
+            <input class="inp" id="lab-search" placeholder="🔍 Адуу, эзэн, шинжилгээ, эмч..."
+              oninput="onLabSearch(this.value)" style="min-width:230px">
+          </div>
+        </div>
+
+        <div class="tabs" id="lab-tabs"></div>
+
+        <div class="card">
+          <div class="ch">🧾 Захиалгууд <span class="ch-r" id="lab-cnt">0</span></div>
+          <div class="list" id="lab-list"></div>
+        </div>
+
+        <div class="card">
+          <div class="ch">👥 Шинжилгээ үзэх эрхтэй хүмүүс</div>
+          <div style="background:var(--orange-soft);color:var(--orange-dark);padding:8px 12px;border-radius:8px;font-size:12px;font-weight:700;margin-bottom:10px">
+            Эрхийг Системийн тохиргоо → Нэвтрэх эрх хэсгээс өөрчилнө.
+          </div>
+          <div class="list" id="lab-viewers"></div>
+        </div>
+      </section>
+
       <!-- ====== FINANCE ====== -->
       <section class="page" id="page-finance">
         <div class="ph">
@@ -879,6 +920,21 @@
             <div class="list" id="a-user-list"></div>
           </div>
           <div class="card">
+            <div class="ch">🧪 Шинжилгээ үзэх эрхтэй <span class="muted" id="lab-perm-count" style="font-weight:600"></span></div>
+            <div style="background:var(--orange-soft);color:var(--orange-dark);padding:8px 12px;border-radius:8px;font-size:12px;font-weight:700;margin-bottom:10px">
+              "Шинжилгээ" хуудсын эрхтэй хэрэглэгчид. Дээрх "Нэвтрэх эрх" хэсгээс өөрчилнө.
+            </div>
+            <div class="list" id="a-lab-perm-list"></div>
+          </div>
+          <div class="card" id="lab-svc-card">
+            <div class="ch">🧬 Аль үйлчилгээ нь шинжилгээ вэ</div>
+            <div style="background:var(--orange-soft);color:var(--orange-dark);padding:8px 12px;border-radius:8px;font-size:12px;font-weight:700;margin-bottom:10px">
+              Нэрэндээ "шинжилгээ" гэсэн үгтэй үйлчилгээг автоматаар таньдаг. Доороос нэмж/хасаж болно.
+            </div>
+            <input class="inp" id="lab-svc-search" placeholder="🔍 Үйлчилгээ хайх" oninput="renderLabSvcConfig()" style="margin-bottom:8px">
+            <div style="max-height:340px;overflow:auto" id="lab-svc-list"></div>
+          </div>
+          <div class="card">
             <div class="ch">📋 Үйлдлийн лог</div>
             <div class="list" id="a-log-list"><div class="empty"><div class="empty-em">📋</div>Sync хийсний дараа харагдана</div></div>
           </div>
@@ -954,6 +1010,46 @@
 
 </div>
 
+<!-- LAB (ШИНЖИЛГЭЭ) DETAIL MODAL -->
+<div class="mod-bd" id="lab-modal">
+  <div class="mod" style="max-width:720px">
+    <div class="mod-h">
+      <span class="mod-title" id="lab-modal-title">🧪 Шинжилгээ</span>
+      <button class="btn btn-r btn-xs" onclick="closeModal('lab-modal')">✕</button>
+    </div>
+    <div class="mod-body">
+
+      <div class="ch">📌 Мэдээлэл</div>
+      <div id="lab-info" style="margin-bottom:14px"></div>
+
+      <div class="ch">🔄 Төлөв</div>
+      <div id="lab-steps" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px"></div>
+      <div class="row" id="lab-actions" style="margin-bottom:16px"></div>
+
+      <div class="ch">🖼️ Хариу (зураг)</div>
+      <div id="lab-upload-wrap" style="margin-bottom:8px">
+        <button class="btn btn-p btn-sm" onclick="document.getElementById('lab-file').click()">📷 Зураг нэмэх</button>
+        <input type="file" id="lab-file" accept="image/*" multiple style="display:none"
+          onchange="addLabResultImages(this.getAttribute('data-lab'), this.files); this.value='';">
+      </div>
+      <div id="lab-results" style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px"></div>
+
+      <div class="fld">
+        <label>Хариуны тайлбар</label>
+        <textarea class="inp" id="lab-result-note" rows="3" placeholder="Шинжилгээний дүгнэлт, тайлбар..."></textarea>
+      </div>
+      <button class="btn btn-sm" id="lab-note-btn" onclick="saveLabNote(_labCur)">💾 Тайлбар хадгалах</button>
+
+      <div class="ch" style="margin-top:16px">🕓 Түүх</div>
+      <div id="lab-history"></div>
+
+    </div>
+    <div class="mod-ft">
+      <button class="btn btn-sm" onclick="closeModal('lab-modal')">Хаах</button>
+    </div>
+  </div>
+</div>
+
 <!-- USER ADD/EDIT MODAL -->
 <div class="mod-bd" id="user-modal">
   <div class="mod">
@@ -967,6 +1063,11 @@
       <div class="fld"><label>Хандах эрх (хуудсууд)</label>
         <div id="u-pages" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:4px"></div>
         <div class="muted" style="font-size:11px;margin-top:6px">Дүр сонгоход тухайн дүрийн ердийн эрх автоматаар тэмдэглэгдэнэ. Хүсвэл доор нь өөрчилж болно.</div>
+      </div>
+      <div class="fld"><label>🧪 Шинжилгээний эрх</label>
+        <button type="button" id="u-lab-edit" data-on="0" onclick="toggleLabEdit()"
+          style="padding:8px 14px;border-radius:8px;font-weight:800;font-size:12px;cursor:pointer;border:1.5px solid var(--border);background:#fff;color:var(--muted)">👁️ Зөвхөн үзэх</button>
+        <div class="muted" style="font-size:11px;margin-top:6px">"Шинжилгээ" хуудсын эрх нь ҮЗЭХ эрх. Энэ товч асаалттай бол төлөв солих, хариу оруулах ЗАСАХ эрхтэй болно.</div>
       </div>
     </div>
     <div class="mod-ft">
@@ -1051,6 +1152,7 @@
     </div>
     <div class="mod-ft">
       <button class="btn btn-p btn-sm" onclick="saveServicePrices()">💾 Хадгалах</button>
+      <button class="btn btn-sm" onclick="restorePricesFromHistory()" title="Өмнөх үзлэгүүдэд ашигласан хамгийн сүүлийн үнээр хоосон талбарыг дүүргэнэ">🕘 Түүхээс сэргээх</button>
       <button class="btn btn-sm" onclick="closeModal('service-prices-modal')">Болих</button>
     </div>
   </div>
@@ -1250,5 +1352,9 @@
 <div id="print-area"></div>
 
 <script src="app.js?v=20260720"></script>
+<script src="lab.js?v=20260731"></script>
+
+<!-- PWA: service worker бүртгэх, автомат шинэчлэлт, суулгах товч -->
+<script src="pwa.js?v=20260731"></script>
 </body>
 </html>

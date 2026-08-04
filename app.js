@@ -840,6 +840,11 @@ const STATE = {
   servicePrices: {},  // үйлчилгээний үндсэн үнэ { "нэр": үнэ } — Админ панелаас тохируулна
   customServices: [], // Админ нэмсэн нэмэлт үйлчилгээний нэрс
   removedServices: [],// Админ устгасан үйлчилгээний нэрс (үндсэн SVCS-ээс нуух)
+  labs: [],           // шинжилгээний захиалга (lab.js)
+  labSvcOn: [],       // Админ нэмж "шинжилгээ" болгосон үйлчилгээний нэрс
+  labSvcOff: [],      // Админ "шинжилгээ биш" болгосон үйлчилгээний нэрс
+  staffSchedule: {},  // сарын ажлын хуваарь
+  configMs: 0,        // clinic_config-ийг энэ төхөөрөмжөөс сүүлд өөрчилсөн агшин
   user: null,
   syncURL: '',
   // ui
@@ -906,6 +911,14 @@ function loadAll() {
   if (!Array.isArray(STATE.customServices)) STATE.customServices = [];
   STATE.removedServices = lsGet('mt_removed_services', []);
   if (!Array.isArray(STATE.removedServices)) STATE.removedServices = [];
+  // Шинжилгээ (lab.js)
+  STATE.labs = lsGet('mt_labs', []);
+  if (!Array.isArray(STATE.labs)) STATE.labs = [];
+  STATE.labSvcOn = lsGet('mt_lab_svc_on', []);
+  if (!Array.isArray(STATE.labSvcOn)) STATE.labSvcOn = [];
+  STATE.labSvcOff = lsGet('mt_lab_svc_off', []);
+  if (!Array.isArray(STATE.labSvcOff)) STATE.labSvcOff = [];
+  STATE.configMs = parseFloat(lsGet('mt_config_ms', 0)) || 0;
   STATE.user = lsGet('mt_user', null);
   STATE.syncURL = ''; // Apps Script sync устгагдсан — Firebase ашиглана
   if (STATE.doctors.length === 0) STATE.doctors = [...DEFAULT_DOCS];
@@ -952,6 +965,10 @@ function saveAll() {
   // Нэмэлт / устгасан үйлчилгээ
   if (Array.isArray(STATE.customServices)) lsSet('mt_custom_services', STATE.customServices);
   if (Array.isArray(STATE.removedServices)) lsSet('mt_removed_services', STATE.removedServices);
+  // Шинжилгээ (lab.js)
+  if (Array.isArray(STATE.labs)) lsSet('mt_labs', STATE.labs);
+  if (Array.isArray(STATE.labSvcOn)) lsSet('mt_lab_svc_on', STATE.labSvcOn);
+  if (Array.isArray(STATE.labSvcOff)) lsSet('mt_lab_svc_off', STATE.labSvcOff);
 }
 
 // ============================================================
@@ -1118,19 +1135,19 @@ function populateLoginUsers() {
 // Админ Firebase Console-оос хэрэглэгч нэмнэ.
 // Нууц үгийг ХЭЗЭЭ ЧИД frontend код, localStorage-д plain text хадгалах ХОРИОТОЙ.
 const DEFAULT_USERS = [
-  { name: 'Наранбаатар',     pw: '',  role: 'Ерөнхий эмч',        pages: ['dashboard','register','waiting','exam','inpatient','finance','kpi','history','report','admin'] },
-  { name: 'Сайнбилэг',       pw: '',  role: 'Ахлах эмч',          pages: ['dashboard','register','waiting','exam','inpatient','finance','kpi','history','report'] },
-  { name: 'Өсөхбаяр',        pw: '',  role: 'Ахлах эмч',          pages: ['dashboard','register','waiting','exam','inpatient','finance','kpi','history','report'] },
-  { name: 'Даваахүү',        pw: '',  role: 'Малын их эмч',       pages: ['dashboard','register','waiting','exam','inpatient','history'] },
-  { name: 'Нямпүрэв',        pw: '',  role: 'Малын их эмч',       pages: ['dashboard','register','waiting','exam','inpatient','history'] },
-  { name: 'Тансагтөгөлдөр',  pw: '',  role: 'Малын их эмч',       pages: ['dashboard','register','waiting','exam','inpatient','history'] },
-  { name: 'Т.Тайванбат',     pw: '',  role: 'Малын их эмч',       pages: ['dashboard','register','waiting','exam','inpatient','history'] },
-  { name: 'Гончигдорж',      pw: '',  role: 'Малын их эмч',       pages: ['dashboard','register','waiting','exam','inpatient','history'] },
-  { name: 'Төгөлдөр-Эрдэнэ', pw: '', role: 'Малын их эмч',       pages: ['dashboard','register','waiting','exam','inpatient','history'] },
-  { name: 'Дадлагажигч',     pw: '',  role: 'Дадлагажигч',        pages: ['dashboard','waiting','exam','inpatient','history'] },
+  { name: 'Наранбаатар',     pw: '',  role: 'Ерөнхий эмч',        pages: ['dashboard','register','waiting','exam','inpatient','lab','finance','kpi','history','report','admin'] },
+  { name: 'Сайнбилэг',       pw: '',  role: 'Ахлах эмч',          pages: ['dashboard','register','waiting','exam','inpatient','lab','finance','kpi','history','report'] },
+  { name: 'Өсөхбаяр',        pw: '',  role: 'Ахлах эмч',          pages: ['dashboard','register','waiting','exam','inpatient','lab','finance','kpi','history','report'] },
+  { name: 'Даваахүү',        pw: '',  role: 'Малын их эмч',       pages: ['dashboard','register','waiting','exam','inpatient','lab','history'] },
+  { name: 'Нямпүрэв',        pw: '',  role: 'Малын их эмч',       pages: ['dashboard','register','waiting','exam','inpatient','lab','history'] },
+  { name: 'Тансагтөгөлдөр',  pw: '',  role: 'Малын их эмч',       pages: ['dashboard','register','waiting','exam','inpatient','lab','history'] },
+  { name: 'Т.Тайванбат',     pw: '',  role: 'Малын их эмч',       pages: ['dashboard','register','waiting','exam','inpatient','lab','history'] },
+  { name: 'Гончигдорж',      pw: '',  role: 'Малын их эмч',       pages: ['dashboard','register','waiting','exam','inpatient','lab','history'] },
+  { name: 'Төгөлдөр-Эрдэнэ', pw: '', role: 'Малын их эмч',       pages: ['dashboard','register','waiting','exam','inpatient','lab','history'] },
+  { name: 'Дадлагажигч',     pw: '',  role: 'Дадлагажигч',        pages: ['dashboard','waiting','exam','inpatient','lab','history'] },
   { name: 'Бүртгэл',         pw: '',  role: 'Бүртгэлийн ажилтан', pages: ['dashboard','register','waiting','history'] },
   { name: 'Санхүү',          pw: '',  role: 'Санхүү',             pages: ['dashboard','finance','history','report'] },
-  { name: 'Админ',           pw: '',  role: 'Админ',              pages: ['dashboard','register','waiting','exam','inpatient','finance','kpi','history','report','admin'] }
+  { name: 'Админ',           pw: '',  role: 'Админ',              pages: ['dashboard','register','waiting','exam','inpatient','lab','finance','kpi','history','report','admin'] }
 ];
 
 // Боломжит бүх хуудас (эрх тохируулахад ашиглана)
@@ -1142,6 +1159,7 @@ const ALL_PAGES = [
   { id: 'inpatient', label: 'Хэвтэн эмчлүүлэх' },
   { id: 'finance',   label: 'Санхүү' },
   { id: 'history',   label: 'Түүх' },
+  { id: 'lab',       label: 'Шинжилгээ' },
   { id: 'kpi',       label: 'KPI самбар' },
   { id: 'report',    label: 'Өдрийн тайлан' },
   { id: 'admin',     label: 'Системийн тохиргоо' }
@@ -1338,6 +1356,7 @@ function nav(p, opts) {
   if (p === 'kpi') renderKPI();
   if (p === 'report') initReport();
   if (p === 'history') renderHistory();
+  if (p === 'lab' && typeof renderLab === 'function') renderLab();
   if (p === 'admin') renderAdmin();
   // Reset scroll only on real navigation (not when re-rendering current page via sync)
   if (!opts.silent && !samePage) {
@@ -1387,6 +1406,14 @@ function setupNav() {
 // HEADER & BADGES
 // ============================================================
 function updateBadges() {
+  // 🧪 Шинжилгээ — хүлээгдэж буй
+  try {
+    const labOpen = (STATE.labs || []).filter(x => x && x.status !== 'done' && x.status !== 'cancelled').length;
+    ['bdg-lab','bdg-lab2'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) { el.textContent = labOpen; el.style.display = labOpen ? '' : 'none'; }
+    });
+  } catch(e) {}
   const w = STATE.waiting.length;
   const i = STATE.inps.filter(x => !x.discharged).length;
   // Finance badge: pending + receivables (anything with due > 0)
@@ -1757,7 +1784,9 @@ function updateSchedRowSum(td) {
 
 function saveSchedule() {
   saveAll();
-  fbWriteDoc('clinic_config', 'main', { staffSchedule: STATE.staffSchedule, _updatedAt: Date.now() });
+  // ⚠️ Урьд нь энд зөвхөн staffSchedule бичдэг байсан нь clinic_config-ийн
+  // бусад талбарыг (үйлчилгээний үнэ!) сервэрээс устгаж байсан.
+  fbSaveClinicConfig();
   closeModal('schedule-modal');
   renderStaffSection();
   toast('💾 Сарын хуваарь хадгалагдлаа', 'ok');
@@ -2730,11 +2759,14 @@ function finishExam() {
   fbSaveRecord('exams', exam);
   fbSaveRecord('fins', fin);
   fbDeleteDoc('waiting', String(e.waitId));
+  // 🧪 Шинжилгээний захиалга автоматаар үүсгэнэ (эмчийн урсгалд нөлөөлөхгүй)
+  let _labN = 0;
+  try { if (typeof createLabOrdersFromExam === 'function') _labN = createLabOrdersFromExam(exam).length; } catch(err) { console.error('lab', err); }
   writeLog('Үзлэг дуусгасан', exam.id, exam.horse + ' — ' + (exam.docName||''), exam.diagnosis ? ('Онош: ' + exam.diagnosis) : '', exam.examNum);
   STATE.curExam = null;
   STATE.selectedW = null;
   updateBadges();
-  toast('✅ Үзлэг дууслаа, нэхэмжлэх үүсгэгдлээ', 'ok');
+  toast(_labN ? ('✅ Үзлэг дууслаа · 🧪 ' + _labN + ' шинжилгээ илгээгдлээ') : '✅ Үзлэг дууслаа, нэхэмжлэх үүсгэгдлээ', 'ok');
   nav('finance');
 }
 
@@ -2781,6 +2813,8 @@ function moveToInpatient() {
   fbSaveRecord('exams', exam);
   fbSaveRecord('inps', inp);
   fbDeleteDoc('waiting', String(e.waitId));
+  // 🧪 Шинжилгээний захиалга автоматаар үүсгэнэ
+  try { if (typeof createLabOrdersFromExam === 'function') createLabOrdersFromExam(exam); } catch(err) { console.error('lab', err); }
   STATE.curExam = null;
   STATE.selectedW = null;
   updateBadges();
@@ -5666,6 +5700,9 @@ function renderAdmin() {
   renderUserList();
   // Устгасан үзлэгийн архив (зөвхөн Админ)
   renderDeletedExams();
+  // 🧪 Шинжилгээ — эрхтэй хүмүүс ба үйлчилгээний тохиргоо
+  try { if (typeof renderLabPermList === 'function') renderLabPermList(); } catch(e){}
+  try { if (typeof renderLabSvcConfig === 'function') renderLabSvcConfig(); } catch(e){}
 }
 
 // ============================================================
@@ -5854,6 +5891,7 @@ function addCustomService() {
   STATE.removedServices = (STATE.removedServices || []).filter(s => s !== name);
   if (price > 0) STATE.servicePrices[name] = price;
   saveAll();
+  fbSaveClinicConfig();
   writeLog('Үйлчилгээ нэмэв', '', '', name + (price ? ' — ' + fmt(price) : ''));
   if (nameEl) nameEl.value = '';
   if (priceEl) priceEl.value = '';
@@ -5880,9 +5918,43 @@ function removeCustomService(name) {
   }
   delete STATE.servicePrices[name];
   saveAll();
+  fbSaveClinicConfig();
   writeLog('Үйлчилгээ устгав', '', '', name);
   toast('🗑️ Устгагдлаа', 'ok');
   renderServicePrices();
+}
+
+// 🕘 Түүхээс үнэ сэргээх — өмнөх үзлэгүүдэд ашигласан хамгийн сүүлийн үнээр
+// ХООСОН талбаруудыг дүүргэнэ. Одоо байгаа үнийг хөндөхгүй. Автоматаар
+// хадгалахгүй — админ хараад "Хадгалах" дарна.
+function restorePricesFromHistory() {
+  if (!(STATE.user && STATE.user.role === 'Админ')) { toast('⛔ Зөвхөн Админ', 'err'); return; }
+  // Үзлэг + хэвтэн эмчлүүлэлтээс үйлчилгээний үнийг цуглуулна (шинэ нь эрхэмлэнэ)
+  const latest = {};   // { нэр: {price, ms} }
+  const scan = (arr, msKey) => {
+    (arr || []).forEach(r => {
+      const ms = parseFloat(r && r[msKey]) || 0;
+      (Array.isArray(r && r.services) ? r.services : []).forEach(sv => {
+        const name = sv && (sv.name || sv);
+        const price = parseFloat(sv && sv.price) || 0;
+        if (!name || price <= 0) return;
+        if (!latest[name] || ms >= latest[name].ms) latest[name] = { price, ms };
+      });
+    });
+  };
+  scan(STATE.exams, 'ms');
+  scan(STATE.inps, 'admittedMs');
+
+  let filled = 0;
+  document.querySelectorAll('.sp-price-inp').forEach(inp => {
+    const cur = parseFloat(inp.value) || 0;
+    if (cur > 0) return;                       // одоо байгаа үнийг хөндөхгүй
+    const hit = latest[inp.dataset.svc];
+    if (hit && hit.price > 0) { inp.value = hit.price; filled++; }
+  });
+
+  if (filled) toast('🕘 ' + filled + ' үйлчилгээний үнэ түүхээс сэргээгдлээ. Шалгаад "Хадгалах" дарна уу.', 'ok');
+  else toast('Түүхээс нөхөх үнэ олдсонгүй', 'err');
 }
 
 // Үнэ хадгалах
@@ -5900,8 +5972,11 @@ function saveServicePrices() {
     else delete STATE.servicePrices[name];
   });
   saveAll();
+  // ☁️ Firebase рүү ЗААВАЛ бичнэ — эс бөгөөс зөвхөн энэ компьютерт үлдэж,
+  // дараагийн sync-ээр сервэрийн хуучин хуулбар дарж устгана.
+  fbSaveClinicConfig();
   writeLog('Үйлчилгээний үнэ шинэчлэв', '', '', Object.keys(STATE.servicePrices).length + ' үйлчилгээнд үнэ тохирууллаа');
-  toast('✅ Үнэ хадгалагдлаа', 'ok');
+  toast('✅ Үнэ хадгалагдаж бүх төхөөрөмжид илгээгдлээ', 'ok');
   closeModal('service-prices-modal');
 }
 
@@ -5930,7 +6005,7 @@ function renderUserList() {
       <div class="li-av">🔐</div>
       <div class="li-info">
         <div class="li-name">${escHTML(u.name)}</div>
-        <div class="li-sub">${escHTML(u.role)} · ${(u.pages||[]).length} хуудас</div>
+        <div class="li-sub">${escHTML(u.role)} · ${(u.pages||[]).length} хуудас${(u.pages||[]).includes('lab') ? (u.labEdit||u.role==='Админ' ? ' · 🧪 засах' : ' · 🧪 үзэх') : ''}</div>
       </div>
       <div class="li-r"><button class="btn btn-xs" onclick="event.stopPropagation();openUserModal(${idx})">✏️</button></div>
     </div>
@@ -5959,6 +6034,7 @@ function openUserModal(idx) {
     pwInp.placeholder = 'Хоосон орхивол нууц үг өөрчлөгдөхгүй';
     if (roleSel) roleSel.value = u.role || ALL_ROLES[0];
     renderUserPages(u.pages || pagesForRole(u.role));
+    setLabEditToggle(!!u.labEdit);
     if (delBtn) delBtn.style.display = '';
   } else {
     document.querySelector('#user-modal .mod-title').textContent = '🔐 Хэрэглэгч нэмэх';
@@ -5966,6 +6042,7 @@ function openUserModal(idx) {
     pwInp.value = '';
     if (roleSel) roleSel.value = ALL_ROLES[0];
     renderUserPages(pagesForRole(ALL_ROLES[0]));
+    setLabEditToggle(false);
     if (delBtn) delBtn.style.display = 'none';
   }
   openModal('user-modal');
@@ -5983,6 +6060,22 @@ function renderUserPages(selectedPages) {
       + 'padding:6px 10px;background:'+(on?'var(--orange-soft)':'#fff')+';color:'+(on?'var(--orange-dark)':'var(--muted)')+';font-weight:700">'
       + escHTML(p.label) + '</button>';
   }).join('');
+}
+
+// 🧪 Шинжилгээ засах эрхийн toggle
+function setLabEditToggle(on) {
+  const b = document.getElementById('u-lab-edit');
+  if (!b) return;
+  b.dataset.on = on ? '1' : '0';
+  b.textContent = on ? '✍️ Үзэх + Засах' : '👁️ Зөвхөн үзэх';
+  b.style.border = '1.5px solid ' + (on ? 'var(--green)' : 'var(--border)');
+  b.style.background = on ? 'var(--green-soft)' : '#fff';
+  b.style.color = on ? 'var(--green)' : 'var(--muted)';
+}
+function toggleLabEdit() {
+  const b = document.getElementById('u-lab-edit');
+  if (!b) return;
+  setLabEditToggle(b.dataset.on !== '1');
 }
 
 function toggleUserPage(btn) {
@@ -6059,7 +6152,8 @@ function saveUser() {
       pwHash = '';
     }
 
-    const userObj = { name, pwHash, role, pages, ms };
+    const labEdit = !!(document.getElementById('u-lab-edit') && document.getElementById('u-lab-edit').dataset.on === '1');
+    const userObj = { name, pwHash, role, pages, labEdit, ms };
     if (_editUserIdx !== null && STATE.users[_editUserIdx]) {
       STATE.users[_editUserIdx] = userObj;
       writeLog('Хэрэглэгч заслаа', name, role);
@@ -6070,7 +6164,7 @@ function saveUser() {
 
     _scheduleLsSave('users');
     // Firestore-д pwHash хадгална — pw (plain text) хэзээ ч явахгүй
-    const userRec = { name, pwHash, role, pages, ms, _updatedAt: ms, _writer: window.__fbDeviceId || 'unknown' };
+    const userRec = { name, pwHash, role, pages, labEdit, ms, _updatedAt: ms, _writer: window.__fbDeviceId || 'unknown' };
     fbWriteDoc('users', safeDocId(name), userRec)
       .then(() => { try { flashSync(); } catch(e){} })
       .catch(err => toast('Firebase алдаа: ' + err.message, 'err'));
@@ -6365,6 +6459,8 @@ function saveEditExam() {
   }
   saveAll();
   fbSaveRecord('exams', e);
+  // 🧪 Засварлахдаа шинжилгээ нэмсэн бол дутуу захиалгыг үүсгэнэ (давхардахгүй)
+  try { if (typeof createLabOrdersFromExam === 'function') createLabOrdersFromExam(e); } catch(err) { console.error('lab', err); }
   writeLog('Үзлэг засварласан', e.id, e.horse + ' — ' + (e.docName||''), allChanges || 'Өөрчлөлтгүй хадгалсан');
   closeModal('edit-exam-modal');
   toast('✅ Хадгалагдлаа', 'ok');
@@ -6923,7 +7019,7 @@ function _fbDebouncedRefresh() {
 }
 // Анхны ачаалал — collection бүрийн эхний snapshot ирмэгц тэмдэглэнэ
 // 3 секундын fixed delay биш, бодит snapshot тоолох аргыг ашиглана
-const FB_COLLECTIONS_COUNT = 10; // horses, exams, fins, inps, waiting, staff, doctors, users, logs, deletedExams
+const FB_COLLECTIONS_COUNT = 11; // horses, exams, fins, inps, waiting, staff, doctors, users, logs, deletedExams, labs
 let __fbSnapshotsDone = 0;
 function _fbMarkInitialLoadDone() {
   // Backup: хэрэв snapshot бүх collection дээр ирэхгүй бол 5 секундын дараа нэг удаа render
@@ -6958,7 +7054,8 @@ const LS_KEY_MAP = {
   inps: 'mt_inps', waiting: 'mt_waiting',
   staff: 'mt_staff_list', doctors: 'mt_doctors',
   users: 'mt_users', logs: 'mt_logs',
-  deletedExams: 'mt_deleted_exams'
+  deletedExams: 'mt_deleted_exams',
+  labs: 'mt_labs'
 };
 
 function _scheduleLsSave(colName) {
@@ -7023,6 +7120,28 @@ function fbDeleteDoc(colName, docId) {
     .catch(err => console.error('[FB] ❌ устгах алдаа ' + colName + '/' + docId + ':', err.message));
 }
 
+// ── ⚙️ clinic_config-ийг БҮХЭЛД нь бичих ─────────────────────
+// ⚠️ ЧУХАЛ: setDoc нь document-ийг БҮТНЭЭР СОЛИНО (merge хийхгүй).
+// Тиймээс clinic_config-ийг хэсэгчлэн бичих нь бусад бүх талбарыг
+// (үйлчилгээний үнэ, нэмэлт үйлчилгээ, шинжилгээний тохиргоо) СЕРВЭР
+// ДЭЭРЭЭС УСТГАНА. Тохиргоо өөрчлөх бүрд ЗААВАЛ энэ функцийг дуудна.
+function fbSaveClinicConfig() {
+  const ms = Date.now();
+  STATE.configMs = ms;
+  lsSet('mt_config_ms', ms);
+  if (typeof fbWriteDoc !== 'function') return Promise.resolve();
+  return fbWriteDoc('clinic_config', 'main', {
+    servicePrices:   STATE.servicePrices   || {},
+    customServices:  STATE.customServices  || [],
+    removedServices: STATE.removedServices || [],
+    staffSchedule:   STATE.staffSchedule   || {},
+    labSvcOn:        STATE.labSvcOn        || [],
+    labSvcOff:       STATE.labSvcOff       || [],
+    _updatedAt: ms,
+    _writer: window.__fbDeviceId || 'unknown'
+  });
+}
+
 // ── Нэг бичлэгийг Firestore-д бичих ─────────────────────────
 // colName: 'horses' | 'exams' | 'fins' | 'inps' | 'waiting' | 'staff' | 'doctors' | 'users' | 'logs' | 'deletedExams'
 function fbSaveRecord(colName, record) {
@@ -7049,6 +7168,7 @@ function fbForcePush() {
     doctors: STATE.doctors || [],
     logs: STATE.logs || [],
     deletedExams: STATE.deletedExams || [],
+    labs: STATE.labs || [],
   };
   const promises = [];
   for (const [col, arr] of Object.entries(colMap)) {
@@ -7065,13 +7185,7 @@ function fbForcePush() {
     }
   }
   // clinic_config
-  promises.push(fbWriteDoc('clinic_config', 'main', {
-    servicePrices: STATE.servicePrices || {},
-    customServices: STATE.customServices || [],
-    removedServices: STATE.removedServices || [],
-    staffSchedule: STATE.staffSchedule || {},
-    _updatedAt: Date.now()
-  }));
+  promises.push(fbSaveClinicConfig());
   Promise.all(promises).then(() => {
     const total = promises.length;
     console.log('[FB] Force push дууслаа. Бичсэн:', total, 'document');
@@ -7109,9 +7223,40 @@ function fbApplyRecord(colName, docData) {
   __fbApplyingRemote = true;
   try {
     if (colName === 'clinic_config') {
-      if (docData.servicePrices && typeof docData.servicePrices === 'object') {
-        STATE.servicePrices = docData.servicePrices;
+      // ── ⚠️ ӨГӨГДӨЛ УСТГАХААС ХАМГААЛАХ ──────────────────────
+      // Урьд нь сервэрийн хуулбар нөхцөлгүйгээр локалыг дардаг байсан тул
+      // энэ компьютер дээр хадгалсан үнэ дараагийн sync-ээр устдаг байсан.
+      const _remoteMs = parseFloat(docData._updatedAt) || 0;
+      const _localMs  = parseFloat(STATE.configMs) || 0;
+
+      // Локал тохиргоо илүү шинэ бол сервэрийнхийг хэрэглэхгүй — өөрийнхийг
+      // буцаан бичиж сэргээнэ.
+      if (_localMs && _remoteMs < _localMs) {
+        console.warn('[FB] clinic_config сервэр дээр хуучин байна — локалыг буцаан бичив');
+        try { fbSaveClinicConfig(); } catch(e){}
+        return;
       }
+
+      const _remotePrices = (docData.servicePrices && typeof docData.servicePrices === 'object' && !Array.isArray(docData.servicePrices))
+        ? docData.servicePrices : null;
+      const _localCount = Object.keys(STATE.servicePrices || {}).length;
+
+      if (_remotePrices) {
+        if (_localMs) {
+          // Хэвийн үе: сервэр эрх мэдэлтэй
+          STATE.servicePrices = _remotePrices;
+        } else {
+          // Шилжилтийн үе (энэ төхөөрөмж хараахан тохиргоо бичиж үзээгүй):
+          // хуучин алдааны улмаас аль нэг тал дутуу байж болзошгүй тул НЭГТГЭНЭ.
+          STATE.servicePrices = Object.assign({}, STATE.servicePrices || {}, _remotePrices);
+        }
+      } else if (_localCount > 0) {
+        // Сервэр дээр үнэ огт алга атал локалд байна — хуучин алдааны ул мөр.
+        // Локалыг сервэрт сэргээнэ.
+        console.warn('[FB] clinic_config-д үнэ алга — локалаас сэргээж байна');
+        try { fbSaveClinicConfig(); } catch(e){}
+      }
+
       if (Array.isArray(docData.customServices)) {
         const set = new Set([...(STATE.customServices || []), ...docData.customServices].map(String));
         STATE.customServices = [...set];
@@ -7123,6 +7268,13 @@ function fbApplyRecord(colName, docData) {
       if (docData.staffSchedule && typeof docData.staffSchedule === 'object') {
         STATE.staffSchedule = docData.staffSchedule;
       }
+      // 🧪 Шинжилгээний үйлчилгээний тохиргоо
+      if (Array.isArray(docData.labSvcOn))  { STATE.labSvcOn  = docData.labSvcOn.slice(); lsSet('mt_lab_svc_on', STATE.labSvcOn); }
+      if (Array.isArray(docData.labSvcOff)) { STATE.labSvcOff = docData.labSvcOff.slice(); lsSet('mt_lab_svc_off', STATE.labSvcOff); }
+      // Шилжилтийн үе: нэгтгэсэн үр дүнг сервэрт нэг удаа буцаан бичиж
+      // бүх төхөөрөмжийн тохиргоог нийлүүлнэ (дараа нь _localMs тэглэгдэхгүй).
+      if (!_localMs && _localCount > 0) { try { fbSaveClinicConfig(); } catch(e){} }
+      try { if (STATE.activePage === 'admin' && typeof renderLabSvcConfig === 'function') renderLabSvcConfig(); } catch(e){}
       lsSet('mt_service_prices', STATE.servicePrices);
       lsSet('mt_custom_services', STATE.customServices);
       lsSet('mt_removed_services', STATE.removedServices);
@@ -7222,7 +7374,7 @@ function fbApplyRecord(colName, docData) {
       const localMs  = parseFloat(lc.ms) || 0;
       if (remoteMs >= localMs) {
         // Remote шинэ — array талбаруудыг хамгаалж нэгтгэнэ
-        const ARRAY_FIELDS = ['prepayments','payments','log','services','meds','images'];
+        const ARRAY_FIELDS = ['prepayments','payments','log','services','meds','images','results','history'];
         ARRAY_FIELDS.forEach(f => {
           if ((!Array.isArray(r[f]) || r[f].length === 0) && Array.isArray(lc[f]) && lc[f].length) r[f] = lc[f];
         });
@@ -7340,13 +7492,7 @@ function _fbRetryPendingWrites() {
     }
     // clinic_config pending байвал тохиргоог бүхэлд нь дахин бичнэ
     if (__fbPendingWrites['clinic_config'] && Object.keys(__fbPendingWrites['clinic_config']).length) {
-      fbWriteDoc('clinic_config', 'main', {
-        servicePrices: STATE.servicePrices || {},
-        customServices: STATE.customServices || [],
-        removedServices: STATE.removedServices || [],
-        staffSchedule: STATE.staffSchedule || {},
-        _updatedAt: Date.now()
-      });
+      fbSaveClinicConfig();
     }
   } catch(e) {
     console.error('[FB] pending retry алдаа:', e);
@@ -7358,7 +7504,7 @@ const __fbUnsubs = {};
 
 const FB_COLLECTIONS = [
   'horses', 'exams', 'fins', 'inps', 'waiting',
-  'staff', 'doctors', 'users', 'logs', 'deletedExams'
+  'staff', 'doctors', 'users', 'logs', 'deletedExams', 'labs'
 ];
 
 function fbStartListening() {
