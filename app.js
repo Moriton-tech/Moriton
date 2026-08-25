@@ -6458,6 +6458,54 @@ function openEditExam(id) {
   renderEEselectedSvcs();
   const delBtnE = document.getElementById('ee-del-btn');
   if (delBtnE) delBtnE.style.display = canDelete() ? '' : 'none';
+
+  // 🏥 Байрлан эмчлүүлэлттэй үзлэг бол нэхэмжлэхийн бүрэн задаргааг харуулна:
+  // үзлэг + эмчилгээ + хоногийн хөлс + гэрийн эм = нийт нэхэмжилсэн дүн
+  let sumBox = document.getElementById('ee-inp-summary');
+  if (!sumBox) {
+    const amtEl = document.getElementById('ee-amount');
+    const amtFld = amtEl && amtEl.closest('.fld');
+    if (amtFld) {
+      sumBox = document.createElement('div');
+      sumBox.id = 'ee-inp-summary';
+      amtFld.insertAdjacentElement('afterend', sumBox);
+    }
+  }
+  const eeInp = STATE.inps.find(x => String(x.examId) === String(e.id));
+  window.__eeRenderInpSum = null;
+  if (sumBox) {
+    if (!eeInp) {
+      sumBox.innerHTML = '';
+      sumBox.style.display = 'none';
+    } else {
+      const iDays  = inpatientDays(eeInp.admittedMs, eeInp.dischargedMs);
+      const iFee   = getDailyFee(eeInp);
+      const iTreat = getInpDailyTotal(eeInp);
+      const iLogsN = Array.isArray(eeInp.log) ? eeInp.log.length : 0;
+      const iHM    = (eeInp.dischargeInfo && Array.isArray(eeInp.dischargeInfo.homeMeds))
+        ? eeInp.dischargeInfo.homeMeds.reduce((a, m) => a + (parseFloat(m.price) || 0), 0) : 0;
+      const renderSum = () => {
+        const examAmt = parseFloat(document.getElementById('ee-amount').value) || 0;
+        const grand = examAmt + iTreat + iFee * iDays + iHM;
+        sumBox.innerHTML = `
+          <div class="fld" style="margin-top:8px"><label>🏥 Байрлан эмчлүүлэлтийн нэхэмжлэл</label>
+            <div style="background:var(--input);padding:10px 12px;border-radius:8px;font-size:13px">
+              <div class="row" style="justify-content:space-between;margin-bottom:3px"><span>🩺 Үзлэгийн төлбөр (энэ маягт):</span><span class="bold">${fmt(examAmt)}</span></div>
+              <div class="row" style="justify-content:space-between;margin-bottom:3px"><span>💊 Эмчилгээ (${iLogsN} бичлэг):</span><span class="bold">${fmt(iTreat)}</span></div>
+              <div class="row" style="justify-content:space-between;margin-bottom:3px"><span>🏨 Хоног (${iDays} × ${fmt(iFee)}):</span><span class="bold">${fmt(iFee * iDays)}</span></div>
+              ${iHM > 0 ? `<div class="row" style="justify-content:space-between;margin-bottom:3px"><span>🏠 Гэрийн эм:</span><span class="bold">${fmt(iHM)}</span></div>` : ''}
+              <div class="row" style="justify-content:space-between;padding-top:5px;border-top:1px solid var(--border);font-size:15px"><span class="bold">Нийт нэхэмжилсэн дүн:</span><span class="bold" style="color:var(--orange-dark)">${fmt(grand)}</span></div>
+              <div class="muted" style="font-size:11px;margin-top:6px">Эмчилгээ, хоногийн бичлэгийг Байрлан эмчлүүлэх цэснээс засна. Хадгалахад нийт дүн санхүүд автоматаар шинэчлэгдэнэ.</div>
+            </div>
+          </div>`;
+      };
+      sumBox.style.display = '';
+      renderSum();
+      window.__eeRenderInpSum = renderSum;
+      const amtEl2 = document.getElementById('ee-amount');
+      if (amtEl2) amtEl2.oninput = renderSum;
+    }
+  }
   m.classList.add('show');
 }
 
@@ -6517,6 +6565,8 @@ function ee_syncAmountFromSvcs() {
   const t = arr.reduce((a,b)=>a+(parseFloat(b.price)||0),0);
   const amtEl = document.getElementById('ee-amount');
   if (amtEl) amtEl.value = t;
+  // 🏥 Байрлангийн нэхэмжлэхийн задаргааг мөн шинэчилнэ
+  if (typeof window.__eeRenderInpSum === 'function') window.__eeRenderInpSum();
 }
 
 function saveEditExam() {
@@ -6556,10 +6606,32 @@ function saveEditExam() {
   const examNumChanged = (before.examNum || '') !== (e.examNum || '');
   const amountChanged  = before.amount !== e.amount;
   const svcChanged     = beforeSvcStr !== afterSvcStr;
+  // 🏥 Байрлан эмчлүүлэлттэй үзлэг: үзлэгийн дүн өөрчлөгдвөл inp-ийн
+  // initialAmount-ыг мөн шинэчилнэ (дэвтэр, гарах тооцоо зөв гарна)
+  const linkedInp = STATE.inps.find(i => String(i.examId) === String(e.id));
+  if (linkedInp && amountChanged) {
+    linkedInp.initialAmount = e.amount;
+    linkedInp.ms = nowMs();
+    fbSaveRecord('inps', linkedInp);
+  }
   if (examNumChanged || amountChanged || svcChanged) {
     STATE.fins.filter(f => String(f.examId) === String(e.id)).forEach(f => {
-      if (amountChanged) f.amount = e.amount;
-      if (svcChanged)    f.services = afterSvcStr;
+      // Байрлангийн нэхэмжлэх мөн үү? ('Байрлан/Хэвтэн эмчилгээ N хоног' гэсэн үйлчилгээтэй)
+      const isInpFin = !!linkedInp && /эмчилгээ\s*\d+\s*хоног/i.test(String(f.services || ''));
+      if (amountChanged) {
+        if (isInpFin) {
+          // ⚠️ Урьд нь энд e.amount-аар шууд дардаг байсан нь байрлангийн
+          // НИЙТ нэхэмжилсэн дүнг (үзлэг+эмчилгээ+хоног) устгадаг байв.
+          // Одоо задаргаагаар нь дахин тооцно.
+          const iDays = inpatientDays(linkedInp.admittedMs, linkedInp.dischargedMs);
+          const iHM = (linkedInp.dischargeInfo && Array.isArray(linkedInp.dischargeInfo.homeMeds))
+            ? linkedInp.dischargeInfo.homeMeds.reduce((a, m) => a + (parseFloat(m.price) || 0), 0) : 0;
+          f.amount = (parseFloat(e.amount) || 0) + getInpDailyTotal(linkedInp) + getDailyFee(linkedInp) * iDays + iHM;
+        } else {
+          f.amount = e.amount;
+        }
+      }
+      if (svcChanged && !isInpFin) f.services = afterSvcStr; // байрлангийн 'N хоног' бичвэрийг хадгална
       if (examNumChanged) f.examNum = e.examNum; // дугаарыг санхүүд мөн шинэчилнэ
       f.ms = nowMs();
       fbSaveRecord('fins', f);
