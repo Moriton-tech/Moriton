@@ -1156,7 +1156,7 @@ const ALL_PAGES = [
   { id: 'register',  label: 'Адуу бүртгэл' },
   { id: 'waiting',   label: 'Хүлээж байгаа' },
   { id: 'exam',      label: 'Үзлэг / Эмчилгээ' },
-  { id: 'inpatient', label: 'Хэвтэн эмчлүүлэх' },
+  { id: 'inpatient', label: 'Байрлан эмчлүүлэх' },
   { id: 'finance',   label: 'Санхүү' },
   { id: 'history',   label: 'Түүх' },
   { id: 'lab',       label: 'Шинжилгээ' },
@@ -1876,6 +1876,39 @@ function openExamDetail(eid) {
     payHTML = '<span class="badge b-r">⏳ Хүлээгдэж буй</span>';
   }
 
+  // 🏥 Холбоотой байрлан эмчлүүлэлт — Түүхийн дэлгэрэнгүйд харуулна
+  const inp = STATE.inps.find(x => String(x.examId) === String(e.id));
+  let inpHTML = '';
+  if (inp) {
+    const iDays = inpatientDays(inp.admittedMs, inp.dischargedMs);
+    const iLogs = Array.isArray(inp.log) ? inp.log : [];
+    const statusBadge = inp.discharged
+      ? '<span class="badge b-g">🚪 Гарсан · ' + escHTML(inp.dischargedDate || '') + '</span>'
+      : '<span class="badge b-p">🏥 Байрлаж байна</span>';
+    const logRows = iLogs.length
+      ? '<div style="max-height:160px;overflow-y:auto;display:flex;flex-direction:column;gap:3px;margin-top:6px">' + iLogs.map(l => `
+          <div class="row" style="justify-content:space-between;background:var(--input);padding:5px 10px;border-radius:6px;font-size:12px">
+            <span>${escHTML(l.date || '—')} <span class="muted">${escHTML(l.docName || '')}</span>${l.diagnosis ? ' · ' + escHTML(l.diagnosis) : ''}</span>
+            ${_seeFin ? '<span class="bold">' + fmt(l.amount || 0) + '</span>' : ''}
+          </div>`).join('') + '</div>'
+      : '<div class="muted" style="font-size:12px;margin-top:4px">Өдрийн бичлэг алга</div>';
+    inpHTML = `
+    <div class="fld" style="margin-top:12px"><label>🏥 Байрлан эмчлүүлэлт</label>
+      <div style="background:var(--input);padding:10px;border-radius:8px">
+        <div class="row" style="justify-content:space-between;flex-wrap:wrap;gap:6px">
+          <div style="font-size:12px">
+            <b>Орсон:</b> ${escHTML(inp.admittedDate || '—')} ·
+            <b>Хоног:</b> ${iDays} ·
+            <b>Бичлэг:</b> ${iLogs.length}
+          </div>
+          <div>${statusBadge}</div>
+        </div>
+        ${logRows}
+        <button class="btn btn-xs" style="margin-top:8px" onclick="printInpatientCard('${escHTML(String(inp.id))}')">🖨 Дэвтэр хэвлэх</button>
+      </div>
+    </div>`;
+  }
+
   $('#ex-detail-title').innerHTML = `📋 ${escHTML(e.horse)} ${e.examNum?'<span class="badge b-o" style="margin-left:6px">'+escHTML(e.examNum)+'</span>':''}`;
   $('#ex-detail-body').innerHTML = `
     <div class="fg r2" style="margin-bottom:10px">
@@ -1907,6 +1940,7 @@ function openExamDetail(eid) {
         ${_seeFin ? '<div style="font-size:18px;font-weight:900;color:var(--orange-dark)">'+fmt(e.amount||0)+'</div>' : ''}
       </div>
     </div>
+    ${inpHTML}
     <div class="fld" style="margin-top:10px"><label>📷 Зураг</label>
       <div id="exd-images" class="row" style="gap:8px;flex-wrap:wrap;margin-bottom:8px"></div>
       <input type="file" id="exd-img-input" accept="image/*" multiple capture="environment" style="display:none">
@@ -2182,7 +2216,11 @@ function submitReg() {
     soum: $('#r-soum').value.trim(),
     date: $('#r-date').value || todayStr(),
     extra: $('#r-extra').value.trim(),
-    createdAt: nowMs()
+    createdAt: nowMs(),
+    // ⚠️ ms заавал хэрэгтэй: sync-ийн merge нь ms-ээр "хэн нь шинэ вэ" гэдгийг шийддэг.
+    // Урьд нь ms байгаагүйгээс өөр төхөөрөмжийн ХУУЧИН хуулбар локалыг дарж,
+    // ИАБД зэрэг талбар устдаг байсан.
+    ms: nowMs()
   };
   STATE.horses.push(horse);
   const wait = {
@@ -2775,7 +2813,7 @@ function moveToInpatient() {
   if (!e) return;
   if (!e.diagnosis) { toast('Онош оруулна уу', 'err'); return; }
   // Confirm before moving — prevents accidental hospitalization
-  if (!confirm('🏥 Энэ адууг хэвтэн эмчлүүлэхэд оруулах уу?\n\nАдуу: ' + e.horse + '\nЭзэн: ' + e.owner + '\n\nЗа гэвэл хэвтэгчдийн жагсаалтад орно.')) return;
+  if (!confirm('🏥 Энэ адууг байрлан эмчлүүлэхэд оруулах уу?\n\nАдуу: ' + e.horse + '\nЭзэн: ' + e.owner + '\n\nЗа гэвэл байрлагчдын жагсаалтад орно.')) return;
   // Save exam first
   const total = e.services.reduce((a,b)=>a+(parseFloat(b.price)||0),0);
   const mainDoc = STATE.doctors.find(d=>String(d.id)===String(e.docId));
@@ -2818,7 +2856,7 @@ function moveToInpatient() {
   STATE.curExam = null;
   STATE.selectedW = null;
   updateBadges();
-  toast('🏥 Хэвтэн эмчлүүлэхэд оруулагдлаа', 'ok');
+  toast('🏥 Байрлан эмчлүүлэхэд оруулагдлаа', 'ok');
   nav('inpatient');
 }
 
@@ -3660,8 +3698,8 @@ function cancelInpatient() {
   const i = STATE.inps.find(x => String(x.id) === String(STATE.selectedI));
   if (!i) return;
   if (!confirm(
-    'Энэ хэвтэгчийг хүлээлт рүү буцаах уу?\n\n' +
-    'Хэвтэн эмчилгээний бичлэг бүрмөсөн арилна.\n' +
+    'Энэ байрлагчийг хүлээлт рүү буцаах уу?\n\n' +
+    'Байрлан эмчилгээний бичлэг бүрмөсөн арилна.\n' +
     'Холбогдох үзлэг болон нэхэмжлэхүүд устгагдана.'
   )) return;
 
@@ -3724,7 +3762,10 @@ function dischargeInpatient() {
   $('#inp-discharge-body').innerHTML = `
     <div class="fg r2">
       <div class="fld"><label>Адуу / Эзэн</label><div class="bold">${escHTML(i.horse)} · ${escHTML(i.owner)}</div></div>
-      <div class="fld"><label>Хоног</label><div class="bold">${days} хоног</div></div>
+      <div class="fld"><label>Хоног</label><div class="bold" id="inp-dis-days">${days} хоног</div></div>
+    </div>
+    <div class="fld" style="margin-top:8px"><label>🗓 Гарсан огноо (өнгөрсөн огноогоор нөхөж гаргаж болно)</label>
+      <input class="inp" type="date" id="inp-dis-date" value="${todayStr()}" min="${escHTML(i.admittedDate || '')}" max="${todayStr()}" onchange="updateDischargeDate()">
     </div>
     <div class="ch" style="margin-top:10px">📋 Эмчилгээний дэлгэрэнгүй</div>
     <div class="tbl-wrap" style="max-height:200px;overflow-y:auto">
@@ -3752,7 +3793,7 @@ function dischargeInpatient() {
         <span>🩺 Үзлэгийн төлбөр:</span><span class="bold">${fmt(examFee)}</span>
       </div>
       <div class="row" style="justify-content:space-between;font-size:13px;margin-bottom:4px">
-        <span>🏨 Хоног (${days} × ${fmt(dailyFee)}):</span><span class="bold">${fmt(accommodation)}</span>
+        <span id="inp-dis-acc-label">🏨 Хоног (${days} × ${fmt(dailyFee)}):</span><span class="bold" id="inp-dis-acc">${fmt(accommodation)}</span>
       </div>
       <div class="row" style="justify-content:space-between;font-size:13px;margin-bottom:4px">
         <span>💊 Эмчилгээ (${logs.length} бичлэг):</span><span class="bold">${fmt(treatmentTotal)}</span>
@@ -3784,7 +3825,7 @@ function dischargeInpatient() {
     </div>
   `;
   // Live тооцоололд ашиглах суурь дүн (гэрийн эм нэмэгдэхэд нийт/үлдэгдэл шууд шинэчлэгдэнэ)
-  DIS_BASE = { grand: grandTotal, prepaid: prepaid };
+  DIS_BASE = { grand: grandTotal, prepaid: prepaid, examFee: examFee, treatmentTotal: treatmentTotal, dailyFee: dailyFee, admittedMs: i.admittedMs };
   // Сүүлийн өдрийн эмийг гэрийн эм болгож урьдчилан бөглөнө — эмч ихэвчлэн сүүлд хэрэглэсэн эмээ үргэлжлүүлдэг.
   // Үнийг хоосон үлдээнэ: зөвхөн бодитоор олгосон эмэнд үнэ бичнэ.
   if ($('#inp-homemed-list')) {
@@ -3809,9 +3850,13 @@ function confirmDischarge() {
     followUpDate: $('#inp-dis-followup') ? $('#inp-dis-followup').value : '',
     ms: nowMs()
   };
+  // 🗓 Сонгосон гарах огноо — өнгөрсөн огноогоор нөхөж гаргаж болно
+  const disMs = getSelectedDischargeMs();
+  if (i.admittedMs && disMs < i.admittedMs) { toast('Гарсан огноо орсон огнооноос өмнө байж болохгүй', 'err'); return; }
+  const disDate = localDateStr(new Date(disMs));
   i.discharged = true;
-  i.dischargedMs = nowMs();
-  i.dischargedDate = todayStr();
+  i.dischargedMs = disMs;
+  i.dischargedDate = disDate;
   // Recompute with discharge time
   const days = inpatientDays(i.admittedMs, i.dischargedMs);
   const dailyFee = getDailyFee(i);
@@ -3843,12 +3888,12 @@ function confirmDischarge() {
     horse: i.horse, owner: i.owner, phone: i.phone,
     docName: i.docName,
     amount: grandTotal,
-    services: 'Хэвтэн эмчилгээ ' + days + ' хоног' + (homeMedsTotal > 0 ? ' + гэрийн эм' : ''),
+    services: 'Байрлан эмчилгээ ' + days + ' хоног' + (homeMedsTotal > 0 ? ' + гэрийн эм' : ''),
     paid: due === 0 && payments.length > 0,
     method: payments.length === 0 ? '' : (payments.length === 1 ? payments[0].method : 'хосолсон'),
     payments: payments,
-    date: todayStr(),
-    paidDate: due === 0 && payments.length > 0 ? todayStr() : '',
+    date: disDate,
+    paidDate: due === 0 && payments.length > 0 ? disDate : '',
     paidMs: due === 0 && payments.length > 0 ? nowMs() : 0,
     ms: nowMs()
   };
@@ -3901,6 +3946,29 @@ function collectHomeMeds() {
   }).filter(m => m.name);
 }
 
+// 🗓 Modal дээр сонгосон гарах огноог ms болгож буцаана.
+// Өнөөдөр бол яг одоогийн цаг, өнгөрсөн огноо бол тухайн өдрийн 12:00 гэж тооцно.
+function getSelectedDischargeMs() {
+  const el = $('#inp-dis-date');
+  const v = el ? el.value : '';
+  if (!v || v === todayStr()) return nowMs();
+  const t = dateStrToMs(v);
+  return t ? t + 12 * 3600000 : nowMs();
+}
+
+// Гарах огноо өөрчлөгдөхөд хоног, байрны төлбөр, нийт дүнг дахин тооцно
+function updateDischargeDate() {
+  if (!DIS_BASE || !DIS_BASE.admittedMs) { updateDischargeTotals(); return; }
+  const atMs = getSelectedDischargeMs();
+  const days = inpatientDays(DIS_BASE.admittedMs, atMs);
+  const accommodation = (DIS_BASE.dailyFee || 0) * days;
+  DIS_BASE.grand = (DIS_BASE.examFee || 0) + (DIS_BASE.treatmentTotal || 0) + accommodation;
+  if ($('#inp-dis-days')) $('#inp-dis-days').textContent = days + ' хоног';
+  if ($('#inp-dis-acc-label')) $('#inp-dis-acc-label').textContent = `🏨 Хоног (${days} × ${fmt(DIS_BASE.dailyFee || 0)}):`;
+  if ($('#inp-dis-acc')) $('#inp-dis-acc').textContent = fmt(accommodation);
+  updateDischargeTotals();
+}
+
 // Гэрийн эмийн үнэ өөрчлөгдөх бүрд Нийт / Үлдэгдэл-ийг шинэчилнэ
 function updateDischargeTotals() {
   const hmTotal = collectHomeMeds().reduce((a, m) => a + (parseFloat(m.price) || 0), 0);
@@ -3923,7 +3991,7 @@ function updateDischargeTotals() {
  */
 function printOwnerSheet(inpId) {
   const i = STATE.inps.find(x => String(x.id) === String(inpId || STATE.selectedI));
-  if (!i) { toast('Хэвтэн эмчилгээний бичлэг олдсонгүй', 'err'); return; }
+  if (!i) { toast('Байрлан эмчилгээний бичлэг олдсонгүй', 'err'); return; }
   const info = i.dischargeInfo || {};
 
   // 🔗 Санхүүгийн холбоос
@@ -3994,7 +4062,7 @@ function printOwnerSheetByFin(finId) {
   const f = STATE.fins.find(x => String(x.id) === String(finId));
   if (!f) return;
   const i = STATE.inps.find(x => String(x.examId) === String(f.examId));
-  if (!i) { toast('Хэвтэн эмчилгээний бичлэг олдсонгүй', 'err'); return; }
+  if (!i) { toast('Байрлан эмчилгээний бичлэг олдсонгүй', 'err'); return; }
   printOwnerSheet(i.id);
 }
 
@@ -4006,6 +4074,34 @@ function hasOwnerSheet(f) {
 // ============================================================
 // FINANCE
 // ============================================================
+// 💰 Санхүү: Түүх шиг хуудаслалт — нэг дор бүх бичлэгийг зурахгүй (гацахаас сэргийлнэ)
+const FIN_PAGE_SIZE = 50;
+const __finPages = { pending: 0, receivable: 0, paid: 0 };
+function finSetPage(tab, p) { __finPages[tab] = p; renderFinance(); }
+// Жагсаалтыг тухайн табын идэвхтэй хуудсаар хэрчиж буцаана
+function _finSlice(arr, tab) {
+  const totalPages = Math.max(1, Math.ceil(arr.length / FIN_PAGE_SIZE));
+  if (__finPages[tab] >= totalPages) __finPages[tab] = 0;
+  const start = __finPages[tab] * FIN_PAGE_SIZE;
+  return { page: arr.slice(start, start + FIN_PAGE_SIZE), start, totalPages, total: arr.length };
+}
+// Жагсаалтын доор Өмнөх/Дараах товч зурна
+function _finPagCtl(anchorEl, tab, totalPages, total) {
+  if (!anchorEl) return;
+  let pag = document.getElementById('fin-pag-' + tab);
+  if (!pag) {
+    pag = document.createElement('div');
+    pag.id = 'fin-pag-' + tab;
+    pag.style.cssText = 'display:flex;align-items:center;gap:8px;padding:8px 0;justify-content:center;flex-wrap:wrap';
+    anchorEl.insertAdjacentElement('afterend', pag);
+  }
+  const cur = __finPages[tab];
+  pag.innerHTML = totalPages <= 1 ? '' : `
+    <button class="btn btn-sm" onclick="finSetPage('${tab}',${Math.max(0, cur - 1)})" ${cur === 0 ? 'disabled' : ''}>← Өмнөх</button>
+    <span style="font-size:13px;color:var(--muted)">${cur + 1} / ${totalPages} · нийт ${total}</span>
+    <button class="btn btn-sm" onclick="finSetPage('${tab}',${Math.min(totalPages - 1, cur + 1)})" ${cur >= totalPages - 1 ? 'disabled' : ''}>Дараах →</button>`;
+}
+
 function renderFinance() {
   // tabs
   $$('.tab[data-ftab]').forEach(t => t.onclick = () => {
@@ -4029,10 +4125,12 @@ function renderFinance() {
   // pending
   if (STATE.activeFTab === 'pending') {
     const list = $('#fin-pending-list');
+    const pd = _finSlice(pending, 'pending');
+    _finPagCtl(list, 'pending', pd.totalPages, pd.total);
     if (pending.length === 0) {
       list.innerHTML = '<div class="empty"><div class="empty-em">📄</div>Хүлээгдэж буй нэхэмжлэх алга</div>';
     } else {
-      list.innerHTML = pending.map(f => `
+      list.innerHTML = pd.page.map(f => `
         <div class="li" data-id="${escHTML(f.id)}">
           <div class="li-stripe" style="background:var(--orange)"></div>
           <div class="li-av">📄</div>
@@ -4061,11 +4159,13 @@ function renderFinance() {
   // receivables
   if (STATE.activeFTab === 'receivable') {
     const list = $('#fin-recv-list');
+    const rd = _finSlice(receivables, 'receivable');
+    _finPagCtl(list, 'receivable', rd.totalPages, rd.total);
     if (receivables.length === 0) {
       list.innerHTML = '<div class="empty"><div class="empty-em">🧾</div>Авлага алга</div>';
       $('#fin-recv-detail-body').innerHTML = '<div class="empty"><div class="empty-em">🧾</div>Авлага сонгоно уу</div>';
     } else {
-      list.innerHTML = receivables.map(f => {
+      list.innerHTML = rd.page.map(f => {
         const due = getDueAmount(f);
         return `
           <div class="li" data-id="${escHTML(f.id)}">
@@ -4095,15 +4195,18 @@ function renderFinance() {
   // paid table
   if (STATE.activeFTab === 'paid') {
     const tb = $('#fin-paid-tb');
+    const pgd = _finSlice(paid, 'paid');
+    const paidAnchor = tb.closest('.tbl-wrap') || tb.closest('table');
+    _finPagCtl(paidAnchor, 'paid', pgd.totalPages, pgd.total);
     if (paid.length === 0) {
       tb.innerHTML = '<tr><td colspan="10" style="text-align:center;padding:20px;color:var(--muted)">Бүртгэл алга</td></tr>';
     } else {
-      tb.innerHTML = paid.map((f,i) => {
+      tb.innerHTML = pgd.page.map((f,i) => {
         const h = STATE.horses.find(x => String(x.id) === String(f.horseId) || x.name === f.horse);
         const iabd = (h && h.iabd) ? h.iabd : '';
         return `
         <tr>
-          <td>${i+1}</td>
+          <td>${pgd.start + i + 1}</td>
           <td>${f.examNum?'<span class="badge b-o" style="font-weight:800">'+escHTML(f.examNum)+'</span>':'—'}</td>
           <td>${escHTML(f.paidDate||f.date)}</td>
           <td>${iabd?escHTML(iabd):'<span class="muted">—</span>'}</td>
@@ -4825,9 +4928,9 @@ function printReceiptNow() {
   window.print();
 }
 
-function printInpatientCard() {
-  const i = STATE.inps.find(x => String(x.id) === String(STATE.selectedI));
-  if (!i) return;
+function printInpatientCard(inpId) {
+  const i = STATE.inps.find(x => String(x.id) === String(inpId || STATE.selectedI));
+  if (!i) { toast('Байрлан эмчилгээний бичлэг олдсонгүй', 'err'); return; }
 
   const logs = Array.isArray(i.log) ? [...i.log].sort((a,b) => (a.date||'') > (b.date||'') ? 1 : -1) : [];
   const fee  = getDailyFee(i);
@@ -4865,7 +4968,7 @@ function printInpatientCard() {
       <td style="text-align:center">0</td>
       <td style="text-align:center;white-space:nowrap">${escHTML(admDate)}</td>
       <td style="text-align:center;font-size:8pt">${escHTML(i.docName||'—')}</td>
-      <td><b>Хэвтэн эмчлэхээр хүлээн авав.</b>${i.diagnosis?`<div style="font-size:7.5pt;color:#555">${escHTML(i.diagnosis)}</div>`:''}</td>
+      <td><b>Байрлан эмчлэхээр хүлээн авав.</b>${i.diagnosis?`<div style="font-size:7.5pt;color:#555">${escHTML(i.diagnosis)}</div>`:''}</td>
       <td style="font-size:7.5pt;color:#555">Анхны үзлэг</td>
       <td style="text-align:right;font-weight:700">${fmt(examFee)}</td>
     </tr>`;
@@ -4881,10 +4984,21 @@ function printInpatientCard() {
     </tr>`).join('');
 
   $('#print-area').innerHTML = `
-<div style="width:210mm;min-height:297mm;font-family:'Times New Roman',serif;font-size:9.5pt;color:#000;padding:10mm 12mm;box-sizing:border-box">
+<style>
+  /* 📖 Нэг дэвтэр шиг үргэлжилсэн хэвлэлт:
+     - Хүснэгтийн толгой хуудас бүр дээр давтагдана
+     - Мөр хуудасны зааг дээр таслагдахгүй
+     - Нийт дүн + гарын үсгийн хэсэг хамт нэг хуудсанд багтана */
+  #print-area table { page-break-inside: auto; }
+  #print-area thead { display: table-header-group; }
+  #print-area tfoot { display: table-footer-group; }
+  #print-area tr { page-break-inside: avoid; break-inside: avoid; }
+  #print-area .inp-book-tail { page-break-inside: avoid; break-inside: avoid; }
+</style>
+<div style="width:210mm;font-family:'Times New Roman',serif;font-size:9.5pt;color:#000;padding:10mm 12mm;box-sizing:border-box">
   <div style="text-align:center;border-bottom:2pt solid #000;padding-bottom:4mm;margin-bottom:5mm">
     <div style="font-size:13pt;font-weight:900;text-transform:uppercase;letter-spacing:1px">Морьтон үндэсний адууны эмнэлэг</div>
-    <div style="font-size:9pt;margin-top:2mm">Хэвтэн эмчлэх тасгийн эмчилгээний дэвтэр</div>
+    <div style="font-size:9pt;margin-top:2mm">Байрлан эмчлэх тасгийн эмчилгээний дэвтэр</div>
   </div>
   <div style="display:flex;flex-wrap:wrap;gap:4mm;margin-bottom:5mm;font-size:8.5pt">
     <div style="flex:1;min-width:40mm"><b>Адуу:</b> ${escHTML(i.horse||'—')}</div>
@@ -4912,6 +5026,7 @@ function printInpatientCard() {
       ${homeMedRow}
     </tbody>
   </table>
+  <div class="inp-book-tail">
   <table style="width:100%;border-collapse:collapse;font-size:9pt;margin-bottom:8mm">
     <tr><td colspan="4" style="border:0.5pt solid #000"></td><td style="text-align:right;font-weight:900;padding:2mm;border:0.5pt solid #000">НИЙТ ДҮН</td><td style="text-align:right;font-weight:900;padding:2mm;border:0.5pt solid #000;width:24mm">${fmt(grandTotal)}</td></tr>
     ${prepayRows}
@@ -4924,6 +5039,7 @@ function printInpatientCard() {
     <div style="border-top:0.5pt solid #000;padding-top:2mm;min-width:50mm;text-align:center">Хянасан менежер</div>
   </div>
   <div style="margin-top:6mm;font-size:7.5pt;color:#666;text-align:center">Морьтон адууны тов ХХК · Торийн банк 102030102030 · Хаан банк 5040416540 · Хэвлэсэн: ${escHTML(todayStr())}</div>
+  </div>
 </div>`;
   setTimeout(() => window.print(), 150);
 }
@@ -5790,10 +5906,10 @@ function openDeletedExamDetail(idx) {
         <span>${escHTML(f.method||'—')} · ${f.paid ? 'Төлсөн' : 'Хүлээгдэж буй'}</span>
         <span style="font-weight:700">${fmt(f.amount||0)}</span></div>`).join('')
     : '<div class="muted">Холбоотой санхүү алга</div>';
-  // Холбоотой хэвтэн эмчлэх
+  // Холбоотой байрлан эмчлэх
   const inpHTML = inps.length
     ? inps.map(i => `<div>${escHTML(i.horse || i.id || '')} ${i.status ? '· ' + escHTML(i.status) : ''}</div>`).join('')
-    : '<div class="muted">Холбоотой хэвтэн эмчлэх алга</div>';
+    : '<div class="muted">Холбоотой байрлан эмчлэх алга</div>';
 
   const body = document.getElementById('deleted-exam-detail-body');
   if (!body) return;
@@ -5812,7 +5928,7 @@ function openDeletedExamDetail(idx) {
     <div class="fld" style="margin-bottom:8px"><label>Эм тариа</label><div>${medsHTML}</div></div>
     <div class="fld" style="margin-bottom:8px"><label>Дүн</label><div style="font-weight:800">${fmt(e.amount||0)}</div></div>
     <div class="fld" style="margin-bottom:8px"><label>Холбоотой санхүү (${fins.length})</label>${finHTML}</div>
-    <div class="fld" style="margin-bottom:8px"><label>Холбоотой хэвтэн эмчлэх (${inps.length})</label>${inpHTML}</div>
+    <div class="fld" style="margin-bottom:8px"><label>Холбоотой байрлан эмчлэх (${inps.length})</label>${inpHTML}</div>
   `;
   const m = document.getElementById('deleted-exam-modal');
   if (m) m.classList.add('show');
@@ -6505,7 +6621,7 @@ function deleteExam(id) {
   fbDeleteDoc('exams', String(id));
   fbSaveRecord('deletedExams', Object.assign({ id: archRec._archId }, archRec));
   writeLog('Үзлэг устгасан', id, (e.horse||'') + ' — ' + (e.docName||''),
-    `Дүн: ${e.amount||0}; холбоотой ${linkedFins.length} санхүү, ${linkedInps.length} хэвтэн эмчлэх устсан`);
+    `Дүн: ${e.amount||0}; холбоотой ${linkedFins.length} санхүү, ${linkedInps.length} байрлан эмчлэх устсан`);
   closeModal('edit-exam-modal');
   toast('Устгагдлаа', 'ok');
   renderHistory();
@@ -6623,7 +6739,7 @@ function _doExportExcel() {
     'Дүн': i.initialAmount || 0,
     'Гарсан эсэх': i.discharged ? 'Тийм' : 'Үгүй'
   }));
-  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(inpsData), 'Хэвтэн');
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(inpsData), 'Байрлан');
 
   // Эмч нар
   const docsData = STATE.doctors.map(d => ({
@@ -7370,14 +7486,18 @@ function fbApplyRecord(colName, docData) {
       STATE[colName].push(r);
     } else {
       const lc = STATE[colName][idx];
-      const remoteMs = parseFloat(r.ms) || 0;
-      const localMs  = parseFloat(lc.ms) || 0;
+      // ⏱ ms байхгүй хуучин бичлэгт _updatedAt / createdAt-аар нөхөж харьцуулна —
+      // эс бөгөөс 0 >= 0 болж хуучин хуулбар шинийг дардаг (ИАБД устдаг байсан шалтгаан)
+      const remoteMs = parseFloat(r.ms)  || parseFloat(r._updatedAt)  || parseFloat(r.createdAt)  || 0;
+      const localMs  = parseFloat(lc.ms) || parseFloat(lc._updatedAt) || parseFloat(lc.createdAt) || 0;
       if (remoteMs >= localMs) {
         // Remote шинэ — array талбаруудыг хамгаалж нэгтгэнэ
         const ARRAY_FIELDS = ['prepayments','payments','log','services','meds','images','results','history'];
         ARRAY_FIELDS.forEach(f => {
           if ((!Array.isArray(r[f]) || r[f].length === 0) && Array.isArray(lc[f]) && lc[f].length) r[f] = lc[f];
         });
+        // 🛡 ИАБД хамгаалалт: remote дээр хоосон ч локалд байвал хадгална
+        if (colName === 'horses' && !r.iabd && lc.iabd) r.iabd = lc.iabd;
         STATE[colName][idx] = r;
       }
     }
