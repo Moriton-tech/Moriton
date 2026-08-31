@@ -31,7 +31,7 @@
      ============================================================ -->
 <script type="module" src="firebase.js?v=20260720"></script>
 
-<link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="style.css?v=20260831">
 </head>
 <body>
 
@@ -113,7 +113,7 @@
       <div class="sb-section">Тайлан</div>
       <div class="sb-list">
         <div class="ni" data-page="kpi"><div class="ni-icon">📈</div><div class="ni-label">KPI самбар</div></div>
-        <div class="ni" data-page="report"><div class="ni-icon">📄</div><div class="ni-label">Өдрийн тайлан</div></div>
+        <div class="ni" data-page="report"><div class="ni-icon">📄</div><div class="ni-label">Тайлан</div></div>
       </div>
       <div class="sb-bottom">
         <div class="sb-list">
@@ -150,7 +150,7 @@
       <div class="sb-section" style="color:var(--gold);opacity:0.85">Тайлан</div>
       <div class="sb-list">
         <div class="ni" data-page="kpi"><div class="ni-icon">📈</div><div class="ni-label">KPI самбар</div></div>
-        <div class="ni" data-page="report"><div class="ni-icon">📄</div><div class="ni-label">Өдрийн тайлан</div></div>
+        <div class="ni" data-page="report"><div class="ni-icon">📄</div><div class="ni-label">Тайлан</div></div>
       </div>
       <div class="sb-bottom">
         <div class="sb-list">
@@ -761,7 +761,7 @@
         <div class="ph">
           <div class="ph-l">
             <div class="ph-title">📄 Тайлан</div>
-            <div class="ph-sub">Хугацаа сонгож тайлан үүсгэх</div>
+            <div class="ph-sub">Хугацаа, эмч сонгож тайлан үүсгэх</div>
           </div>
         </div>
 
@@ -818,9 +818,21 @@
             </div>
           </div>
 
+          <!-- Doctor picker -->
+          <div class="row" style="margin-top:10px;gap:8px;flex-wrap:wrap">
+            <div class="fld" style="flex:1;min-width:220px">
+              <label>👨‍⚕️ Эмч</label>
+              <select class="inp" id="rp-doc">
+                <option value="">👥 Бүх эмч (ерөнхий тайлан)</option>
+              </select>
+            </div>
+          </div>
+          <div class="muted" style="font-size:11px;margin-top:4px">Эмч сонговол тухайн эмчийн үзсэн бүх адуу, хийсэн үйлчилгээ, эм, онош, байрлан эмчлүүлэх бичлэг дэлгэрэнгүй гарна. «Бүх эмч» бол эмнэлгийн ерөнхий тайлан.</div>
+
           <div class="row" style="margin-top:12px;gap:8px;flex-wrap:wrap">
             <button class="btn btn-p" onclick="genReport()">🔄 Үүсгэх</button>
             <button class="btn" onclick="window.print()">🖨️ Хэвлэх / PDF</button>
+            <button class="btn hidden" id="rp-csv-btn" onclick="exportReportCSV()">⬇ CSV (Excel)</button>
             <div id="rp-period-info" class="muted" style="font-size:12px;font-weight:600;margin-left:auto;align-self:center"></div>
           </div>
         </div>
@@ -1351,7 +1363,7 @@
 
 <div id="print-area"></div>
 
-<script src="app.js?v=20260720"></script>
+<script src="app.js?v=20260831"></script>
 <script src="lab.js?v=20260731"></script>
 
 <!-- PWA: service worker бүртгэх, автомат шинэчлэлт, суулгах товч -->

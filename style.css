@@ -1523,3 +1523,26 @@ tbody tr:hover { background: #fafbfd; }
   font-size: 11px;
   font-weight: 700;
 }
+
+/* ============================================================
+   REPORT — хэвлэх хувилбар (Тайлан цэс)
+   ============================================================ */
+@media print {
+  .rp-print {
+    padding: 10mm 12mm;
+    font-family: 'Times New Roman', Times, serif;
+    font-size: 9.5pt;
+    color: #000;
+    background: #fff;
+  }
+  .rp-print .pr-h1 { font-size: 15pt; font-weight: 700; text-align: center; margin: 0 0 4px; }
+  .rp-print .pr-h2 { font-size: 11pt; font-weight: 700; margin: 10px 0 4px; border-bottom: 1pt solid #000; padding-bottom: 2px; page-break-after: avoid; }
+  .rp-print .pr-tbl { width: 100%; border-collapse: collapse; margin-bottom: 6px; font-size: 8.5pt; }
+  .rp-print .pr-tbl th, .rp-print .pr-tbl td { border: 0.5pt solid #444; padding: 2px 4px; vertical-align: top; text-align: left; }
+  .rp-print .pr-tbl th { background: #e8e8e8; font-weight: 700; }
+  .rp-print .pr-tbl tr { page-break-inside: avoid; }
+  .rp-print .pr-tbl.pr-wide { font-size: 7.5pt; }
+  .rp-print .pr-cols { display: flex; gap: 8px; align-items: flex-start; }
+  .rp-print .pr-cols > div { flex: 1; min-width: 0; }
+  .rp-print .pr-sign { margin-top: 24px; display: flex; justify-content: space-between; font-size: 10pt; }
+}

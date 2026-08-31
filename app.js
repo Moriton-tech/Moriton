@@ -5373,6 +5373,13 @@ function initReport() {
     $('#rp-from').value = localDateStr(d);
   }
   if (!$('#rp-to').value) $('#rp-to').value = todayStr();
+  // Эмч сонгох dropdown
+  rpFillDoctorSelect();
+  const ds = $('#rp-doc');
+  if (ds && !ds.__wired) {
+    ds.__wired = true;
+    ds.onchange = () => { if (__rpLast) genReport(); };
+  }
   updateReportPickers();
 }
 
@@ -5421,225 +5428,743 @@ function getReportPeriod() {
   return { from: f, to: t, label: '📅 ' + f + ' → ' + t, kind: 'c' };
 }
 
+// ------------------------------------------------------------
+// REPORT — туслах функцууд (эмчийн сонголт, мөр бэлтгэх, CSV)
+// ------------------------------------------------------------
+let __rpLast = null; // Сүүлд үүсгэсэн тайлангийн өгөгдөл (CSV экспортод)
+
+// Огноог "YYYY-MM-DD" болгож хэвийн болгоно
+function rpNormDate(v) {
+  if (!v) return '';
+  if (typeof v === 'string') return v.slice(0, 10);
+  if (v instanceof Date) return localDateStr(v);
+  try { return localDateStr(new Date(v)); } catch(e) { return ''; }
+}
+
+// docId хоосон бол нэрээс synthetic ID үүсгэнэ (хуучин/импортын бичлэгтэй нийцтэй)
+function rpDocKey(id, name) {
+  if (id) return String(id);
+  if (name && String(name).trim() && name !== '—') return 'name_' + String(name).trim();
+  return '';
+}
+
+// Тайланд сонгох боломжтой бүх эмч: STATE.doctors + үзлэгт тэмдэглэгдсэн нэмэлт нэрс
+function rpAllDoctors() {
+  const list = (STATE.doctors || []).map(d => ({ id: String(d.id), name: d.name, role: d.role || '' }));
+  const seen = new Set(list.map(d => d.id));
+  const byName = new Set(list.map(d => d.name));
+  const add = (id, name) => {
+    const key = rpDocKey(id, name);
+    if (!key || seen.has(key)) return;
+    if (!id && byName.has(name)) return; // нэрээрээ аль хэдийн байгаа
+    seen.add(key);
+    list.push({ id: key, name: name || key, role: '', synthetic: true });
+  };
+  (STATE.exams || []).forEach(e => { add(e.docId, e.docName); add(e.assistDocId, e.assistDocName); });
+  (STATE.inps || []).forEach(i => (Array.isArray(i.log) ? i.log : []).forEach(l => add(l.docId, l.docName)));
+  return list;
+}
+
+// Эмч сонгох dropdown-ийг бөглөнө
+function rpFillDoctorSelect() {
+  const sel = $('#rp-doc');
+  if (!sel) return;
+  const prev = sel.value;
+  let docs = rpAllDoctors();
+  // Санхүү/админ эрхгүй эмч зөвхөн ӨӨРИЙН тайланг харна
+  const restricted = !(typeof canAccess === 'function' && (canAccess('finance') || canAccess('admin')));
+  const myName = STATE.user && STATE.user.name;
+  if (restricted) {
+    const mine = docs.filter(d => d.name === myName);
+    if (mine.length) docs = mine;
+  }
+  sel.innerHTML = (restricted && docs.some(d => d.name === myName) ? '' : '<option value="">👥 Бүх эмч (ерөнхий тайлан)</option>') +
+    docs.map(d => `<option value="${escHTML(d.id)}">${escHTML(d.name)}${d.role ? ' (' + escHTML(d.role) + ')' : ''}</option>`).join('');
+  if (prev && docs.some(d => d.id === prev)) { sel.value = prev; return; }
+  // Анх удаа: нэвтэрсэн хэрэглэгч эмч бол өөрийг нь сонгоно (админ эрхтэй бол ерөнхий тайлан)
+  if (myName && !(typeof canAccess === 'function' && canAccess('admin'))) {
+    const me = docs.find(d => d.name === myName);
+    if (me) sel.value = me.id;
+  }
+}
+
+// Үзлэгийн төлбөрийн байдал
+function rpPayStatus(e) {
+  const fin = (STATE.fins || []).find(f => String(f.examId) === String(e.id));
+  if (!fin) return { label: '—', cls: '', paid: 0 };
+  const ps = Array.isArray(fin.payments) ? fin.payments : [];
+  const paidSum = ps.length ? ps.reduce((a, p) => a + (parseFloat(p.amount) || 0), 0) : (fin.paid ? (parseFloat(fin.amount) || 0) : 0);
+  const amt = parseFloat(fin.amount) || 0;
+  if (fin.paid || (amt > 0 && paidSum >= amt)) return { label: 'Төлсөн', cls: 'ok', paid: paidSum || amt };
+  if (paidSum > 0) return { label: 'Хэсэгчлэн', cls: 'warn', paid: paidSum };
+  return { label: 'Төлөөгүй', cls: 'err', paid: 0 };
+}
+
+// Адууны ИАБД дугаар
+function rpIabdOf(e) {
+  const h = (STATE.horses || []).find(x => String(x.id) === String(e.horseId) || x.name === e.horse);
+  return h && h.iabd ? h.iabd : '';
+}
+
+// Үзлэгийн бичлэгийг тайлангийн мөр болгоно
+function rpExamRow(e, docKey) {
+  const svcs = Array.isArray(e.services) ? e.services : [];
+  const meds = Array.isArray(e.meds) ? e.meds : [];
+  const mainKey = rpDocKey(e.docId, e.docName);
+  const asstKey = rpDocKey(e.assistDocId, e.assistDocName);
+  let role = '';
+  if (docKey) role = mainKey === docKey ? 'Үндсэн' : (asstKey === docKey ? 'Хамтран' : '');
+  const pay = rpPayStatus(e);
+  return {
+    id: e.id,
+    date: rpNormDate(e.date),
+    time: e.time || '',
+    examNum: e.examNum || '',
+    horse: e.horse || '',
+    iabd: rpIabdOf(e),
+    owner: e.owner || '',
+    phone: e.phone || '',
+    province: e.province || '',
+    diagnosis: e.diagnosis || '',
+    services: svcs.map(s => (s.name || '').toString().trim()).filter(Boolean),
+    svcText: svcs.map(s => (s.name || '').toString().trim()).filter(Boolean).join(', '),
+    meds: meds.map(m => (m.name || '').toString().trim()).filter(Boolean),
+    medText: meds.map(m => (m.name || '').toString().trim()).filter(Boolean).join(', '),
+    amount: parseFloat(e.amount) || 0,
+    payLabel: pay.label,
+    payCls: pay.cls,
+    durationMin: (e.durationMin !== null && e.durationMin !== undefined && !isNaN(e.durationMin)) ? e.durationMin : null,
+    docName: e.docName || '',
+    assistDocName: e.assistDocName || '',
+    role: role,
+    inpatient: !!e.inpatient
+  };
+}
+
+// Байрлан эмчлүүлэх өдрийн бичлэгүүдийг мөр болгоно (хугацаа + эмчээр шүүнэ)
+function rpInpLogRows(from, to, docKey) {
+  const rows = [];
+  (STATE.inps || []).forEach(i => {
+    (Array.isArray(i.log) ? i.log : []).forEach(l => {
+      const d = rpNormDate(l.date);
+      if (!d || d < from || d > to) return;
+      if (docKey && rpDocKey(l.docId, l.docName) !== docKey) return;
+      const svcs = Array.isArray(l.services) ? l.services : [];
+      const meds = Array.isArray(l.meds) ? l.meds : [];
+      rows.push({
+        date: d,
+        horse: i.horse || '',
+        owner: i.owner || '',
+        diagnosis: l.diagnosis || i.diagnosis || '',
+        note: l.note || '',
+        svcText: svcs.map(s => (s.name || '').toString().trim()).filter(Boolean).join(', '),
+        medText: meds.map(m => (m.name || '').toString().trim()).filter(Boolean).join(', '),
+        amount: parseFloat(l.amount) || 0,
+        docName: l.docName || '',
+        discharged: !!i.discharged
+      });
+    });
+  });
+  return rows.sort((a, b) => a.date < b.date ? -1 : a.date > b.date ? 1 : 0);
+}
+
+// Нэр → тоо/дүн бүлэглэлт
+function rpCountMap(items, keyFn, revFn) {
+  const m = {};
+  items.forEach(it => {
+    const keys = keyFn(it);
+    (Array.isArray(keys) ? keys : [keys]).forEach(k => {
+      k = (k || '').toString().trim();
+      if (!k) return;
+      if (!m[k]) m[k] = { name: k, count: 0, rev: 0 };
+      m[k].count++;
+      if (revFn) m[k].rev += revFn(it, k) || 0;
+    });
+  });
+  return Object.values(m).sort((a, b) => (b.rev - a.rev) || (b.count - a.count));
+}
+
+// Үйлчилгээний задаргаа (үзлэгээс)
+function rpServiceStats(exams) {
+  const map = {};
+  exams.forEach(e => {
+    const svcs = Array.isArray(e.services) ? e.services : [];
+    if (!svcs.length) return;
+    const perSvcDur = (e.durationMin !== null && e.durationMin !== undefined && !isNaN(e.durationMin)) ? (e.durationMin / svcs.length) : null;
+    svcs.forEach(s => {
+      const name = (s.name || '—').toString().trim();
+      if (!name) return;
+      if (!map[name]) map[name] = { name, count: 0, rev: 0, durSum: 0, durN: 0 };
+      map[name].count++;
+      map[name].rev += parseFloat(s.price) || 0;
+      if (perSvcDur !== null) { map[name].durSum += perSvcDur; map[name].durN++; }
+    });
+  });
+  return Object.values(map).map(v => ({ name: v.name, count: v.count, rev: v.rev, avgDur: v.durN ? v.durSum / v.durN : null })).sort((a, b) => b.rev - a.rev);
+}
+
+// Дэлгэц дээрх жижиг хүснэгт (нэр / тоо / дүн / хувь)
+function rpMiniTable(entries, opts) {
+  opts = opts || {};
+  if (!entries.length) return `<div class="empty"><div class="empty-em">${opts.emptyIcon || '📋'}</div>${escHTML(opts.emptyText || 'Бичлэг алга')}</div>`;
+  const total = entries.reduce((a, b) => a + (opts.byCount ? b.count : b.rev), 0);
+  const max = opts.limit || 12;
+  const shown = entries.slice(0, max);
+  const rest = entries.length - shown.length;
+  return `
+    <div class="tbl-wrap"><table>
+      <thead><tr><th>${escHTML(opts.nameLabel || 'Нэр')}</th><th style="width:60px">Тоо</th>${opts.hideRev ? '' : '<th style="width:110px">Дүн</th>'}<th style="width:120px">Хувь</th></tr></thead>
+      <tbody>
+        ${shown.map(s => {
+          const v = opts.byCount ? s.count : s.rev;
+          const pct = total > 0 ? (v / total * 100) : 0;
+          return `<tr>
+            <td class="bold" style="max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escHTML(s.name)}</td>
+            <td>${s.count}</td>
+            ${opts.hideRev ? '' : `<td>${fmt(s.rev)}</td>`}
+            <td><div class="row" style="gap:6px;flex-wrap:nowrap"><div class="prog" style="flex:1;min-width:40px"><div class="prog-fill" style="width:${pct.toFixed(1)}%"></div></div><span style="font-size:11px;font-weight:700;flex-shrink:0">${pct.toFixed(0)}%</span></div></td>
+          </tr>`;
+        }).join('')}
+        ${rest > 0 ? `<tr><td colspan="4" class="muted" style="font-size:11px;text-align:center">… бусад ${rest}</td></tr>` : ''}
+      </tbody>
+    </table></div>`;
+}
+
+// Хэвлэх хувилбарын жижиг хүснэгт
+function rpMiniTablePrint(entries, nameLabel, hideRev) {
+  if (!entries.length) return `<table class="pr-tbl"><tr><td style="text-align:center">Бичлэг алга</td></tr></table>`;
+  const total = entries.reduce((a, b) => a + (hideRev ? b.count : b.rev), 0);
+  return `<table class="pr-tbl">
+    <tr><th>${escHTML(nameLabel)}</th><th>Тоо</th>${hideRev ? '' : '<th>Дүн</th>'}<th>Хувь</th></tr>
+    ${entries.map(s => { const v = hideRev ? s.count : s.rev; return `<tr><td>${escHTML(s.name)}</td><td>${s.count}</td>${hideRev ? '' : `<td>${fmt(s.rev)}</td>`}<td>${total > 0 ? (v / total * 100).toFixed(1) + '%' : '—'}</td></tr>`; }).join('')}
+  </table>`;
+}
+
+// Үзсэн адуудын дэлгэрэнгүй хүснэгт (дэлгэц)
+function rpExamTable(rows, opts) {
+  opts = opts || {};
+  if (!rows.length) return `<div class="empty"><div class="empty-em">🐎</div>Тухайн хугацаанд үзлэг байхгүй</div>`;
+  const LIMIT = opts.limit || 400;
+  const shown = rows.slice(0, LIMIT);
+  const showRole = !!opts.showRole;
+  const showDoc = !!opts.showDoc;
+  const payBadge = (r) => r.payCls === 'ok' ? `<span class="badge" style="background:var(--green);color:#fff">${r.payLabel}</span>`
+    : r.payCls === 'warn' ? `<span class="badge" style="background:var(--orange);color:#fff">${r.payLabel}</span>`
+    : r.payCls === 'err' ? `<span class="badge" style="background:var(--red);color:#fff">${r.payLabel}</span>` : '—';
+  return `
+    <div class="tbl-wrap" style="overflow-x:auto;-webkit-overflow-scrolling:touch">
+      <table style="min-width:1100px;font-size:12px">
+        <thead><tr>
+          <th style="width:32px">#</th>
+          <th style="width:88px">Огноо</th>
+          <th style="width:70px">Дугаар</th>
+          <th style="width:130px">Адуу (зүс)</th>
+          <th style="width:80px">ИАБД</th>
+          <th style="width:110px">Эзэн</th>
+          <th style="width:90px">Утас</th>
+          <th style="width:160px">Онош</th>
+          <th>Хийсэн үйлчилгээ</th>
+          <th style="width:150px">Эм</th>
+          ${showDoc ? '<th style="width:110px">Эмч</th>' : ''}
+          ${showRole ? '<th style="width:70px">Үүрэг</th>' : ''}
+          <th style="width:90px;text-align:right">Дүн</th>
+          <th style="width:80px">Төлбөр</th>
+          <th style="width:70px">Хугацаа</th>
+        </tr></thead>
+        <tbody>
+          ${shown.map((r, i) => `
+            <tr style="cursor:pointer" onclick="openExamDetail('${escHTML(String(r.id))}')" title="Дэлгэрэнгүй харах">
+              <td class="muted">${i + 1}</td>
+              <td>${escHTML(r.date)}${r.time ? '<div class="muted" style="font-size:10px">' + escHTML(r.time) + '</div>' : ''}</td>
+              <td class="bold">${escHTML(r.examNum)}</td>
+              <td class="bold" style="max-width:130px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escHTML(r.horse)}${r.inpatient ? ' <span class="badge">🏥</span>' : ''}</td>
+              <td>${escHTML(r.iabd) || '—'}</td>
+              <td style="max-width:110px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escHTML(r.owner)}</td>
+              <td>${escHTML(r.phone)}</td>
+              <td style="max-width:160px;white-space:normal">${escHTML(r.diagnosis) || '—'}</td>
+              <td style="white-space:normal">${r.services.length ? r.services.map(s => `<span class="pill" style="margin:1px 2px 1px 0">${escHTML(s)}</span>`).join('') : '<span class="muted">—</span>'}</td>
+              <td style="white-space:normal;font-size:11px">${escHTML(r.medText) || '<span class="muted">—</span>'}</td>
+              ${showDoc ? `<td style="font-size:11px">${escHTML(r.docName)}${r.assistDocName ? '<div class="muted" style="font-size:10px">+ ' + escHTML(r.assistDocName) + '</div>' : ''}</td>` : ''}
+              ${showRole ? `<td>${r.role === 'Хамтран' ? '<span class="badge">хамтран</span>' : '<span class="bold" style="font-size:11px">үндсэн</span>'}</td>` : ''}
+              <td class="bold" style="text-align:right;white-space:nowrap">${fmt(r.amount)}</td>
+              <td>${payBadge(r)}</td>
+              <td class="muted" style="font-size:11px">${r.durationMin !== null ? fmtDuration(r.durationMin) : '—'}</td>
+            </tr>`).join('')}
+        </tbody>
+      </table>
+    </div>
+    ${rows.length > LIMIT ? `<div class="muted" style="font-size:11px;margin-top:6px;text-align:center">Эхний ${LIMIT} мөрийг харуулав (нийт ${rows.length}). Бүгдийг харахын тулд CSV татна уу эсвэл хэвлэнэ үү.</div>` : ''}`;
+}
+
+// Үзсэн адуудын хүснэгт (хэвлэх)
+function rpExamTablePrint(rows, opts) {
+  opts = opts || {};
+  if (!rows.length) return `<table class="pr-tbl"><tr><td style="text-align:center">Үзлэг байхгүй</td></tr></table>`;
+  const showRole = !!opts.showRole, showDoc = !!opts.showDoc;
+  return `<table class="pr-tbl pr-wide">
+    <tr><th>#</th><th>Огноо</th><th>Дугаар</th><th>Адуу</th><th>ИАБД</th><th>Эзэн</th><th>Утас</th><th>Онош</th><th>Үйлчилгээ</th><th>Эм</th>${showDoc ? '<th>Эмч</th>' : ''}${showRole ? '<th>Үүрэг</th>' : ''}<th>Дүн</th><th>Төлбөр</th></tr>
+    ${rows.map((r, i) => `<tr><td>${i + 1}</td><td>${escHTML(r.date)}</td><td>${escHTML(r.examNum)}</td><td>${escHTML(r.horse)}</td><td>${escHTML(r.iabd)}</td><td>${escHTML(r.owner)}</td><td>${escHTML(r.phone)}</td><td>${escHTML(r.diagnosis)}</td><td>${escHTML(r.svcText)}</td><td>${escHTML(r.medText)}</td>${showDoc ? `<td>${escHTML(r.docName)}${r.assistDocName ? ' / ' + escHTML(r.assistDocName) : ''}</td>` : ''}${showRole ? `<td>${escHTML(r.role)}</td>` : ''}<td style="text-align:right">${fmt(r.amount)}</td><td>${escHTML(r.payLabel)}</td></tr>`).join('')}
+  </table>`;
+}
+
+// Байрлан эмчлүүлэх бичлэгийн хүснэгт (дэлгэц)
+function rpInpTable(rows, showDoc) {
+  if (!rows.length) return `<div class="empty"><div class="empty-em">🏥</div>Байрлан эмчлүүлэх бичлэг байхгүй</div>`;
+  return `
+    <div class="tbl-wrap" style="overflow-x:auto;-webkit-overflow-scrolling:touch">
+      <table style="min-width:800px;font-size:12px">
+        <thead><tr><th style="width:32px">#</th><th style="width:88px">Огноо</th><th style="width:130px">Адуу</th><th style="width:110px">Эзэн</th><th style="width:150px">Онош</th><th>Үйлчилгээ</th><th style="width:150px">Эм</th>${showDoc ? '<th style="width:110px">Эмч</th>' : ''}<th style="width:90px;text-align:right">Дүн</th></tr></thead>
+        <tbody>
+          ${rows.map((r, i) => `<tr>
+            <td class="muted">${i + 1}</td>
+            <td>${escHTML(r.date)}</td>
+            <td class="bold">${escHTML(r.horse)}${r.discharged ? '' : ' <span class="badge">хэвтэж буй</span>'}</td>
+            <td>${escHTML(r.owner)}</td>
+            <td style="white-space:normal">${escHTML(r.diagnosis) || '—'}</td>
+            <td style="white-space:normal">${escHTML(r.svcText) || '<span class="muted">—</span>'}${r.note ? '<div class="muted" style="font-size:10px">' + escHTML(r.note) + '</div>' : ''}</td>
+            <td style="white-space:normal;font-size:11px">${escHTML(r.medText) || '<span class="muted">—</span>'}</td>
+            ${showDoc ? `<td style="font-size:11px">${escHTML(r.docName)}</td>` : ''}
+            <td class="bold" style="text-align:right;white-space:nowrap">${fmt(r.amount)}</td>
+          </tr>`).join('')}
+        </tbody>
+      </table>
+    </div>`;
+}
+
+function rpInpTablePrint(rows, showDoc) {
+  if (!rows.length) return `<table class="pr-tbl"><tr><td style="text-align:center">Бичлэг алга</td></tr></table>`;
+  return `<table class="pr-tbl pr-wide">
+    <tr><th>#</th><th>Огноо</th><th>Адуу</th><th>Эзэн</th><th>Онош</th><th>Үйлчилгээ</th><th>Эм</th>${showDoc ? '<th>Эмч</th>' : ''}<th>Дүн</th></tr>
+    ${rows.map((r, i) => `<tr><td>${i + 1}</td><td>${escHTML(r.date)}</td><td>${escHTML(r.horse)}</td><td>${escHTML(r.owner)}</td><td>${escHTML(r.diagnosis)}</td><td>${escHTML(r.svcText)}${r.note ? ' (' + escHTML(r.note) + ')' : ''}</td><td>${escHTML(r.medText)}</td>${showDoc ? `<td>${escHTML(r.docName)}</td>` : ''}<td style="text-align:right">${fmt(r.amount)}</td></tr>`).join('')}
+  </table>`;
+}
+
+// Тайлангаас CSV татах
+function exportReportCSV() {
+  if (!__rpLast) { toast('Эхлээд тайлан үүсгэнэ үү', 'err'); return; }
+  const L = __rpLast;
+  const rows = [['#', 'Огноо', 'Цаг', 'Дугаар', 'Адуу', 'ИАБД', 'Эзэн', 'Утас', 'Аймаг', 'Онош', 'Үйлчилгээ', 'Эм', 'Эмч', 'Хамтран эмч', 'Үүрэг', 'Дүн', 'Төлбөр', 'Хугацаа (мин)']];
+  L.examRows.forEach((r, i) => rows.push([i + 1, r.date, r.time, r.examNum, r.horse, r.iabd, r.owner, r.phone, r.province, r.diagnosis, r.svcText, r.medText, r.docName, r.assistDocName, r.role, r.amount, r.payLabel, r.durationMin !== null ? r.durationMin : '']));
+  if (L.inpRows.length) {
+    rows.push([]);
+    rows.push(['БАЙРЛАН ЭМЧЛҮҮЛЭХ — өдрийн эмчилгээ']);
+    rows.push(['#', 'Огноо', 'Адуу', 'Эзэн', 'Онош', 'Үйлчилгээ', 'Эм', 'Эмч', 'Дүн', 'Тэмдэглэл']);
+    L.inpRows.forEach((r, i) => rows.push([i + 1, r.date, r.horse, r.owner, r.diagnosis, r.svcText, r.medText, r.docName, r.amount, r.note]));
+  }
+  const nm = (L.docName ? L.docName + '_' : '') + 'тайлан_' + L.from + '_' + L.to + '.csv';
+  downloadCSV(rows, nm);
+}
+
+// Ерөнхий тайлангаас эмчийн мөр дарахад тухайн эмчийн тайлан руу шилжинэ
+function rpSelectDoctor(id) {
+  const sel = $('#rp-doc');
+  if (!sel) return;
+  sel.value = id;
+  if (sel.value !== id) { toast('Эмч олдсонгүй', 'err'); return; }
+  genReport();
+  const pv = $('#rp-preview');
+  if (pv && pv.scrollIntoView) pv.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+// ============================================================
+// REPORT — үүсгэх
+// ============================================================
 function genReport() {
   const period = getReportPeriod();
   if (!period) { toast('Хугацаа сонгоно уу', 'err'); return; }
   $('#rp-period-info').textContent = period.label;
-  // Normalize an item's date to "YYYY-MM-DD" string for comparison
-  const norm = (v) => {
-    if (!v) return '';
-    if (typeof v === 'string') return v.slice(0, 10);
-    if (v instanceof Date) return localDateStr(v);
-    try { return localDateStr(new Date(v)); } catch(e) { return ''; }
-  };
-  const inRange = (v) => {
-    const n = norm(v);
-    if (!n) return false;
-    return n >= period.from && n <= period.to;
-  };
-  const exams = STATE.exams.filter(e => inRange(e.date));
-  const fins = STATE.fins.filter(f => inRange(f.paidDate) || inRange(f.date));
-  // Daily revenue = sum of payments made in range
+  const docSel = $('#rp-doc');
+  const docKey = docSel ? docSel.value : '';
+  if (docKey) genDoctorReport(period, docKey);
+  else genOverallReport(period);
+  const csvBtn = $('#rp-csv-btn');
+  if (csvBtn) csvBtn.classList.remove('hidden');
+  toast('✅ Тайлан үүсгэгдлээ', 'ok');
+}
+
+// ------------------------------------------------------------
+// ЭМЧИЙН ТАЙЛАН — нэг эмчийн үзсэн бүх адуу, хийсэн үйлчилгээ
+// ------------------------------------------------------------
+function genDoctorReport(period, docKey) {
+  const inRange = (v) => { const n = rpNormDate(v); return n && n >= period.from && n <= period.to; };
+  const doc = rpAllDoctors().find(d => d.id === docKey) || { id: docKey, name: docKey.replace(/^name_/, ''), role: '' };
+
+  // Энэ эмчийн оролцсон үзлэгүүд (үндсэн эсвэл хамтран)
+  const exams = (STATE.exams || []).filter(e => {
+    if (!inRange(e.date)) return false;
+    return rpDocKey(e.docId, e.docName) === docKey || rpDocKey(e.assistDocId, e.assistDocName) === docKey;
+  }).sort((a, b) => {
+    const da = rpNormDate(a.date), db = rpNormDate(b.date);
+    if (da !== db) return da < db ? -1 : 1;
+    return (a.time || '') < (b.time || '') ? -1 : 1;
+  });
+  const examRows = exams.map(e => rpExamRow(e, docKey));
+  const mainExams = exams.filter(e => rpDocKey(e.docId, e.docName) === docKey);
+  const assistExams = exams.filter(e => rpDocKey(e.docId, e.docName) !== docKey);
+  const inpRows = rpInpLogRows(period.from, period.to, docKey);
+
+  // Тоон үзүүлэлтүүд
+  const horses = new Set(exams.map(e => String(e.horseId || e.horse || e.id)));
+  const svcCount = mainExams.reduce((a, e) => a + (Array.isArray(e.services) ? e.services.length : 0), 0);
+  const revMain = mainExams.reduce((a, e) => a + (parseFloat(e.amount) || 0), 0);
+  const revInp = inpRows.reduce((a, r) => a + r.amount, 0);
+  const durs = mainExams.map(e => e.durationMin).filter(v => v !== null && v !== undefined && !isNaN(v));
+  const avgDur = durs.length ? durs.reduce((a, b) => a + b, 0) / durs.length : null;
+  const inpCount = mainExams.filter(e => e.inpatient).length;
+  const paidCnt = examRows.filter(r => r.role === 'Үндсэн' && r.payCls === 'ok').length;
+  const unpaidCnt = mainExams.length - paidCnt;
+  const workDays = new Set(exams.map(e => rpNormDate(e.date)).concat(inpRows.map(r => r.date))).size;
+
+  // Задаргаанууд (үндсэн эмчээр хийсэн үзлэг + байрлан эмчлүүлэх бичлэг)
+  const svcStats = rpServiceStats(mainExams);
+  inpRows.forEach(r => { /* inp services нэрээр тоолно */
+    (r.svcText ? r.svcText.split(', ') : []).forEach(n => {
+      let s = svcStats.find(x => x.name === n);
+      if (!s) { s = { name: n, count: 0, rev: 0, avgDur: null }; svcStats.push(s); }
+      s.count++;
+    });
+  });
+  svcStats.sort((a, b) => b.rev - a.rev || b.count - a.count);
+  const diagStats = rpCountMap(mainExams, e => e.diagnosis, () => 0).sort((a, b) => b.count - a.count);
+  const medStats = rpCountMap(mainExams.concat(), e => (Array.isArray(e.meds) ? e.meds : []).map(m => m.name), () => 0);
+  inpRows.forEach(r => (r.medText ? r.medText.split(', ') : []).forEach(n => {
+    let m = medStats.find(x => x.name === n);
+    if (!m) { m = { name: n, count: 0, rev: 0 }; medStats.push(m); }
+    m.count++;
+  }));
+  medStats.sort((a, b) => b.count - a.count);
+  const provStats = rpCountMap(mainExams, e => e.province || 'Тодорхойгүй', e => parseFloat(e.amount) || 0).sort((a, b) => b.count - a.count);
+
+  // Сараар (жил/custom үед)
+  const monthMap = {};
+  mainExams.forEach(e => { const m = rpNormDate(e.date).slice(0, 7); if (!monthMap[m]) monthMap[m] = { name: m, count: 0, rev: 0 }; monthMap[m].count++; monthMap[m].rev += parseFloat(e.amount) || 0; });
+  const monthStats = Object.values(monthMap).sort((a, b) => a.name < b.name ? -1 : 1);
+
+  __rpLast = { docName: doc.name, from: period.from, to: period.to, examRows, inpRows };
+
+  const title = `👨‍⚕️ ${escHTML(doc.name)}${doc.role ? ' <span class="muted" style="font-size:13px;font-weight:700">(' + escHTML(doc.role) + ')</span>' : ''}`;
+  const periodTxt = escHTML(period.label.replace(/^📅 /, ''));
+
+  $('#rp-preview').innerHTML = `
+    <div class="pr-h1" style="font-size:18px;font-weight:900;text-align:center">${title}</div>
+    <div class="muted" style="text-align:center;font-size:12px;margin-bottom:4px">Эмчийн ажлын тайлан — ${periodTxt}</div>
+    <div class="muted" style="text-align:center;font-size:11px;margin-bottom:14px">Морьтон Адууны Төв</div>
+
+    <div class="stats s5">
+      <div class="stat"><div class="stat-l">🐎 Үзсэн адуу</div><div class="snum">${horses.size}</div><div class="muted" style="font-size:10px">${exams.length} үзлэг</div></div>
+      <div class="stat accent"><div class="stat-l">📋 Үндсэн / Хамтран</div><div class="snum">${mainExams.length} <span class="muted" style="font-size:13px">/ ${assistExams.length}</span></div><div class="muted" style="font-size:10px">${inpCount} байрлан эмчлүүлэх</div></div>
+      <div class="stat purple"><div class="stat-l">💉 Үйлчилгээ</div><div class="snum">${svcCount}</div><div class="muted" style="font-size:10px">${medStats.reduce((a, b) => a + b.count, 0)} эм хэрэглэсэн</div></div>
+      <div class="stat green"><div class="stat-l">💰 Орлого</div><div class="snum">${fmtCompact(revMain + revInp)}</div><div class="muted" style="font-size:10px">${paidCnt} төлсөн · ${unpaidCnt} төлөөгүй</div></div>
+      <div class="stat"><div class="stat-l">🏥 Хэвтэн эмчилгээ</div><div class="snum">${inpRows.length}</div><div class="muted" style="font-size:10px">өдрийн бичлэг · ${workDays} ажилласан өдөр</div></div>
+    </div>
+
+    ${avgDur !== null ? `<div class="muted" style="font-size:11px;margin-top:8px">⏱️ Нэг үзлэгийн дундаж хугацаа: <b>${fmtDuration(avgDur)}</b> (${durs.length} үзлэг дээр тооцов)</div>` : ''}
+
+    <div class="col2" style="margin-top:14px;gap:14px">
+      <div>
+        <div class="ch">💉 Хийсэн үйлчилгээ</div>
+        ${rpMiniTable(svcStats, { nameLabel: 'Үйлчилгээ', limit: 15 })}
+      </div>
+      <div>
+        <div class="ch">🩺 Онош</div>
+        ${rpMiniTable(diagStats, { nameLabel: 'Онош', byCount: true, hideRev: true, limit: 15, emptyIcon: '🩺' })}
+      </div>
+    </div>
+
+    <div class="col2" style="margin-top:14px;gap:14px">
+      <div>
+        <div class="ch">💊 Хэрэглэсэн эм</div>
+        ${rpMiniTable(medStats, { nameLabel: 'Эм', byCount: true, hideRev: true, limit: 15, emptyIcon: '💊' })}
+      </div>
+      <div>
+        <div class="ch">📍 Аймгаар</div>
+        ${rpMiniTable(provStats, { nameLabel: 'Аймаг', byCount: true, limit: 10, emptyIcon: '📍' })}
+        ${monthStats.length > 1 ? `<div class="ch" style="margin-top:12px">📆 Сараар</div>${rpMiniTable(monthStats, { nameLabel: 'Сар', limit: 24 })}` : ''}
+      </div>
+    </div>
+
+    <div class="ch" style="margin-top:16px">🐎 Үзсэн адуудын жагсаалт <span class="ch-r">${examRows.length}</span></div>
+    <div class="muted" style="font-size:11px;margin-bottom:6px">Мөр дээр дарж үзлэгийн дэлгэрэнгүйг харна. 🏥 — байрлан эмчлүүлэхэд орсон.</div>
+    ${rpExamTable(examRows, { showRole: assistExams.length > 0 })}
+
+    <div class="ch" style="margin-top:16px">🏥 Байрлан эмчлүүлэх — өдрийн эмчилгээ <span class="ch-r">${inpRows.length}</span></div>
+    ${rpInpTable(inpRows, false)}
+
+    <div style="margin-top:24px;display:flex;justify-content:space-between;font-size:12px">
+      <div>Эмч: ${escHTML(doc.name)} ____________________</div>
+      <div>Удирдах эмч: ____________________</div>
+    </div>
+  `;
+
+  $('#print-area').innerHTML = `
+    <div class="rp-print">
+      <div class="pr-h1">Эмчийн ажлын тайлан — ${escHTML(doc.name)}${doc.role ? ' (' + escHTML(doc.role) + ')' : ''}</div>
+      <div style="text-align:center;margin-bottom:10px">Морьтон Адууны Төв · ${periodTxt}</div>
+      <div class="pr-h2">Тойм</div>
+      <table class="pr-tbl">
+        <tr><th>Үзсэн адуу</th><th>Үзлэг (үндсэн)</th><th>Хамтран</th><th>Үйлчилгээ</th><th>Байрлан эмчлүүлэх бичлэг</th><th>Ажилласан өдөр</th><th>Дундаж хугацаа</th><th>Орлого</th><th>Төлсөн / Төлөөгүй</th></tr>
+        <tr><td>${horses.size}</td><td>${mainExams.length}</td><td>${assistExams.length}</td><td>${svcCount}</td><td>${inpRows.length}</td><td>${workDays}</td><td>${avgDur !== null ? fmtDuration(avgDur) : '—'}</td><td>${fmt(revMain + revInp)}</td><td>${paidCnt} / ${unpaidCnt}</td></tr>
+      </table>
+      <div class="pr-cols">
+        <div><div class="pr-h2">Хийсэн үйлчилгээ</div>${rpMiniTablePrint(svcStats, 'Үйлчилгээ', false)}</div>
+        <div><div class="pr-h2">Онош</div>${rpMiniTablePrint(diagStats, 'Онош', true)}</div>
+        <div><div class="pr-h2">Хэрэглэсэн эм</div>${rpMiniTablePrint(medStats, 'Эм', true)}</div>
+      </div>
+      ${monthStats.length > 1 ? `<div class="pr-h2">Сараар</div>${rpMiniTablePrint(monthStats, 'Сар', false)}` : ''}
+      <div class="pr-h2">Үзсэн адуудын жагсаалт (${examRows.length})</div>
+      ${rpExamTablePrint(examRows, { showRole: assistExams.length > 0 })}
+      <div class="pr-h2">Байрлан эмчлүүлэх — өдрийн эмчилгээ (${inpRows.length})</div>
+      ${rpInpTablePrint(inpRows, false)}
+      <div class="pr-sign"><div>Эмч: ${escHTML(doc.name)} ____________________</div><div>Удирдах эмч: ____________________</div></div>
+    </div>
+  `;
+}
+
+// ------------------------------------------------------------
+// ЕРӨНХИЙ ТАЙЛАН — бүх эмч
+// ------------------------------------------------------------
+function genOverallReport(period) {
+  const inRange = (v) => { const n = rpNormDate(v); return n && n >= period.from && n <= period.to; };
+  const exams = (STATE.exams || []).filter(e => inRange(e.date)).sort((a, b) => {
+    const da = rpNormDate(a.date), db = rpNormDate(b.date);
+    if (da !== db) return da < db ? -1 : 1;
+    return (a.time || '') < (b.time || '') ? -1 : 1;
+  });
+
+  // Орлого = тухайн хугацаанд хийгдсэн төлбөрүүд
   let totalRev = 0;
-  const methodTotals = { 'бэлэн':0, 'карт':0, 'QPay':0, 'дансаар':0, 'зээл':0, 'шилжүүлэг':0 };
-  STATE.fins.forEach(f => {
+  const methodTotals = { 'бэлэн': 0, 'карт': 0, 'QPay': 0, 'дансаар': 0, 'зээл': 0, 'шилжүүлэг': 0 };
+  (STATE.fins || []).forEach(f => {
     const ps = Array.isArray(f.payments) ? f.payments : [];
     if (ps.length > 0) {
       ps.forEach(p => {
         if (inRange(p.date)) {
           const amt = parseFloat(p.amount) || 0;
           totalRev += amt;
-          if (methodTotals[p.method] !== undefined) methodTotals[p.method] += amt;
-          else methodTotals[p.method] = amt;
+          methodTotals[p.method] = (methodTotals[p.method] || 0) + amt;
         }
       });
     } else if (f.paid && inRange(f.paidDate)) {
-      // Backward compat: old records without payments[] but marked paid
       const amt = parseFloat(f.amount) || 0;
       totalRev += amt;
       const m = f.method || 'бэлэн';
-      if (methodTotals[m] !== undefined) methodTotals[m] += amt;
-      else methodTotals[m] = amt;
+      methodTotals[m] = (methodTotals[m] || 0) + amt;
     }
   });
+  const methodStats = Object.entries(methodTotals).filter(([, v]) => v > 0).map(([name, rev]) => ({ name, count: 0, rev })).sort((a, b) => b.rev - a.rev);
 
-  // Active inpatients (currently being treated)
-  const activeInps = STATE.inps.filter(x => !x.discharged).length;
+  const activeInps = (STATE.inps || []).filter(x => !x.discharged).length;
+  const examRows = exams.map(e => rpExamRow(e, ''));
+  const inpRows = rpInpLogRows(period.from, period.to, '');
+  const billed = exams.reduce((a, e) => a + (parseFloat(e.amount) || 0), 0);
+  const paidCnt = examRows.filter(r => r.payCls === 'ok').length;
+  const partCnt = examRows.filter(r => r.payCls === 'warn').length;
+  const unpaidCnt = examRows.filter(r => r.payCls === 'err').length;
+  const unpaidAmt = examRows.filter(r => r.payCls !== 'ok').reduce((a, r) => a + r.amount, 0);
+  const horses = new Set(exams.map(e => String(e.horseId || e.horse || e.id)));
+  const durs = exams.map(e => e.durationMin).filter(v => v !== null && v !== undefined && !isNaN(v));
+  const avgDur = durs.length ? durs.reduce((a, b) => a + b, 0) / durs.length : null;
 
-  // Aggregate services from today's exams (count + revenue + duration)
-  const svcMap = {};  // { serviceName: { count, rev, durSum, durN } }
-  exams.forEach(e => {
-    const svcs = Array.isArray(e.services) ? e.services : [];
-    if (!svcs.length) return;
-    // Үзлэгийн нийт хугацааг үйлчилгээнүүдэд тэнцүү хуваарилна (ойролцоо тооцоо)
-    const perSvcDur = (e.durationMin !== null && e.durationMin !== undefined && !isNaN(e.durationMin))
-      ? (e.durationMin / svcs.length) : null;
-    svcs.forEach(s => {
-      const name = (s.name || '—').toString().trim();
-      if (!name) return;
-      if (!svcMap[name]) svcMap[name] = { count: 0, rev: 0, durSum: 0, durN: 0 };
-      svcMap[name].count++;
-      svcMap[name].rev += parseFloat(s.price) || 0;
-      if (perSvcDur !== null) { svcMap[name].durSum += perSvcDur; svcMap[name].durN++; }
-    });
-  });
-  const svcEntries = Object.entries(svcMap)
-    .map(([name, v]) => ({ name, count: v.count, rev: v.rev, avgDur: v.durN ? (v.durSum / v.durN) : null }))
-    .sort((a,b) => b.rev - a.rev);
-  const svcTotalRev = svcEntries.reduce((a,b) => a + b.rev, 0);
+  const svcEntries = rpServiceStats(exams);
+  const svcTotalRev = svcEntries.reduce((a, b) => a + b.rev, 0);
+  const diagStats = rpCountMap(exams, e => e.diagnosis, () => 0).sort((a, b) => b.count - a.count);
+  const medStats = rpCountMap(exams, e => (Array.isArray(e.meds) ? e.meds : []).map(m => m.name), () => 0).sort((a, b) => b.count - a.count);
+  const provStats = rpCountMap(exams, e => e.province || 'Тодорхойгүй', e => parseFloat(e.amount) || 0).sort((a, b) => b.count - a.count);
+  const monthMap = {};
+  exams.forEach(e => { const m = rpNormDate(e.date).slice(0, 7); if (!monthMap[m]) monthMap[m] = { name: m, count: 0, rev: 0 }; monthMap[m].count++; monthMap[m].rev += parseFloat(e.amount) || 0; });
+  const monthStats = Object.values(monthMap).sort((a, b) => a.name < b.name ? -1 : 1);
 
-  // Doctor performance for the day
+  // Эмч тус бүрийн үзүүлэлт
   const docMap = {};
+  const ensure = (key, name, role) => { if (!docMap[key]) docMap[key] = { key, name: name || '—', role: role || '', exams: 0, assist: 0, services: 0, rev: 0, horses: new Set(), inpLogs: 0 }; return docMap[key]; };
+  const docInfo = rpAllDoctors();
   exams.forEach(e => {
-    const id = e.docId || 'unknown';
-    if (!docMap[id]) docMap[id] = { name: e.docName||'—', exams: 0, services: 0, rev: 0 };
-    docMap[id].exams++;
-    docMap[id].services += Array.isArray(e.services) ? e.services.length : 0;
-    docMap[id].rev += parseFloat(e.amount) || 0;
-    // Count assistant doctors too
-    if (e.assistDocId) {
-      const aid = e.assistDocId;
-      if (!docMap[aid]) docMap[aid] = { name: e.assistDocName||'—', exams: 0, services: 0, rev: 0, assist: true };
-      // Only count assist participation, not duplicate revenue
-      if (!docMap[aid].assistOnly) docMap[aid].assistOnly = true;
+    const mk = rpDocKey(e.docId, e.docName);
+    if (mk) {
+      const di = docInfo.find(d => d.id === mk);
+      const d = ensure(mk, di ? di.name : e.docName, di ? di.role : '');
+      d.exams++;
+      d.services += Array.isArray(e.services) ? e.services.length : 0;
+      d.rev += parseFloat(e.amount) || 0;
+      d.horses.add(String(e.horseId || e.horse || e.id));
+    }
+    const ak = rpDocKey(e.assistDocId, e.assistDocName);
+    if (ak) {
+      const di = docInfo.find(d => d.id === ak);
+      ensure(ak, di ? di.name : e.assistDocName, di ? di.role : '').assist++;
     }
   });
-  const docList = Object.values(docMap).sort((a,b) => (b.rev||0) - (a.rev||0));
+  inpRows.forEach(r => {
+    const k = rpDocKey('', r.docName);
+    const di = docInfo.find(d => d.name === r.docName);
+    const key = di ? di.id : k;
+    if (!key) return;
+    const d = ensure(key, r.docName, di ? di.role : '');
+    d.inpLogs++;
+    d.rev += r.amount;
+  });
+  const docList = Object.values(docMap).sort((a, b) => b.rev - a.rev || b.exams - a.exams);
+  const docTotalRev = docList.reduce((a, d) => a + d.rev, 0);
 
-  // Color palette for services (cycle through these)
-  const palette = [
-    '#C9A75A', '#27ae60', '#2980b9', '#8e44ad', '#E8752A',
-    '#16a085', '#e67e22', '#c0392b', '#7f8c8d', '#d35400',
-    '#1abc9c', '#9b59b6'
-  ];
+  __rpLast = { docName: '', from: period.from, to: period.to, examRows, inpRows };
 
-  // Build SVG donut chart for services
+  // Үйлчилгээний donut
+  const palette = ['#C9A75A', '#27ae60', '#2980b9', '#8e44ad', '#E8752A', '#16a085', '#e67e22', '#c0392b', '#7f8c8d', '#d35400', '#1abc9c', '#9b59b6'];
   let chartHTML = '';
   if (svcEntries.length > 0 && svcTotalRev > 0) {
     let cumulative = 0;
-    const radius = 70;
-    const circumference = 2 * Math.PI * radius;
-    // Show top 8 services individually, rest grouped as "Бусад"
-    const TOP = 8;
+    const radius = 70, circumference = 2 * Math.PI * radius, TOP = 8;
     let display = svcEntries.slice();
     if (svcEntries.length > TOP) {
-      const top = svcEntries.slice(0, TOP);
-      const restRev = svcEntries.slice(TOP).reduce((a,b) => a + b.rev, 0);
-      const restCount = svcEntries.slice(TOP).reduce((a,b) => a + b.count, 0);
-      display = [...top, { name: 'Бусад (' + (svcEntries.length - TOP) + ')', count: restCount, rev: restRev }];
+      const rest = svcEntries.slice(TOP);
+      display = [...svcEntries.slice(0, TOP), { name: 'Бусад (' + rest.length + ')', count: rest.reduce((a, b) => a + b.count, 0), rev: rest.reduce((a, b) => a + b.rev, 0), avgDur: null }];
     }
     const segments = display.map((s, i) => {
-      const pct = s.rev / svcTotalRev;
-      const dash = pct * circumference;
-      const offset = -cumulative * circumference;
+      const pct = s.rev / svcTotalRev, dash = pct * circumference, offset = -cumulative * circumference;
       cumulative += pct;
-      const color = palette[i % palette.length];
-      return `<circle cx="100" cy="100" r="${radius}" fill="none"
-                 stroke="${color}" stroke-width="32"
-                 stroke-dasharray="${dash} ${circumference}"
-                 stroke-dashoffset="${offset}"
-                 transform="rotate(-90 100 100)"/>`;
+      return `<circle cx="100" cy="100" r="${radius}" fill="none" stroke="${palette[i % palette.length]}" stroke-width="32" stroke-dasharray="${dash} ${circumference}" stroke-dashoffset="${offset}" transform="rotate(-90 100 100)"/>`;
     }).join('');
-
     chartHTML = `
       <div style="display:flex;align-items:flex-start;gap:16px;flex-wrap:wrap">
         <svg width="200" height="200" viewBox="0 0 200 200" style="flex-shrink:0">
           ${segments}
           <text x="100" y="92" text-anchor="middle" font-size="11" fill="var(--muted)" font-weight="700">ҮЙЛЧИЛГЭЭ</text>
-          <text x="100" y="108" text-anchor="middle" font-size="20" fill="var(--text)" font-weight="900">${svcEntries.reduce((a,b)=>a+b.count,0)}</text>
+          <text x="100" y="108" text-anchor="middle" font-size="20" fill="var(--text)" font-weight="900">${svcEntries.reduce((a, b) => a + b.count, 0)}</text>
           <text x="100" y="125" text-anchor="middle" font-size="11" fill="var(--muted)" font-weight="700">${fmtCompact(svcTotalRev)}</text>
         </svg>
         <div style="flex:1;min-width:240px">
           ${display.map((s, i) => {
             const color = palette[i % palette.length];
             const durTxt = (s.avgDur !== null && s.avgDur !== undefined) ? ' · ⏱️' + fmtDuration(s.avgDur) : '';
-            return `
-              <div style="margin-bottom:8px">
+            return `<div style="margin-bottom:8px">
                 <div class="row" style="justify-content:space-between;font-size:12px;margin-bottom:3px;gap:8px">
-                  <span class="bold" style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1">
-                    <span style="display:inline-block;width:10px;height:10px;background:${color};border-radius:2px;margin-right:6px;vertical-align:middle"></span>${escHTML(s.name)}
-                  </span>
+                  <span class="bold" style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1"><span style="display:inline-block;width:10px;height:10px;background:${color};border-radius:2px;margin-right:6px;vertical-align:middle"></span>${escHTML(s.name)}</span>
                   <span class="bold" style="flex-shrink:0">${s.count}× · ${fmt(s.rev)}${durTxt}</span>
                 </div>
-                <div class="prog"><div class="prog-fill" style="background:${color};width:${(s.rev/svcTotalRev*100).toFixed(1)}%"></div></div>
-              </div>
-            `;
+                <div class="prog"><div class="prog-fill" style="background:${color};width:${(s.rev / svcTotalRev * 100).toFixed(1)}%"></div></div>
+              </div>`;
           }).join('')}
         </div>
-      </div>
-    `;
+      </div>`;
   } else {
-    chartHTML = '<div class="empty"><div class="empty-em">📋</div>Тухайн өдөр үйлчилгээ үзүүлээгүй</div>';
+    chartHTML = '<div class="empty"><div class="empty-em">📋</div>Тухайн хугацаанд үйлчилгээ үзүүлээгүй</div>';
   }
 
-  const html = `
-    <div class="pr-h1" style="font-size:18px;font-weight:900;text-align:center">📄 Тайлан — ${escHTML(period.label.replace(/^📅 /,''))}</div>
-    <div class="muted" style="text-align:center;font-size:12px;margin-bottom:14px">Морьтон Адууны Төв</div>
+  const periodTxt = escHTML(period.label.replace(/^📅 /, ''));
+  const docTable = docList.length === 0 ? '<div class="empty"><div class="empty-em">👨‍⚕️</div>Эмч ажиллаагүй</div>' : `
+    <div class="muted" style="font-size:11px;margin-bottom:6px">Эмчийн нэр дээр дарж тухайн эмчийн дэлгэрэнгүй тайланг харна.</div>
+    <div class="tbl-wrap" style="overflow-x:auto">
+      <table style="min-width:640px">
+        <thead><tr><th>Эмч</th><th>Үзсэн адуу</th><th>Үзлэг</th><th>Хамтран</th><th>Үйлчилгээ</th><th>Хэвтэн эмчилгээ</th><th>Орлого</th><th style="width:130px">Хувь</th></tr></thead>
+        <tbody>
+          ${docList.map(d => {
+            const pct = docTotalRev > 0 ? d.rev / docTotalRev * 100 : 0;
+            return `<tr style="cursor:pointer" onclick="rpSelectDoctor('${escHTML(d.key)}')" title="Эмчийн тайлан харах">
+              <td class="bold">${escHTML(d.name)}${d.role ? '<div class="muted" style="font-size:10px">' + escHTML(d.role) + '</div>' : ''}</td>
+              <td>${d.horses.size}</td>
+              <td>${d.exams}</td>
+              <td>${d.assist ? d.assist : '—'}</td>
+              <td>${d.services}</td>
+              <td>${d.inpLogs || '—'}</td>
+              <td class="bold">${fmt(d.rev)}</td>
+              <td><div class="row" style="gap:6px;flex-wrap:nowrap"><div class="prog" style="flex:1"><div class="prog-fill" style="width:${pct.toFixed(1)}%"></div></div><span style="font-size:11px;font-weight:700">${pct.toFixed(0)}%</span></div></td>
+            </tr>`;
+          }).join('')}
+        </tbody>
+      </table>
+    </div>`;
 
-    <div class="stats">
-      <div class="stat"><div class="stat-l">📋 Үзлэг</div><div class="snum">${exams.length}</div></div>
-      <div class="stat green"><div class="stat-l">💰 Орлого</div><div class="snum">${fmtCompact(totalRev)}</div></div>
-      <div class="stat purple"><div class="stat-l">🏥 Байрлан эмчлүүлж байгаа</div><div class="snum">${activeInps}</div></div>
+  $('#rp-preview').innerHTML = `
+    <div class="pr-h1" style="font-size:18px;font-weight:900;text-align:center">📄 Тайлан — ${periodTxt}</div>
+    <div class="muted" style="text-align:center;font-size:12px;margin-bottom:14px">Морьтон Адууны Төв · Бүх эмч</div>
+
+    <div class="stats s5">
+      <div class="stat"><div class="stat-l">📋 Үзлэг</div><div class="snum">${exams.length}</div><div class="muted" style="font-size:10px">${horses.size} адуу</div></div>
+      <div class="stat green"><div class="stat-l">💰 Орлого (төлөгдсөн)</div><div class="snum">${fmtCompact(totalRev)}</div><div class="muted" style="font-size:10px">тооцоолсон ${fmtCompact(billed)}</div></div>
+      <div class="stat red"><div class="stat-l">⏳ Төлөгдөөгүй</div><div class="snum">${fmtCompact(unpaidAmt)}</div><div class="muted" style="font-size:10px">${unpaidCnt} төлөөгүй · ${partCnt} хэсэгчлэн · ${paidCnt} төлсөн</div></div>
+      <div class="stat purple"><div class="stat-l">🏥 Байрлан эмчлүүлж байгаа</div><div class="snum">${activeInps}</div><div class="muted" style="font-size:10px">${inpRows.length} өдрийн бичлэг</div></div>
+      <div class="stat accent"><div class="stat-l">⏱️ Дундаж хугацаа</div><div class="snum" style="font-size:18px">${avgDur !== null ? fmtDuration(avgDur) : '—'}</div><div class="muted" style="font-size:10px">${docList.length} эмч ажилласан</div></div>
     </div>
 
     <div class="ch" style="margin-top:14px">📊 Үйлчилгээний бүтэц</div>
     ${chartHTML}
 
-    <div class="ch" style="margin-top:14px">👨‍⚕️ Тухайн өдрийн ажилласан эмч нар</div>
-    ${docList.length === 0 ? '<div class="empty"><div class="empty-em">👨‍⚕️</div>Эмч ажиллаагүй</div>' : `
-      <div class="tbl-wrap">
-        <table>
-          <thead><tr><th>Эмч</th><th>Үзлэг</th><th>Үйлчилгээ</th><th>Орлого</th></tr></thead>
-          <tbody>
-            ${docList.map(d => `
-              <tr>
-                <td class="bold">${escHTML(d.name)}${d.assistOnly && !d.exams ? ' <span class="badge">хамт</span>' : ''}</td>
-                <td>${d.exams || 0}</td>
-                <td>${d.services || 0}</td>
-                <td class="bold">${fmt(d.rev || 0)}</td>
-              </tr>
-            `).join('')}
-          </tbody>
-        </table>
+    <div class="ch" style="margin-top:14px">👨‍⚕️ Эмч нарын ажил</div>
+    ${docTable}
+
+    <div class="col2" style="margin-top:14px;gap:14px">
+      <div>
+        <div class="ch">🩺 Онош</div>
+        ${rpMiniTable(diagStats, { nameLabel: 'Онош', byCount: true, hideRev: true, limit: 12, emptyIcon: '🩺' })}
       </div>
-    `}
+      <div>
+        <div class="ch">💊 Хэрэглэсэн эм</div>
+        ${rpMiniTable(medStats, { nameLabel: 'Эм', byCount: true, hideRev: true, limit: 12, emptyIcon: '💊' })}
+      </div>
+    </div>
+
+    <div class="col2" style="margin-top:14px;gap:14px">
+      <div>
+        <div class="ch">💳 Төлбөрийн хэлбэр</div>
+        ${rpMiniTable(methodStats.map(m => ({ name: m.name, count: '', rev: m.rev })), { nameLabel: 'Хэлбэр', limit: 10, emptyIcon: '💳', emptyText: 'Төлбөр хийгдээгүй' })}
+      </div>
+      <div>
+        <div class="ch">📍 Аймгаар</div>
+        ${rpMiniTable(provStats, { nameLabel: 'Аймаг', byCount: true, limit: 10, emptyIcon: '📍' })}
+        ${monthStats.length > 1 ? `<div class="ch" style="margin-top:12px">📆 Сараар</div>${rpMiniTable(monthStats, { nameLabel: 'Сар', limit: 24 })}` : ''}
+      </div>
+    </div>
+
+    <div class="ch" style="margin-top:16px">🐎 Үзсэн адуудын жагсаалт <span class="ch-r">${examRows.length}</span></div>
+    <div class="muted" style="font-size:11px;margin-bottom:6px">Мөр дээр дарж үзлэгийн дэлгэрэнгүйг харна.</div>
+    ${rpExamTable(examRows, { showDoc: true })}
+
+    <div class="ch" style="margin-top:16px">🏥 Байрлан эмчлүүлэх — өдрийн эмчилгээ <span class="ch-r">${inpRows.length}</span></div>
+    ${rpInpTable(inpRows, true)}
 
     <div style="margin-top:24px;display:flex;justify-content:space-between;font-size:12px">
       <div>Эмч: ____________________</div>
       <div>Удирдах эмч: ____________________</div>
     </div>
   `;
-  $('#rp-preview').innerHTML = html;
 
-  // build print area
   $('#print-area').innerHTML = `
-    <div class="pr-h1">📄 Тайлан — ${escHTML(period.label.replace(/^📅 /,''))}</div>
-    <div style="text-align:center;margin-bottom:10px">Морьтон Адууны Төв</div>
-    <div class="pr-h2">📊 Тойм</div>
-    <table class="pr-tbl">
-      <tr><th>Үзлэг</th><th>Орлого</th><th>Байрлан эмчлүүлж байгаа</th></tr>
-      <tr><td>${exams.length}</td><td>${fmt(totalRev)}</td><td>${activeInps}</td></tr>
-    </table>
-    <div class="pr-h2">📋 Үйлчилгээний бүтэц</div>
-    <table class="pr-tbl">
-      <tr><th>Үйлчилгээ</th><th>Тоо</th><th>Дүн</th><th>Дундаж хугацаа</th><th>Хувь</th></tr>
-      ${svcEntries.length === 0 ? '<tr><td colspan="5" style="text-align:center">Бичлэг алга</td></tr>' :
-        svcEntries.map(s => `<tr><td>${escHTML(s.name)}</td><td>${s.count}</td><td>${fmt(s.rev)}</td><td>${s.avgDur!==null?fmtDuration(s.avgDur):'—'}</td><td>${svcTotalRev>0?(s.rev/svcTotalRev*100).toFixed(1)+'%':'—'}</td></tr>`).join('')
-      }
-    </table>
-    <div class="pr-h2">👨‍⚕️ Ажилласан эмч нар</div>
-    <table class="pr-tbl">
-      <tr><th>Эмч</th><th>Үзлэг</th><th>Үйлчилгээ</th><th>Орлого</th></tr>
-      ${docList.length === 0 ? '<tr><td colspan="4" style="text-align:center">Бүртгэл алга</td></tr>' :
-        docList.map(d => `<tr><td>${escHTML(d.name)}</td><td>${d.exams||0}</td><td>${d.services||0}</td><td>${fmt(d.rev||0)}</td></tr>`).join('')
-      }
-    </table>
-    <div style="margin-top:30px;display:flex;justify-content:space-between;font-size:11px">
-      <div>Эмч: ____________________</div>
-      <div>Удирдах эмч: ____________________</div>
+    <div class="rp-print">
+      <div class="pr-h1">Тайлан — ${periodTxt}</div>
+      <div style="text-align:center;margin-bottom:10px">Морьтон Адууны Төв · Бүх эмч</div>
+      <div class="pr-h2">Тойм</div>
+      <table class="pr-tbl">
+        <tr><th>Үзлэг</th><th>Адуу</th><th>Орлого (төлөгдсөн)</th><th>Тооцоолсон дүн</th><th>Төлөгдөөгүй</th><th>Байрлан эмчлүүлж байгаа</th><th>Дундаж хугацаа</th></tr>
+        <tr><td>${exams.length}</td><td>${horses.size}</td><td>${fmt(totalRev)}</td><td>${fmt(billed)}</td><td>${fmt(unpaidAmt)} (${unpaidCnt + partCnt})</td><td>${activeInps}</td><td>${avgDur !== null ? fmtDuration(avgDur) : '—'}</td></tr>
+      </table>
+      <div class="pr-h2">Үйлчилгээний бүтэц</div>
+      <table class="pr-tbl">
+        <tr><th>Үйлчилгээ</th><th>Тоо</th><th>Дүн</th><th>Дундаж хугацаа</th><th>Хувь</th></tr>
+        ${svcEntries.length === 0 ? '<tr><td colspan="5" style="text-align:center">Бичлэг алга</td></tr>' :
+          svcEntries.map(s => `<tr><td>${escHTML(s.name)}</td><td>${s.count}</td><td>${fmt(s.rev)}</td><td>${s.avgDur !== null ? fmtDuration(s.avgDur) : '—'}</td><td>${svcTotalRev > 0 ? (s.rev / svcTotalRev * 100).toFixed(1) + '%' : '—'}</td></tr>`).join('')}
+      </table>
+      <div class="pr-h2">Эмч нарын ажил</div>
+      <table class="pr-tbl">
+        <tr><th>Эмч</th><th>Үзсэн адуу</th><th>Үзлэг</th><th>Хамтран</th><th>Үйлчилгээ</th><th>Хэвтэн эмчилгээ</th><th>Орлого</th></tr>
+        ${docList.length === 0 ? '<tr><td colspan="7" style="text-align:center">Бүртгэл алга</td></tr>' :
+          docList.map(d => `<tr><td>${escHTML(d.name)}</td><td>${d.horses.size}</td><td>${d.exams}</td><td>${d.assist || '—'}</td><td>${d.services}</td><td>${d.inpLogs || '—'}</td><td>${fmt(d.rev)}</td></tr>`).join('')}
+      </table>
+      <div class="pr-cols">
+        <div><div class="pr-h2">Онош</div>${rpMiniTablePrint(diagStats, 'Онош', true)}</div>
+        <div><div class="pr-h2">Хэрэглэсэн эм</div>${rpMiniTablePrint(medStats, 'Эм', true)}</div>
+        <div><div class="pr-h2">Төлбөрийн хэлбэр / Аймаг</div>
+          ${methodStats.length ? `<table class="pr-tbl"><tr><th>Хэлбэр</th><th>Дүн</th></tr>${methodStats.map(m => `<tr><td>${escHTML(m.name)}</td><td>${fmt(m.rev)}</td></tr>`).join('')}</table>` : ''}
+          ${rpMiniTablePrint(provStats, 'Аймаг', false)}
+        </div>
+      </div>
+      ${monthStats.length > 1 ? `<div class="pr-h2">Сараар</div>${rpMiniTablePrint(monthStats, 'Сар', false)}` : ''}
+      <div class="pr-h2">Үзсэн адуудын жагсаалт (${examRows.length})</div>
+      ${rpExamTablePrint(examRows, { showDoc: true })}
+      <div class="pr-h2">Байрлан эмчлүүлэх — өдрийн эмчилгээ (${inpRows.length})</div>
+      ${rpInpTablePrint(inpRows, true)}
+      <div class="pr-sign"><div>Эмч: ____________________</div><div>Удирдах эмч: ____________________</div></div>
     </div>
   `;
-  toast('✅ Тайлан үүсгэгдлээ', 'ok');
 }
 
 // ============================================================
