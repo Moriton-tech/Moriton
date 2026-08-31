@@ -708,8 +708,9 @@
         <div class="ph">
           <div class="ph-l">
             <div class="ph-title">📈 KPI самбар</div>
-            <div class="ph-sub">Эмчийн гүйцэтгэлийн ранк</div>
+            <div class="ph-sub">Эмчийн гүйцэтгэл, ажилласан өдөр</div>
           </div>
+          <div class="ph-r" id="k-fin-lock"></div>
         </div>
 
         <div class="card">
@@ -739,10 +740,23 @@
           <div id="k-period-info" class="muted" style="font-size:11.5px;font-weight:600;margin-top:6px;text-align:right"></div>
         </div>
 
+        <div id="k-summary" style="margin-bottom:14px"></div>
+
         <div class="col2">
           <div class="card">
-            <div class="ch">🏆 Эмчийн ранк</div>
-            <div class="list" id="k-rank-list"></div>
+            <div class="row" style="justify-content:space-between;gap:8px;flex-wrap:wrap">
+              <div class="ch" style="margin:0;flex:1;min-width:120px">🏆 Эмчийн ранк</div>
+              <select class="inp" id="k-sort" style="width:auto;min-width:150px;padding:6px 10px;font-size:12px">
+                <option value="exams">Үзлэгийн тоогоор</option>
+                <option value="services">Үйлчилгээгээр</option>
+                <option value="days">Ажилласан өдрөөр</option>
+                <option value="horses">Адууны тоогоор</option>
+                <option value="rev">Орлогоор</option>
+              </select>
+            </div>
+            <div class="list" id="k-rank-list" style="margin-top:8px"></div>
+            <div class="ch" style="margin-top:14px">📅 Ажилласан өдөр — эмч нарын харьцуулалт</div>
+            <div id="k-days-chart"></div>
           </div>
           <div class="card" id="k-doc-detail-card">
             <div class="ch" id="k-doc-detail-title">📊 Дэлгэрэнгүй</div>
@@ -763,6 +777,7 @@
             <div class="ph-title">📄 Тайлан</div>
             <div class="ph-sub">Хугацаа, эмч сонгож тайлан үүсгэх</div>
           </div>
+          <div class="ph-r" id="rp-fin-lock"></div>
         </div>
 
         <div class="card">
@@ -857,7 +872,7 @@
 
         <div class="card">
           <div class="fg r3">
-            <div class="fld"><label>Хайх</label><input class="inp" id="h-q" placeholder="Зүс / Эзэн / Утас / ИАБД..."></div>
+            <div class="fld"><label>Хайх</label><input class="inp" id="h-q" placeholder="Зүс / Эзэн / Утас / ИАБД / Анамнез / Онош..."></div>
             <div class="fld"><label>Огнооноос</label><input class="inp" type="date" id="h-from"></div>
             <div class="fld"><label>Огноо хүртэл</label><input class="inp" type="date" id="h-to"></div>
           </div>
@@ -921,6 +936,16 @@
             <button class="btn btn-p btn-sm" onclick="addDoc()">+ Нэмэх</button>
             <div class="ch" style="margin-top:14px">Бүртгэлтэй эмч нар</div>
             <div class="list" id="a-doc-list"></div>
+          </div>
+          <div class="card" id="fin-pin-card">
+            <div class="ch">🔒 Мөнгөн дүн харах код</div>
+            <div class="muted" style="font-size:12px;margin-bottom:8px">Тайлан болон KPI самбар дээр мөнгөн дүн анхдагчаар нуугдана. Энэ кодыг оруулсан хүн 30 минут дүнг харна. Код бүх төхөөрөмжид нэг.</div>
+            <div id="a-fin-pin-status" style="margin-bottom:8px"></div>
+            <div class="fg r2">
+              <div class="fld"><label>Шинэ код</label><input class="inp" type="password" id="a-fin-pin" autocomplete="new-password" placeholder="дор хаяж 4 тэмдэгт"></div>
+              <div class="fld"><label>Давтах</label><input class="inp" type="password" id="a-fin-pin2" autocomplete="new-password"></div>
+            </div>
+            <button class="btn btn-p btn-sm" style="margin-top:8px" onclick="saveFinPin()">💾 Код хадгалах</button>
           </div>
           <div class="card" id="user-mgmt-card">
             <div class="ch">🔐 Нэвтрэх эрх (хэрэглэгч)</div>
@@ -1222,6 +1247,23 @@
   </div>
 </div>
 
+<!-- 🔒 FINANCE PIN MODAL -->
+<div class="mod-bd" id="fin-pin-modal">
+  <div class="mod" style="max-width:360px">
+    <div class="mod-t">🔑 Мөнгөн дүн харах код</div>
+    <div class="muted" style="font-size:12px;margin-bottom:10px">Тайлан, KPI дээрх мөнгөн дүнг харахын тулд кодоо оруулна уу. Код оруулсны дараа 30 минут харагдана.</div>
+    <div class="fld">
+      <label>Код</label>
+      <input class="inp" type="password" id="fin-pin-input" inputmode="numeric" autocomplete="off" placeholder="••••" onkeydown="if(event.key==='Enter'){event.preventDefault();submitFinPin();}">
+    </div>
+    <div id="fin-pin-err" style="color:var(--red);font-size:12px;font-weight:700;min-height:16px;margin-top:4px"></div>
+    <div class="mod-actions">
+      <button class="btn btn-sm" onclick="closeModal('fin-pin-modal')">Болих</button>
+      <button class="btn btn-p btn-sm" onclick="submitFinPin()">🔓 Нээх</button>
+    </div>
+  </div>
+</div>
+
 <!-- INPATIENT PREPAYMENT MODAL -->
 <div class="mod-bd" id="inp-prepay-modal">
   <div class="mod" style="max-width:480px">
@@ -1363,7 +1405,7 @@
 
 <div id="print-area"></div>
 
-<script src="app.js?v=20260831"></script>
+<script src="app.js?v=20260831c"></script>
 <script src="lab.js?v=20260731"></script>
 
 <!-- PWA: service worker бүртгэх, автомат шинэчлэлт, суулгах товч -->
