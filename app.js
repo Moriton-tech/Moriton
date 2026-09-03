@@ -846,6 +846,7 @@ const STATE = {
   staffSchedule: {},  // сарын ажлын хуваарь
   configMs: 0,        // clinic_config-ийг энэ төхөөрөмжөөс сүүлд өөрчилсөн агшин
   finPinHash: '',     // Мөнгөн дүн харах код (SHA-256) — Админ тохируулна
+  bonusCfg: null,     // 🎁 Эмчийн урамшууллын тохиргоо (хувь хэмжээ, нэрс)
   finUnlockedUntil: 0,// Мөнгөн дүн хэдий хүртэл нээлттэй (ms)
   user: null,
   syncURL: '',
@@ -922,6 +923,7 @@ function loadAll() {
   if (!Array.isArray(STATE.labSvcOff)) STATE.labSvcOff = [];
   STATE.configMs = parseFloat(lsGet('mt_config_ms', 0)) || 0;
   STATE.finPinHash = lsGet('mt_fin_pin_hash', '') || '';
+  STATE.bonusCfg = lsGet('mt_bonus_cfg', null);
   STATE.user = lsGet('mt_user', null);
   STATE.syncURL = ''; // Apps Script sync устгагдсан — Firebase ашиглана
   if (STATE.doctors.length === 0) STATE.doctors = [...DEFAULT_DOCS];
@@ -4141,6 +4143,9 @@ function renderFinance() {
   $('#ft-r').textContent = receivables.length;
   $('#ft-d').textContent = paid.length;
 
+  // 🎁 урамшуулал
+  if (STATE.activeFTab === 'bonus') { try { renderBonus(); } catch(e) { console.error(e); } }
+
   // pending
   if (STATE.activeFTab === 'pending') {
     const list = $('#fin-pending-list');
@@ -6418,6 +6423,229 @@ function genOverallReport(period) {
 }
 
 // ============================================================
+// 🎁 ЭМЧИЙН ҮЗЛЭГИЙН УРАМШУУЛАЛ — Санхүү модуль
+// Санхүүгийн Excel-ийн логик: үзлэгийн хуудас (баримт) бүрд 10,000₮;
+// хамтрагчтай бол үндсэн эмч 6,000₮ + хамтрагч 4,000₮.
+// Ангилал: Клиник / Зонд / Дуудлага / Клиник дуудлага (үйлчилгээний нэрээр автоматаар,
+// шаардлагатай бол гараар засна). Хувь хэмжээ, нэрс — Системийн тохиргооноос.
+// ============================================================
+const BONUS_DEFAULT = {
+  alone: 10000, main: 6000, assist: 4000,
+  kwZond: 'Зонд', kwCall: 'Дуудлага',
+  approver: 'Гүйцэтгэх захирал А.Наранбаатар', checker: 'Э.Оюунчимэг', accountant: 'Ж.Лхамсүрэн',
+  perUnit: true // qty = 1 үзлэг = 1 адуу (систем дээр үзлэг бүр тусдаа бичлэг)
+};
+const BONUS_CATS = ['Клиник', 'Зонд', 'Дуудлага', 'Клиник дуудлага'];
+function bonusCfg() { return Object.assign({}, BONUS_DEFAULT, STATE.bonusCfg || {}); }
+function saveBonusCfg(patch) {
+  STATE.bonusCfg = Object.assign({}, bonusCfg(), patch || {});
+  lsSet('mt_bonus_cfg', STATE.bonusCfg);
+  try { fbSaveClinicConfig(); } catch (e) { console.error(e); }
+}
+
+// Үзлэгийн урамшууллын ангилал
+function bonusCategoryOf(e) {
+  if (e.bonusCat && BONUS_CATS.includes(e.bonusCat)) return e.bonusCat;
+  const cfg = bonusCfg();
+  const names = (Array.isArray(e.services) ? e.services : []).map(s => String(s.name || '').trim()).filter(Boolean);
+  const isZond = names.some(n => cfg.kwZond && n.toLowerCase().includes(cfg.kwZond.toLowerCase()));
+  const callN = names.filter(n => cfg.kwCall && n.toLowerCase().startsWith(cfg.kwCall.toLowerCase()));
+  if (isZond) return 'Зонд';
+  if (callN.length) return callN.length < names.length ? 'Клиник дуудлага' : 'Дуудлага';
+  return 'Клиник';
+}
+function bonusDocName(id, fallback) {
+  const d = (STATE.doctors || []).find(x => String(x.id) === String(id));
+  return d ? d.name : (fallback || '');
+}
+function bonusDocRole(name) {
+  const d = (STATE.doctors || []).find(x => x.name === name);
+  return d ? d.role : 'Малын их эмч';
+}
+
+// Сарын урамшууллын тооцоо
+function computeBonus(ym, province) {
+  const cfg = bonusCfg();
+  const exams = (STATE.exams || []).filter(e => {
+    const d = rpNormDate(e.date);
+    if (!d || d.slice(0, 7) !== ym) return false;
+    if (province && (e.province || '') !== province) return false;
+    return true;
+  }).sort((a, b) => {
+    const da = rpNormDate(a.date), db = rpNormDate(b.date);
+    if (da !== db) return da < db ? -1 : 1;
+    return (a.time || '') < (b.time || '') ? -1 : 1;
+  });
+  const rows = exams.map(e => {
+    const main = bonusDocName(e.docId, e.docName);
+    const asst = e.assistDocId || e.assistDocName ? bonusDocName(e.assistDocId, e.assistDocName) : '';
+    const qty = 1;
+    const skip = !!e.bonusSkip || !main || main === '—';
+    const mainAmt = skip ? 0 : (asst ? cfg.main : cfg.alone) * qty;
+    const asstAmt = skip || !asst ? 0 : cfg.assist * qty;
+    return { e, id: e.id, date: rpNormDate(e.date), time: e.time || '', examNum: e.examNum || '', horse: e.horse || '', owner: e.owner || '',
+      svc: (Array.isArray(e.services) ? e.services : []).map(s => s.name).filter(Boolean).join(', '),
+      cat: bonusCategoryOf(e), auto: !e.bonusCat, main, asst, qty, mainAmt, asstAmt, skip, noDoc: !main || main === '—' };
+  });
+  // Эмчийн нэгтгэл
+  const docMap = {};
+  const ensure = (n) => { if (!docMap[n]) docMap[n] = { name: n, role: bonusDocRole(n), cats: {}, assist: 0, total: 0, count: 0, assistCount: 0 }; return docMap[n]; };
+  rows.forEach(r => {
+    if (r.skip) return;
+    const m = ensure(r.main); m.cats[r.cat] = (m.cats[r.cat] || 0) + r.mainAmt; m.total += r.mainAmt; m.count += r.qty;
+    if (r.asst) { const a = ensure(r.asst); a.assist += r.asstAmt; a.total += r.asstAmt; a.assistCount += r.qty; }
+  });
+  const docs = Object.values(docMap).sort((a, b) => b.total - a.total);
+  const byCat = {}; BONUS_CATS.forEach(c => byCat[c] = rows.filter(r => r.cat === c));
+  const total = docs.reduce((a, d) => a + d.total, 0);
+  return { ym, rows, docs, byCat, total, cfg, skipped: rows.filter(r => r.skip).length };
+}
+
+let __bonusLast = null;
+function bonusMonthLabel(ym) { const [y, m] = ym.split('-'); return y + ' оны ' + parseInt(m, 10) + ' сар'; }
+
+function renderBonus() {
+  const ymEl = $('#bn-month'); if (!ymEl) return;
+  if (!ymEl.value) { const n = new Date(); n.setMonth(n.getMonth() - (n.getDate() < 5 ? 1 : 0)); ymEl.value = n.getFullYear() + '-' + String(n.getMonth() + 1).padStart(2, '0'); }
+  const provSel = $('#bn-prov');
+  if (provSel && !provSel.__filled) {
+    provSel.__filled = true;
+    const provs = [...new Set((STATE.exams || []).map(e => e.province).filter(Boolean))].sort();
+    provSel.innerHTML = '<option value="">Бүх салбар / аймаг</option>' + provs.map(p => `<option>${escHTML(p)}</option>`).join('');
+  }
+  const B = computeBonus(ymEl.value, provSel ? provSel.value : '');
+  __bonusLast = B;
+  const host = $('#bn-body'); if (!host) return;
+  const cfg = B.cfg;
+  if (!B.rows.length) { host.innerHTML = '<div class="empty"><div class="empty-em">🎁</div>' + bonusMonthLabel(B.ym) + ' — үзлэг бүртгэлгүй</div>'; return; }
+  const catCount = (c) => B.byCat[c].filter(r => !r.skip).length;
+  host.innerHTML = `
+    <div class="stats s5" style="margin-bottom:12px">
+      <div class="stat green"><div class="stat-l">🎁 Нийт урамшуулал</div><div class="snum">${fmtCompact(B.total)}</div><div class="muted" style="font-size:10px">${B.docs.length} эмч</div></div>
+      <div class="stat"><div class="stat-l">📋 Үзлэг</div><div class="snum">${B.rows.length - B.skipped}</div><div class="muted" style="font-size:10px">${B.skipped ? B.skipped + ' хасагдсан' : 'бүгд тооцогдсон'}</div></div>
+      <div class="stat accent"><div class="stat-l">🏥 Клиник</div><div class="snum">${catCount('Клиник')}</div><div class="muted" style="font-size:10px">кл. дуудлага ${catCount('Клиник дуудлага')}</div></div>
+      <div class="stat purple"><div class="stat-l">🧪 Зонд</div><div class="snum">${catCount('Зонд')}</div><div class="muted" style="font-size:10px">«${escHTML(cfg.kwZond)}» үйлчилгээтэй</div></div>
+      <div class="stat"><div class="stat-l">🚗 Дуудлага</div><div class="snum">${catCount('Дуудлага')}</div><div class="muted" style="font-size:10px">${B.rows.filter(r => r.asst && !r.skip).length} хамтарсан үзлэг</div></div>
+    </div>
+    <div class="muted" style="font-size:11px;margin-bottom:10px">Хувь хэмжээ: ганцаараа <b>${fmt(cfg.alone)}</b> · хамтарсан бол үндсэн <b>${fmt(cfg.main)}</b> + хамтрагч <b>${fmt(cfg.assist)}</b> (нэг үзлэг = нэг адуу). Ангилал үйлчилгээний нэрээр автоматаар тогтооно — мөр бүр дээр гараар солих, эсвэл урамшууллаас хасах боломжтой; өөрчлөлт бүх төхөөрөмжид хадгалагдана. Тохиргоо → «🎁 Урамшуулал».</div>
+
+    <div class="ch">👨‍⚕️ Эмч тус бүрийн нэгтгэл — ${escHTML(bonusMonthLabel(B.ym))}</div>
+    <div class="tbl-wrap" style="overflow-x:auto"><table style="min-width:760px">
+      <thead><tr><th>Нэрс</th><th>Албан тушаал</th><th class="num" style="text-align:right">Үзлэг</th>${BONUS_CATS.map(c => `<th style="text-align:right">${c}</th>`).join('')}<th style="text-align:right">Хамтран</th><th style="text-align:right">Нийт дүн</th></tr></thead>
+      <tbody>${B.docs.map(d => `<tr>
+        <td class="bold">${escHTML(d.name)}</td><td class="muted">${escHTML(d.role)}</td>
+        <td style="text-align:right">${d.count}${d.assistCount ? ' <span class="muted">+' + d.assistCount + '</span>' : ''}</td>
+        ${BONUS_CATS.map(c => `<td style="text-align:right">${d.cats[c] ? fmt(d.cats[c]) : '<span class="muted">—</span>'}</td>`).join('')}
+        <td style="text-align:right">${d.assist ? fmt(d.assist) : '<span class="muted">—</span>'}</td>
+        <td class="bold" style="text-align:right">${fmt(d.total)}</td></tr>`).join('')}
+        <tr style="background:var(--input)"><td class="bold" colspan="2">Нийт дүн</td><td class="bold" style="text-align:right">${B.rows.length - B.skipped}</td>
+        ${BONUS_CATS.map(c => `<td class="bold" style="text-align:right">${fmt(B.docs.reduce((a, d) => a + (d.cats[c] || 0), 0))}</td>`).join('')}
+        <td class="bold" style="text-align:right">${fmt(B.docs.reduce((a, d) => a + d.assist, 0))}</td><td class="bold" style="text-align:right">${fmt(B.total)}</td></tr>
+      </tbody></table></div>
+
+    ${BONUS_CATS.map(c => {
+      const list = B.byCat[c]; if (!list.length) return '';
+      const sumM = list.reduce((a, r) => a + r.mainAmt, 0), sumA = list.reduce((a, r) => a + r.asstAmt, 0);
+      return `
+      <div class="ch" style="margin-top:16px">${c === 'Зонд' ? '🧪' : c.includes('уудлага') ? '🚗' : '🏥'} ${escHTML(c)} урамшуулал <span class="ch-r">${list.length}</span></div>
+      <div class="tbl-wrap" style="overflow-x:auto"><table style="min-width:1000px;font-size:12px">
+        <thead><tr><th style="width:28px">#</th><th style="width:100px">Огноо</th><th style="width:70px">Баримт №</th><th style="width:130px">Адуу</th><th>Үйлчилгээ</th><th style="width:120px">Ахлах эмч</th><th style="width:80px;text-align:right">Дүн</th><th style="width:120px">Хамтрагч</th><th style="width:80px;text-align:right">Дүн</th><th style="width:130px">Ангилал</th><th style="width:60px">Тооцох</th></tr></thead>
+        <tbody>${list.map((r, i) => `<tr style="${r.skip ? 'opacity:.5' : ''}">
+          <td class="muted">${i + 1}</td>
+          <td style="cursor:pointer" onclick="openExamDetail('${escHTML(String(r.id))}')" title="Үзлэг харах">${escHTML(r.date)}<div class="muted" style="font-size:10px">${escHTML(r.time)}</div></td>
+          <td class="bold">${escHTML(r.examNum) || '<span class="muted">—</span>'}</td>
+          <td style="max-width:130px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escHTML(r.horse + ' · ' + r.owner)}">${escHTML(r.horse)}</td>
+          <td style="white-space:normal;font-size:11px">${escHTML(r.svc) || '<span class="muted">—</span>'}</td>
+          <td class="bold">${escHTML(r.main) || '<span class="badge b-r">эмчгүй</span>'}</td>
+          <td style="text-align:right">${r.mainAmt ? fmt(r.mainAmt) : '—'}</td>
+          <td>${escHTML(r.asst) || '<span class="muted">—</span>'}</td>
+          <td style="text-align:right">${r.asstAmt ? fmt(r.asstAmt) : '—'}</td>
+          <td><select class="inp" style="padding:3px 6px;font-size:11px" onchange="setBonusCat('${escHTML(String(r.id))}', this.value)">${BONUS_CATS.map(x => `<option ${x === r.cat ? 'selected' : ''}>${x}</option>`).join('')}</select>${r.auto ? '' : '<div class="muted" style="font-size:9px">гараар</div>'}</td>
+          <td style="text-align:center"><input type="checkbox" ${r.skip ? '' : 'checked'} ${r.noDoc ? 'disabled' : ''} onchange="setBonusSkip('${escHTML(String(r.id))}', !this.checked)" title="Урамшуулалд тооцох эсэх"></td>
+        </tr>`).join('')}
+        <tr style="background:var(--input)"><td colspan="6" class="bold">Нийт дүн</td><td class="bold" style="text-align:right">${fmt(sumM)}</td><td></td><td class="bold" style="text-align:right">${fmt(sumA)}</td><td colspan="2"></td></tr>
+        </tbody></table></div>`;
+    }).join('')}`;
+}
+function setBonusCat(id, cat) {
+  const e = (STATE.exams || []).find(x => String(x.id) === String(id)); if (!e) return;
+  e.bonusCat = cat; e.ms = nowMs();
+  saveAll(); fbSaveRecord('exams', e);
+  try { writeLog('Урамшууллын ангилал солив', e.id, e.horse, cat, e.id); } catch (_) {}
+  renderBonus();
+}
+function setBonusSkip(id, skip) {
+  const e = (STATE.exams || []).find(x => String(x.id) === String(id)); if (!e) return;
+  e.bonusSkip = !!skip; e.ms = nowMs();
+  saveAll(); fbSaveRecord('exams', e);
+  try { writeLog(skip ? 'Урамшууллаас хасав' : 'Урамшуулалд оруулав', e.id, e.horse, e.examNum || '', e.id); } catch (_) {}
+  renderBonus();
+}
+
+// Хэвлэх — санхүүгийн Excel-ийн загвараар (A4 босоо)
+function printBonus() {
+  const B = __bonusLast; if (!B || !B.rows.length) { toast('Эхлээд сар сонгоно уу', 'err'); return; }
+  const cfg = B.cfg; const label = bonusMonthLabel(B.ym);
+  const catTable = (c) => {
+    const list = B.byCat[c].filter(r => !r.skip); if (!list.length) return '';
+    return `<div class="bn-page">
+      <div class="bn-appr">Батлав: ${escHTML(cfg.approver)} ______________</div>
+      <div class="pr-h1">Морьтон адууны эмнэлэг ${escHTML(c.toLowerCase())} урамшуулал /${escHTML(label)}/</div>
+      <table class="pr-tbl">
+        <tr><th>#</th><th>Огноо</th><th>Баримт №</th><th>Тоо хэмжээ</th><th>Ахлах эмч</th><th>Мөнгөн дүн</th><th>Хамтрагч эмч</th><th>Мөнгөн дүн</th></tr>
+        ${list.map((r, i) => `<tr><td>${i + 1}</td><td>${escHTML(r.date)} ${escHTML(r.time)}</td><td>${escHTML(r.examNum)}</td><td style="text-align:right">${r.qty}</td><td>${escHTML(r.main)}</td><td style="text-align:right">${fmt(r.mainAmt)}</td><td>${escHTML(r.asst)}</td><td style="text-align:right">${r.asstAmt ? fmt(r.asstAmt) : ''}</td></tr>`).join('')}
+        <tr><td colspan="5"><b>Нийт дүн</b></td><td style="text-align:right"><b>${fmt(list.reduce((a, r) => a + r.mainAmt, 0))}</b></td><td></td><td style="text-align:right"><b>${fmt(list.reduce((a, r) => a + r.asstAmt, 0))}</b></td></tr>
+      </table>
+    </div>`;
+  };
+  $('#print-area').innerHTML = `<div class="rp-print bn-print">
+    ${BONUS_CATS.map(catTable).join('')}
+    <div class="bn-page">
+      <div class="bn-appr">Батлав: ${escHTML(cfg.approver)} ______________</div>
+      <div class="pr-h1">Морьтон адууны эмнэлэг үзлэг урамшуулал /${escHTML(label)}/</div>
+      <table class="pr-tbl">
+        <tr><th>Нэрс</th><th>Албан тушаал</th><th>Үзлэг</th>${BONUS_CATS.map(c => `<th>${c}</th>`).join('')}<th>Хамтран</th><th>Нийт дүн</th></tr>
+        ${B.docs.map(d => `<tr><td>${escHTML(d.name)}</td><td>${escHTML(d.role)}</td><td style="text-align:right">${d.count}${d.assistCount ? ' +' + d.assistCount : ''}</td>${BONUS_CATS.map(c => `<td style="text-align:right">${d.cats[c] ? fmt(d.cats[c]) : ''}</td>`).join('')}<td style="text-align:right">${d.assist ? fmt(d.assist) : ''}</td><td style="text-align:right"><b>${fmt(d.total)}</b></td></tr>`).join('')}
+        <tr><td colspan="2"><b>Нийт дүн</b></td><td style="text-align:right"><b>${B.rows.length - B.skipped}</b></td>${BONUS_CATS.map(c => `<td style="text-align:right"><b>${fmt(B.docs.reduce((a, d) => a + (d.cats[c] || 0), 0))}</b></td>`).join('')}<td style="text-align:right"><b>${fmt(B.docs.reduce((a, d) => a + d.assist, 0))}</b></td><td style="text-align:right"><b>${fmt(B.total)}</b></td></tr>
+      </table>
+      <div class="muted" style="font-size:8.5pt;margin-top:6px">Хувь хэмжээ: ганцаараа ${fmt(cfg.alone)}, хамтарсан үзлэгт үндсэн эмч ${fmt(cfg.main)} + хамтрагч ${fmt(cfg.assist)}. Системээс автоматаар тооцов — ${localDateStr(new Date())}.</div>
+      <div class="pr-sign" style="margin-top:40px"><div>Хянасан: ______________ /${escHTML(cfg.checker)}/</div><div>Нягтлан бодогч: ______________ /${escHTML(cfg.accountant)}/</div></div>
+    </div>
+  </div>`;
+  try { writeLog('Урамшууллын тайлан хэвлэв', '', '', label + ' · ' + fmt(B.total)); } catch (_) {}
+  setTimeout(() => window.print(), 100);
+}
+function exportBonusCSV() {
+  const B = __bonusLast; if (!B || !B.rows.length) { toast('Эхлээд сар сонгоно уу', 'err'); return; }
+  const rows = [['Ангилал', 'Огноо', 'Цаг', 'Баримт №', 'Адуу', 'Эзэн', 'Үйлчилгээ', 'Тоо хэмжээ', 'Ахлах эмч', 'Мөнгөн дүн', 'Хамтрагч эмч', 'Мөнгөн дүн', 'Тооцсон эсэх']];
+  BONUS_CATS.forEach(c => B.byCat[c].forEach(r => rows.push([c, r.date, r.time, r.examNum, r.horse, r.owner, r.svc, r.qty, r.main, r.mainAmt, r.asst, r.asstAmt, r.skip ? 'Хасагдсан' : 'Тийм'])));
+  rows.push([]); rows.push(['НЭГТГЭЛ — ' + bonusMonthLabel(B.ym)]);
+  rows.push(['Нэрс', 'Албан тушаал', 'Үзлэг', ...BONUS_CATS, 'Хамтран', 'Нийт дүн']);
+  B.docs.forEach(d => rows.push([d.name, d.role, d.count, ...BONUS_CATS.map(c => d.cats[c] || 0), d.assist, d.total]));
+  rows.push(['Нийт', '', B.rows.length - B.skipped, ...BONUS_CATS.map(c => B.docs.reduce((a, d) => a + (d.cats[c] || 0), 0)), B.docs.reduce((a, d) => a + d.assist, 0), B.total]);
+  downloadCSV(rows, 'урамшуулал_' + B.ym + '.csv');
+}
+
+// Админ: урамшууллын тохиргоо
+function renderBonusCfg() {
+  const cfg = bonusCfg();
+  const set = (id, v) => { const el = $('#' + id); if (el) el.value = v; };
+  set('bn-cfg-alone', cfg.alone); set('bn-cfg-main', cfg.main); set('bn-cfg-assist', cfg.assist);
+  set('bn-cfg-zond', cfg.kwZond); set('bn-cfg-call', cfg.kwCall);
+  set('bn-cfg-approver', cfg.approver); set('bn-cfg-checker', cfg.checker); set('bn-cfg-acc', cfg.accountant);
+}
+function saveBonusCfgFromForm() {
+  if (!(typeof canAccess === 'function' && (canAccess('admin') || canAccess('finance')))) { toast('Эрх хүрэхгүй', 'err'); return; }
+  const num = (id, d) => { const v = parseFloat(($('#' + id) || {}).value); return isNaN(v) ? d : v; };
+  const str = (id, d) => { const v = (($('#' + id) || {}).value || '').trim(); return v || d; };
+  saveBonusCfg({ alone: num('bn-cfg-alone', 10000), main: num('bn-cfg-main', 6000), assist: num('bn-cfg-assist', 4000),
+    kwZond: str('bn-cfg-zond', 'Зонд'), kwCall: str('bn-cfg-call', 'Дуудлага'),
+    approver: str('bn-cfg-approver', ''), checker: str('bn-cfg-checker', ''), accountant: str('bn-cfg-acc', '') });
+  try { writeLog('Урамшууллын тохиргоо солив', '', '', fmt(STATE.bonusCfg.alone) + ' / ' + fmt(STATE.bonusCfg.main) + '+' + fmt(STATE.bonusCfg.assist)); } catch (_) {}
+  toast('✅ Урамшууллын тохиргоо хадгалагдлаа', 'ok');
+}
+
+// ============================================================
 // HISTORY
 // ============================================================
 // Pagination — нэг хуудсанд 50 мөр харуулна
@@ -6576,6 +6804,7 @@ function exportHistCSV() {
 // ============================================================
 function renderAdmin() {
   try { renderFinPinStatus(); } catch(_) {}
+  try { renderBonusCfg(); } catch(_) {}
   $('#a-url').value = STATE.syncURL;
   const list = $('#a-doc-list');
   list.innerHTML = STATE.doctors.map(d => `
@@ -8105,6 +8334,7 @@ function fbSaveClinicConfig() {
     labSvcOn:        STATE.labSvcOn        || [],
     labSvcOff:       STATE.labSvcOff       || [],
     finPinHash:      STATE.finPinHash      || '',
+    bonusCfg:        STATE.bonusCfg        || null,
     _updatedAt: ms,
     _writer: window.__fbDeviceId || 'unknown'
   });
@@ -8241,6 +8471,8 @@ function fbApplyRecord(colName, docData) {
       if (Array.isArray(docData.labSvcOff)) { STATE.labSvcOff = docData.labSvcOff.slice(); lsSet('mt_lab_svc_off', STATE.labSvcOff); }
       // 🔒 Мөнгөн дүн харах код
       if (typeof docData.finPinHash === 'string') { STATE.finPinHash = docData.finPinHash; lsSet('mt_fin_pin_hash', STATE.finPinHash); try { renderFinPinStatus(); } catch(_) {} }
+      // 🎁 Урамшууллын тохиргоо
+      if (docData.bonusCfg && typeof docData.bonusCfg === 'object') { STATE.bonusCfg = docData.bonusCfg; lsSet('mt_bonus_cfg', STATE.bonusCfg); try { if (STATE.activePage === 'admin') renderBonusCfg(); } catch(_) {} }
       // Шилжилтийн үе: нэгтгэсэн үр дүнг сервэрт нэг удаа буцаан бичиж
       // бүх төхөөрөмжийн тохиргоог нийлүүлнэ (дараа нь _localMs тэглэгдэхгүй).
       if (!_localMs && _localCount > 0) { try { fbSaveClinicConfig(); } catch(e){} }

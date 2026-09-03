@@ -31,7 +31,7 @@
      ============================================================ -->
 <script type="module" src="firebase.js?v=20260720"></script>
 
-<link rel="stylesheet" href="style.css?v=20260831">
+<link rel="stylesheet" href="style.css?v=20260903">
 </head>
 <body>
 
@@ -625,7 +625,24 @@
             <button class="tab" data-ftab="receivable">🧾 Авлага <span id="ft-r">0</span></button>
             <button class="tab" data-ftab="paid">✅ Төлөгдсөн <span id="ft-d">0</span></button>
             <button class="tab" data-ftab="sum">📊 Тойм</button>
+            <button class="tab" data-ftab="bonus">🎁 Урамшуулал</button>
           </div>
+        </div>
+
+        <!-- 🎁 эмчийн үзлэгийн урамшуулал -->
+        <div class="ftab hidden" data-ftab="bonus">
+          <div class="card">
+            <div class="row" style="gap:8px;flex-wrap:wrap">
+              <div class="fld" style="min-width:160px"><label>Сар</label><input class="inp" type="month" id="bn-month" onchange="renderBonus()"></div>
+              <div class="fld" style="min-width:180px"><label>Салбар / аймаг</label><select class="inp" id="bn-prov" onchange="renderBonus()"><option value="">Бүх салбар / аймаг</option></select></div>
+              <div class="fld" style="justify-content:flex-end"><label>&nbsp;</label><div class="row" style="gap:6px">
+                <button class="btn btn-sm btn-p" onclick="renderBonus()">🔄 Тооцох</button>
+                <button class="btn btn-sm" onclick="printBonus()">🖨️ Хэвлэх / PDF</button>
+                <button class="btn btn-sm" onclick="exportBonusCSV()">⬇ CSV (Excel)</button>
+              </div></div>
+            </div>
+          </div>
+          <div class="card" id="bn-body"><div class="empty"><div class="empty-em">🎁</div>Сар сонгоод «Тооцох» дарна уу</div></div>
         </div>
 
         <!-- pending -->
@@ -936,6 +953,25 @@
             <button class="btn btn-p btn-sm" onclick="addDoc()">+ Нэмэх</button>
             <div class="ch" style="margin-top:14px">Бүртгэлтэй эмч нар</div>
             <div class="list" id="a-doc-list"></div>
+          </div>
+          <div class="card" id="bonus-cfg-card">
+            <div class="ch">🎁 Эмчийн үзлэгийн урамшуулал</div>
+            <div class="muted" style="font-size:12px;margin-bottom:8px">Санхүү → Урамшуулал цэсэнд сар бүрийн урамшууллыг үзлэгийн бүртгэлээс автоматаар тооцно. Нэг үзлэг (нэг адуу) бүрд:</div>
+            <div class="fg r3">
+              <div class="fld"><label>Ганцаараа хийсэн ₮</label><input class="inp" type="number" id="bn-cfg-alone"></div>
+              <div class="fld"><label>Хамтарсан — үндсэн эмч ₮</label><input class="inp" type="number" id="bn-cfg-main"></div>
+              <div class="fld"><label>Хамтарсан — хамтрагч ₮</label><input class="inp" type="number" id="bn-cfg-assist"></div>
+            </div>
+            <div class="fg r2" style="margin-top:8px">
+              <div class="fld"><label>«Зонд» ангилал — үйлчилгээний нэрэнд агуулагдах үг</label><input class="inp" id="bn-cfg-zond"></div>
+              <div class="fld"><label>«Дуудлага» ангилал — үйлчилгээний нэр эхлэх үг</label><input class="inp" id="bn-cfg-call"></div>
+            </div>
+            <div class="fg r3" style="margin-top:8px">
+              <div class="fld"><label>Батлав (хэвлэхэд)</label><input class="inp" id="bn-cfg-approver"></div>
+              <div class="fld"><label>Хянасан</label><input class="inp" id="bn-cfg-checker"></div>
+              <div class="fld"><label>Нягтлан бодогч</label><input class="inp" id="bn-cfg-acc"></div>
+            </div>
+            <button class="btn btn-p btn-sm" style="margin-top:8px" onclick="saveBonusCfgFromForm()">💾 Хадгалах</button>
           </div>
           <div class="card" id="fin-pin-card">
             <div class="ch">🔒 Мөнгөн дүн харах код</div>
@@ -1405,7 +1441,7 @@
 
 <div id="print-area"></div>
 
-<script src="app.js?v=20260831c"></script>
+<script src="app.js?v=20260903"></script>
 <script src="lab.js?v=20260731"></script>
 
 <!-- PWA: service worker бүртгэх, автомат шинэчлэлт, суулгах товч -->
