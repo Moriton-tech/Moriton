@@ -957,11 +957,13 @@
           <div class="card" id="examnum-cfg-card">
             <div class="ch">🔢 Үзлэгийн хуудасны дугаарлалт</div>
             <div class="muted" style="font-size:12px;margin-bottom:8px">Адуу бүртгэхэд дугаар автоматаар: <b>max(эхлэх дугаар, бүртгэгдсэн хамгийн их дугаар) + 1</b>. Эхлэх дугаараас доош хуучин цувралын дугаарууд тооцогдохгүй — шинэ цуврал эхлүүлэхдээ энд сүүлийн дугаараа бичнэ.</div>
-            <div class="fg r3">
+            <div class="fg r2">
               <div class="fld"><label>Сүүлд ашигласан дугаар</label><input class="inp" type="number" id="en-cfg-start" placeholder="90310"></div>
+              <div class="fld"><label>Шинэ цуврал эхэлсэн огноо</label><input class="inp" type="date" id="en-cfg-since"></div>
               <div class="fld"><label>Оронгийн тоо</label><input class="inp" type="number" id="en-cfg-pad" min="0" max="12"></div>
               <div class="fld"><label>Угтвар (заавал биш)</label><input class="inp" id="en-cfg-prefix" placeholder="ж: A-"></div>
             </div>
+            <div class="muted" style="font-size:11px;margin-top:6px">Зөвхөн «эхэлсэн огноо»-с хойш бүртгэгдсэн, эхлэх дугаараас дээш дугааруудыг тооцно — хуучин бичлэгийн урт/буруу дугаар (ж: 559342) дараагийн дугаарт нөлөөлөхгүй.</div>
             <div id="en-cfg-info" style="margin-top:8px;font-size:13px"></div>
             <button class="btn btn-p btn-sm" style="margin-top:8px" onclick="saveExamNumCfgFromForm()">💾 Хадгалах</button>
           </div>
@@ -1452,7 +1454,7 @@
 
 <div id="print-area"></div>
 
-<script src="app.js?v=20260903b"></script>
+<script src="app.js?v=20260903c"></script>
 <script src="lab.js?v=20260731"></script>
 
 <!-- PWA: service worker бүртгэх, автомат шинэчлэлт, суулгах товч -->

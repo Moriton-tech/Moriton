@@ -2166,16 +2166,25 @@ function initRegPage() {
 // системд байгаа хамгийн их дугаар) + 1. Эхлэх дугаараас доош хуучин
 // цуврал (ж: 0052455) тооцогдохгүй тул дугаарлалтыг хэзээ ч шинээр эхлүүлж болно.
 // ============================================================
-const EXAMNUM_DEFAULT = { start: 90310, pad: 6, prefix: '' }; // 2026-09-03: сүүлийн дугаар 090310 → дараагийнх 090311
+const EXAMNUM_DEFAULT = { start: 90310, pad: 6, prefix: '', since: '2026-09-03' }; // 2026-09-03: сүүлийн дугаар 090310 → дараагийнх 090311
+const EXAMNUM_WINDOW = 100000; // нэг цувралд байж болох дугаарын дээд зөрүү
 function examNumCfg() { return Object.assign({}, EXAMNUM_DEFAULT, STATE.examNumCfg || {}); }
 function examNumValue(n) { const m = String(n || '').match(/(\d+)/); return m ? parseInt(m[1], 10) : null; }
-function examNumMax() {
+// Шинэ цувралын хамгийн их дугаар: зөвхөн цуврал эхэлсэн огноо (since)-оос хойш бүртгэгдсэн,
+// эхлэх дугаараас дээш дугааруудыг л тооцно — хуучин цувралын урт/санамсаргүй дугаар нөлөөлөхгүй.
+function examNumMax(withRec) {
   const cfg = examNumCfg();
-  let max = cfg.start;
-  const collect = (n) => { const v = examNumValue(n); if (v !== null && v >= cfg.start && v > max) max = v; };
-  (STATE.exams || []).forEach(e => collect(e.examNum));
-  (STATE.waiting || []).forEach(w => collect(w.examNum));
-  return max;
+  let max = cfg.start, rec = null;
+  const dateOf = (r) => { const d = rpNormDate(r.date); if (d) return d; if (r.ms) { try { return localDateStr(new Date(parseFloat(r.ms))); } catch(_) {} } return ''; };
+  const collect = (r, src) => {
+    const v = examNumValue(r.examNum); if (v === null || v < cfg.start) return;
+    if (v > cfg.start + EXAMNUM_WINDOW) return; // цувралаас хэт хол (гараар буруу бичсэн) дугаарыг үл тооцно
+    if (cfg.since && dateOf(r) && dateOf(r) < cfg.since) return;
+    if (v > max) { max = v; rec = { src, r }; }
+  };
+  (STATE.exams || []).forEach(e => collect(e, 'үзлэг'));
+  (STATE.waiting || []).forEach(w => collect(w, 'дараалал'));
+  return withRec ? { max, rec } : max;
 }
 function formatExamNum(v) { const cfg = examNumCfg(); return (cfg.prefix || '') + String(v).padStart(cfg.pad || 0, '0'); }
 function nextExamNum() { return formatExamNum(examNumMax() + 1); }
@@ -2194,10 +2203,11 @@ function renderExamNumCfg() {
   if ($('#en-cfg-start')) $('#en-cfg-start').value = cfg.start;
   if ($('#en-cfg-pad')) $('#en-cfg-pad').value = cfg.pad;
   if ($('#en-cfg-prefix')) $('#en-cfg-prefix').value = cfg.prefix || '';
-  const usedMax = examNumMax();
+  if ($('#en-cfg-since')) $('#en-cfg-since').value = cfg.since || '';
+  const m = examNumMax(true);
   if ($('#en-cfg-info')) $('#en-cfg-info').innerHTML =
     'Дараагийн дугаар: <b style="font-size:16px">' + escHTML(nextExamNum()) + '</b>' +
-    (usedMax > cfg.start ? ' <span class="muted">(системд бүртгэгдсэн хамгийн их: ' + escHTML(formatExamNum(usedMax)) + ')</span>' : ' <span class="muted">(эхлэх дугаараас хойш бүртгэл алга)</span>');
+    (m.rec ? ' <span class="muted">(цувралын хамгийн их: ' + escHTML(formatExamNum(m.max)) + ' — ' + escHTML(m.rec.src) + ', ' + escHTML(m.rec.r.horse || '') + ' ' + escHTML(rpNormDate(m.rec.r.date) || '') + ')</span>' : ' <span class="muted">(цуврал эхэлснээс хойш бүртгэл алга — эхлэх дугаар + 1)</span>');
 }
 function saveExamNumCfgFromForm() {
   if (!(typeof canAccess === 'function' && canAccess('admin'))) { toast('Зөвхөн админ эрхтэй хэрэглэгч солино', 'err'); return; }
@@ -2206,7 +2216,9 @@ function saveExamNumCfgFromForm() {
   const prefix = (($('#en-cfg-prefix') || {}).value || '').trim();
   if (isNaN(start) || start < 0) { toast('Эхлэх дугаар буруу байна', 'err'); return; }
   const old = examNumCfg();
-  saveExamNumCfg({ start, pad: isNaN(pad) ? 6 : Math.max(0, Math.min(12, pad)), prefix });
+  let since = (($('#en-cfg-since') || {}).value || '').trim();
+  if (!since || (start !== old.start && since === old.since)) since = todayStr(); // эхлэх дугаар өөрчлөгдвөл шинэ цуврал өнөөдрөөс
+  saveExamNumCfg({ start, pad: isNaN(pad) ? 6 : Math.max(0, Math.min(12, pad)), prefix, since });
   try { writeLog('Үзлэгийн дугаарын тохиргоо солив', '', '', formatExamNum(old.start) + ' → ' + nextExamNum()); } catch (_) {}
   renderExamNumCfg();
   toast('✅ Дараагийн дугаар: ' + nextExamNum(), 'ok');
