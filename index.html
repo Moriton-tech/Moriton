@@ -237,7 +237,7 @@
           <div class="fg r2">
             <div class="fld">
               <label>Дугаар <span class="req">*</span></label>
-              <input class="inp" id="r-examnum" placeholder="ж: 0051189" inputmode="numeric" style="font-weight:800;font-size:16px;letter-spacing:0.5px">
+              <input class="inp" id="r-examnum" placeholder="ж: 090311" inputmode="numeric" style="font-weight:800;font-size:16px;letter-spacing:0.5px">
             </div>
             <div class="fld" style="justify-content:flex-end">
               <label>&nbsp;</label>
@@ -954,6 +954,17 @@
             <div class="ch" style="margin-top:14px">Бүртгэлтэй эмч нар</div>
             <div class="list" id="a-doc-list"></div>
           </div>
+          <div class="card" id="examnum-cfg-card">
+            <div class="ch">🔢 Үзлэгийн хуудасны дугаарлалт</div>
+            <div class="muted" style="font-size:12px;margin-bottom:8px">Адуу бүртгэхэд дугаар автоматаар: <b>max(эхлэх дугаар, бүртгэгдсэн хамгийн их дугаар) + 1</b>. Эхлэх дугаараас доош хуучин цувралын дугаарууд тооцогдохгүй — шинэ цуврал эхлүүлэхдээ энд сүүлийн дугаараа бичнэ.</div>
+            <div class="fg r3">
+              <div class="fld"><label>Сүүлд ашигласан дугаар</label><input class="inp" type="number" id="en-cfg-start" placeholder="90310"></div>
+              <div class="fld"><label>Оронгийн тоо</label><input class="inp" type="number" id="en-cfg-pad" min="0" max="12"></div>
+              <div class="fld"><label>Угтвар (заавал биш)</label><input class="inp" id="en-cfg-prefix" placeholder="ж: A-"></div>
+            </div>
+            <div id="en-cfg-info" style="margin-top:8px;font-size:13px"></div>
+            <button class="btn btn-p btn-sm" style="margin-top:8px" onclick="saveExamNumCfgFromForm()">💾 Хадгалах</button>
+          </div>
           <div class="card" id="bonus-cfg-card">
             <div class="ch">🎁 Эмчийн үзлэгийн урамшуулал</div>
             <div class="muted" style="font-size:12px;margin-bottom:8px">Санхүү → Урамшуулал цэсэнд сар бүрийн урамшууллыг үзлэгийн бүртгэлээс автоматаар тооцно. Нэг үзлэг (нэг адуу) бүрд:</div>
@@ -1178,7 +1189,7 @@
   <div class="mod">
     <div class="mod-h"><span class="mod-title">🩺 Үзлэг засварлах</span><button class="btn btn-r btn-xs" onclick="closeModal('edit-exam-modal')">✕</button></div>
     <div class="mod-body">
-      <div class="fld"><label>🔢 Үзлэгийн хуудасны дугаар</label><input class="inp" id="ee-examnum" placeholder="ж: 0051189" inputmode="numeric" style="font-weight:800;letter-spacing:0.5px"></div>
+      <div class="fld"><label>🔢 Үзлэгийн хуудасны дугаар</label><input class="inp" id="ee-examnum" placeholder="ж: 090311" inputmode="numeric" style="font-weight:800;letter-spacing:0.5px"></div>
       <div class="fld"><label>Морь</label><input class="inp" id="ee-horse" readonly></div>
       <div class="fld"><label>Эмч</label><input class="inp" id="ee-doctor" readonly></div>
       <div class="fld"><label>Огноо</label><input class="inp" id="ee-date" readonly></div>
@@ -1441,7 +1452,7 @@
 
 <div id="print-area"></div>
 
-<script src="app.js?v=20260903"></script>
+<script src="app.js?v=20260903b"></script>
 <script src="lab.js?v=20260731"></script>
 
 <!-- PWA: service worker бүртгэх, автомат шинэчлэлт, суулгах товч -->

@@ -847,6 +847,7 @@ const STATE = {
   configMs: 0,        // clinic_config-ийг энэ төхөөрөмжөөс сүүлд өөрчилсөн агшин
   finPinHash: '',     // Мөнгөн дүн харах код (SHA-256) — Админ тохируулна
   bonusCfg: null,     // 🎁 Эмчийн урамшууллын тохиргоо (хувь хэмжээ, нэрс)
+  examNumCfg: null,   // 🔢 Үзлэгийн дугаарлалтын тохиргоо (эхлэх дугаар, орон, угтвар)
   finUnlockedUntil: 0,// Мөнгөн дүн хэдий хүртэл нээлттэй (ms)
   user: null,
   syncURL: '',
@@ -924,6 +925,7 @@ function loadAll() {
   STATE.configMs = parseFloat(lsGet('mt_config_ms', 0)) || 0;
   STATE.finPinHash = lsGet('mt_fin_pin_hash', '') || '';
   STATE.bonusCfg = lsGet('mt_bonus_cfg', null);
+  STATE.examNumCfg = lsGet('mt_examnum_cfg', null);
   STATE.user = lsGet('mt_user', null);
   STATE.syncURL = ''; // Apps Script sync устгагдсан — Firebase ашиглана
   if (STATE.doctors.length === 0) STATE.doctors = [...DEFAULT_DOCS];
@@ -2157,23 +2159,57 @@ function initRegPage() {
   }
 }
 
+// ============================================================
+// 🔢 ҮЗЛЭГИЙН ХУУДАСНЫ ДУГААР — автомат дугаарлалт
+// Тохиргоо (Системийн тохиргоо → Үзлэгийн дугаар) clinic_config-д хадгалагдаж
+// бүх төхөөрөмжид sync хийгдэнэ. Дараагийн дугаар = max(эхлэх дугаар,
+// системд байгаа хамгийн их дугаар) + 1. Эхлэх дугаараас доош хуучин
+// цуврал (ж: 0052455) тооцогдохгүй тул дугаарлалтыг хэзээ ч шинээр эхлүүлж болно.
+// ============================================================
+const EXAMNUM_DEFAULT = { start: 90310, pad: 6, prefix: '' }; // 2026-09-03: сүүлийн дугаар 090310 → дараагийнх 090311
+function examNumCfg() { return Object.assign({}, EXAMNUM_DEFAULT, STATE.examNumCfg || {}); }
+function examNumValue(n) { const m = String(n || '').match(/(\d+)/); return m ? parseInt(m[1], 10) : null; }
+function examNumMax() {
+  const cfg = examNumCfg();
+  let max = cfg.start;
+  const collect = (n) => { const v = examNumValue(n); if (v !== null && v >= cfg.start && v > max) max = v; };
+  (STATE.exams || []).forEach(e => collect(e.examNum));
+  (STATE.waiting || []).forEach(w => collect(w.examNum));
+  return max;
+}
+function formatExamNum(v) { const cfg = examNumCfg(); return (cfg.prefix || '') + String(v).padStart(cfg.pad || 0, '0'); }
+function nextExamNum() { return formatExamNum(examNumMax() + 1); }
 function autoFillExamNum() {
-  // Baseline: last manually-recorded exam was 0051188 (2026-04-27 16:31)
-  // So next auto number starts from 0051189 onwards
-  const BASELINE = 51188;
-  let max = BASELINE;
-  const collect = (n) => {
-    if (!n) return;
-    const m = String(n).match(/(\d+)/);
-    if (m) {
-      const num = parseInt(m[1], 10);
-      if (num > max) max = num;
-    }
-  };
-  STATE.exams.forEach(e => collect(e.examNum));
-  STATE.waiting.forEach(w => collect(w.examNum));
-  const next = (max + 1).toString().padStart(7, '0');
-  $('#r-examnum').value = next;
+  $('#r-examnum').value = nextExamNum();
+  if ($('#r-examnum')) $('#r-examnum').placeholder = 'ж: ' + nextExamNum();
+}
+function saveExamNumCfg(patch) {
+  STATE.examNumCfg = Object.assign({}, examNumCfg(), patch || {});
+  lsSet('mt_examnum_cfg', STATE.examNumCfg);
+  try { fbSaveClinicConfig(); } catch (e) { console.error(e); }
+}
+// Админ: тохиргооны карт
+function renderExamNumCfg() {
+  const cfg = examNumCfg();
+  if ($('#en-cfg-start')) $('#en-cfg-start').value = cfg.start;
+  if ($('#en-cfg-pad')) $('#en-cfg-pad').value = cfg.pad;
+  if ($('#en-cfg-prefix')) $('#en-cfg-prefix').value = cfg.prefix || '';
+  const usedMax = examNumMax();
+  if ($('#en-cfg-info')) $('#en-cfg-info').innerHTML =
+    'Дараагийн дугаар: <b style="font-size:16px">' + escHTML(nextExamNum()) + '</b>' +
+    (usedMax > cfg.start ? ' <span class="muted">(системд бүртгэгдсэн хамгийн их: ' + escHTML(formatExamNum(usedMax)) + ')</span>' : ' <span class="muted">(эхлэх дугаараас хойш бүртгэл алга)</span>');
+}
+function saveExamNumCfgFromForm() {
+  if (!(typeof canAccess === 'function' && canAccess('admin'))) { toast('Зөвхөн админ эрхтэй хэрэглэгч солино', 'err'); return; }
+  const start = parseInt(($('#en-cfg-start') || {}).value, 10);
+  const pad = parseInt(($('#en-cfg-pad') || {}).value, 10);
+  const prefix = (($('#en-cfg-prefix') || {}).value || '').trim();
+  if (isNaN(start) || start < 0) { toast('Эхлэх дугаар буруу байна', 'err'); return; }
+  const old = examNumCfg();
+  saveExamNumCfg({ start, pad: isNaN(pad) ? 6 : Math.max(0, Math.min(12, pad)), prefix });
+  try { writeLog('Үзлэгийн дугаарын тохиргоо солив', '', '', formatExamNum(old.start) + ' → ' + nextExamNum()); } catch (_) {}
+  renderExamNumCfg();
+  toast('✅ Дараагийн дугаар: ' + nextExamNum(), 'ok');
 }
 
 // Үзлэгийн хуудасны дугаар давхардаж байгаа эсэхийг шалгана.
@@ -2360,15 +2396,7 @@ function startExamFromWaiting() {
     assistDocId: '',
     date: todayStr(),
     time: new Date().toTimeString().slice(0,5),
-    examNum: w.examNum || (() => {
-      // Fallback: derive from existing max to avoid collision
-      const BASELINE = 51188;
-      let max = BASELINE;
-      const collect = n => { if (!n) return; const m = String(n).match(/(\d+)/); if (m) { const v = parseInt(m[1],10); if (v > max) max = v; } };
-      STATE.exams.forEach(e => collect(e.examNum));
-      STATE.waiting.forEach(w2 => collect(w2.examNum));
-      return (max + 1).toString().padStart(7,'0');
-    })(),
+    examNum: w.examNum || nextExamNum(), // дараалалд дугааргүй бол автомат дугаар
     temp:'', pulse:'', resp:'', wt:'',
     diagnosis:'', symptoms2:[], note:'',
     services:[], meds:[], images:[],
@@ -6805,6 +6833,7 @@ function exportHistCSV() {
 function renderAdmin() {
   try { renderFinPinStatus(); } catch(_) {}
   try { renderBonusCfg(); } catch(_) {}
+  try { renderExamNumCfg(); } catch(_) {}
   $('#a-url').value = STATE.syncURL;
   const list = $('#a-doc-list');
   list.innerHTML = STATE.doctors.map(d => `
@@ -8335,6 +8364,7 @@ function fbSaveClinicConfig() {
     labSvcOff:       STATE.labSvcOff       || [],
     finPinHash:      STATE.finPinHash      || '',
     bonusCfg:        STATE.bonusCfg        || null,
+    examNumCfg:      STATE.examNumCfg      || null,
     _updatedAt: ms,
     _writer: window.__fbDeviceId || 'unknown'
   });
@@ -8473,6 +8503,8 @@ function fbApplyRecord(colName, docData) {
       if (typeof docData.finPinHash === 'string') { STATE.finPinHash = docData.finPinHash; lsSet('mt_fin_pin_hash', STATE.finPinHash); try { renderFinPinStatus(); } catch(_) {} }
       // 🎁 Урамшууллын тохиргоо
       if (docData.bonusCfg && typeof docData.bonusCfg === 'object') { STATE.bonusCfg = docData.bonusCfg; lsSet('mt_bonus_cfg', STATE.bonusCfg); try { if (STATE.activePage === 'admin') renderBonusCfg(); } catch(_) {} }
+      // 🔢 Үзлэгийн дугаарлалт
+      if (docData.examNumCfg && typeof docData.examNumCfg === 'object') { STATE.examNumCfg = docData.examNumCfg; lsSet('mt_examnum_cfg', STATE.examNumCfg); try { if (STATE.activePage === 'admin') renderExamNumCfg(); } catch(_) {} }
       // Шилжилтийн үе: нэгтгэсэн үр дүнг сервэрт нэг удаа буцаан бичиж
       // бүх төхөөрөмжийн тохиргоог нийлүүлнэ (дараа нь _localMs тэглэгдэхгүй).
       if (!_localMs && _localCount > 0) { try { fbSaveClinicConfig(); } catch(e){} }
