@@ -78,3 +78,21 @@
 - Гараар оруулсан дугаарын давхардлын шалгалт хэвээр. Дараалалд дугааргүй адуу үзлэгт орох үед ч `nextExamNum()` ашиглана.
 - Код: `EXAMNUM_DEFAULT`, `examNumCfg/examNumMax/nextExamNum/formatExamNum`, `renderExamNumCfg/saveExamNumCfgFromForm`; `index.html` `#examnum-cfg-card`; `sw.js` `2026-09-03-2`.
 - (засвар 2026-09-03-3) Цувралыг **«Шинэ цуврал эхэлсэн огноо»**-оор хязгаарлав: зөвхөн тэр өдрөөс хойш бүртгэгдсэн, эхлэх дугаараас дээш, эхлэх дугаар + 100,000-с доош дугааруудыг тооцно. Хуучин бичлэгийн урт/алдаатай дугаар (ж: 559342) дараагийн дугаарт нөлөөлөхгүй. Эхлэх дугаарыг өөрчилж хадгалахад огноо автоматаар өнөөдөр болно. Карт дээр цувралын хамгийн их дугаар аль бичлэгээс ирснийг харуулна.
+
+## Нэмэлт — ☁️ Бүх дата татах (Firebase) + англи хувилбар (2026-09-10, 6-р засвар)
+
+**Системийн тохиргоо → ☁️ Бүх дата татах** карт нэмэгдсэн. Локал STATE-ээс биш, **Firestore-оос эх хувиар нь** дахин татаж экспортолно (Firebase холбогдоогүй үед локалаас авч, эх сурвалжийг тэмдэглэнэ).
+
+**Хамрах хүрээ (11 collection + тохиргоо):** horses, waiting, exams, fins, inps, labs, doctors, users, staff, logs, deletedExams, clinic_config.
+
+**Гурван хэлбэр:**
+- **📊 Excel** — 20 хуудас. Үндсэн бичлэгүүд дээр нэмэгдээд, дотоод массивууд тусдаа хуудсанд задарсан: `ExamServices`, `ExamMedicines`, `Payments`, `InpatientDailyLog`, `LabStatusHistory`, `MonthlySchedule`, `ServicePrices`. Эхний хуудас нь **DataDictionary / Талбарын тайлбар** — багана бүрийн монгол нэр, англи нэр, Firestore талбарын нэр, тайлбар (186 мөр). Гуравдагч талд / өөр систем рүү шилжүүлэхэд энэ хуудас баримт бичгийн үүрэг гүйцэтгэнэ.
+- **🗄️ JSON** — Firestore-ийн бүтцээр бүрэн, дотоод массив (services, meds, payments, log, history, images) хэвээр. Систем шилжүүлэх, нөөцлөхөд.
+- **📄 CSV багц** — хуудас тус бүр тусдаа CSV (Excel сан ачаалах шаардлагагүй).
+
+**Хэл:** карт дээрх «🇲🇳 Монгол / 🇬🇧 English» сонголт. English үед баганын нэр (`exam_no`, `doctor_name`, `total_amount`…), төлөвийн утга (Paid/Partial/Unpaid, Work/On duty/Off, Ordered→Result ready), төлбөрийн хэлбэр (Cash/Card/Bank transfer) болон талбарын тайлбар бүгд англи. Адууны зүс, онош, тэмдэглэл зэрэг **бодит бичигдсэн текст хэвээр** үлдэнэ.
+
+**Аюулгүй байдал:** нууц үгийн hash (`pwHash`) ба мөнгөн дүн харах код (`finPinHash`) экспортод **орохгүй** — оронд нь `hasPassword: true/false`. Үзлэгийн зурагнууд Firebase Storage-д үлдэж, экспортод зөвхөн URL орно. Татсан үйлдэл бүр лог-д бүртгэгдэнэ.
+
+- Excel сан ачаалахдаа cdnjs → jsdelivr → локал `xlsx.full.min.js` гэсэн дарааллаар оролдоно (интернэт тасарсан ч ажиллана). Локал хувилбар репод багтсан.
+- Код: `EXPORT_COLLECTIONS/EXPORT_SHEETS/EXPORT_FIELDS/EXPORT_VAL`, `fbFetchAllData`, `exBuildRows`, `exportFullExcel/exportFullJSON/exportFullCSV`, `exWithProgress`, `renderExportSummary`; `index.html` `#export-card`; `sw.js` `2026-09-10-1`.

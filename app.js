@@ -6686,6 +6686,582 @@ function saveBonusCfgFromForm() {
 }
 
 // ============================================================
+// ☁️ БҮХ ДАТА ТАТАХ — Firestore-оос шууд (Full data export)
+// Зорилго: системийн бүх өгөгдлийг нэг дор татаж, өөр систем рүү
+// шилжүүлэх / нөөцлөх / AI-д унших боломжтой болгох.
+// Хэл: Монгол эсвэл English (талбарын нэр, төлөвийн утга хөрвүүлнэ).
+// ============================================================
+const EXPORT_COLLECTIONS = [
+  'horses', 'waiting', 'exams', 'fins', 'inps', 'labs',
+  'doctors', 'users', 'staff', 'logs', 'deletedExams'
+];
+
+// Collection-ийн нэр → (mn, en) гарчиг
+const EXPORT_SHEETS = {
+  horses:       { mn: 'Адуу',              en: 'Horses' },
+  waiting:      { mn: 'Хүлээлт',           en: 'Waiting' },
+  exams:        { mn: 'Үзлэг',             en: 'Exams' },
+  examServices: { mn: 'Үзлэг-Үйлчилгээ',   en: 'ExamServices' },
+  examMeds:     { mn: 'Үзлэг-Эм',          en: 'ExamMedicines' },
+  fins:         { mn: 'Санхүү',            en: 'Finance' },
+  payments:     { mn: 'Төлбөрүүд',         en: 'Payments' },
+  inps:         { mn: 'Байрлан эмчлүүлэх', en: 'Inpatients' },
+  inpLogs:      { mn: 'Байрлан-Өдрийн бичлэг', en: 'InpatientDailyLog' },
+  labs:         { mn: 'Шинжилгээ',         en: 'LabOrders' },
+  labHistory:   { mn: 'Шинжилгээ-Түүх',    en: 'LabStatusHistory' },
+  doctors:      { mn: 'Эмч',               en: 'Doctors' },
+  users:        { mn: 'Хэрэглэгч',         en: 'Users' },
+  staff:        { mn: 'Ажлын хуваарь',     en: 'StaffRoster' },
+  schedule:     { mn: 'Сарын хуваарь',     en: 'MonthlySchedule' },
+  logs:         { mn: 'Үйл ажиллагааны лог', en: 'ActivityLog' },
+  deletedExams: { mn: 'Устгасан үзлэг',    en: 'DeletedExams' },
+  servicePrices:{ mn: 'Үйлчилгээний үнэ',  en: 'ServicePrices' },
+  config:       { mn: 'Тохиргоо',          en: 'Settings' },
+  dictionary:   { mn: 'Талбарын тайлбар',  en: 'DataDictionary' }
+};
+
+// Талбарын нэр → (mn гарчиг, en гарчиг, тайлбар)
+// Excel-ийн баганын дараалал энэ жагсаалтын дарааллаар тогтоно.
+const EXPORT_FIELDS = {
+  horses: [
+    ['id',        'ID',                 'id',            'Дотоод дугаар / internal id', "Internal record id"],
+    ['name',      'Зүс (нэр)',          'horse_name',    'Адууны зүс, нэр', "Horse coat colour / name (Mongolian horses are identified by coat pattern)"],
+    ['iabd',      'ИАБД',               'registry_no',   'Ирсэн адууны бүртгэлийн дугаар', "Arrival registry number (ИАБД) written on the paper form"],
+    ['owner',     'Эзэн',               'owner',         'Эзэмшигчийн нэр', "Owner full name"],
+    ['phone',     'Утас',               'phone',         'Үндсэн утас', "Primary phone"],
+    ['phone2',    'Утас 2',             'phone2',        'Нэмэлт утас', "Secondary phone"],
+    ['age',       'Нас',                'age',           'Нас', "Age in years"],
+    ['breed',     'Үүлдэр',             'breed',         'Үүлдэр', "Breed"],
+    ['mark',      'Тамга/тэмдэг',       'brand_mark',    'Тамга, онцгой тэмдэг', "Brand mark / distinguishing marks"],
+    ['province',  'Аймаг',              'province',      'Аймаг / хот', "Province or city"],
+    ['soum',      'Сум',                'soum',          'Сум / дүүрэг', "District (soum)"],
+    ['date',      'Бүртгэсэн огноо',    'registered_date','Бүртгэсэн огноо (YYYY-MM-DD)', "Registration date (YYYY-MM-DD)"],
+    ['extra',     'Нэмэлт тэмдэглэл',   'notes',         'Нэмэлт тэмдэглэл', "Free-text notes"],
+    ['createdAt', 'Үүсгэсэн (ms)',      'created_at_ms', 'Үүсгэсэн агшин (epoch ms)', "Created at (epoch ms)"],
+    ['ms',        'Сүүлд өөрчилсөн (ms)','updated_at_ms','Сүүлд өөрчилсөн агшин (epoch ms)', "Last modified (epoch ms)"]
+  ],
+  waiting: [
+    ['id',        'ID',                 'id',            'Дотоод дугаар', "Internal record id"],
+    ['examNum',   'Үзлэгийн хуудасны №','exam_no',       'Үзлэгийн хуудасны дугаар', "Exam sheet number"],
+    ['horseId',   'Адууны ID',          'horse_id',      'horses.id-тэй холбоо', "FK to Horses.id"],
+    ['horse',     'Зүс',                'horse_name',    'Адууны зүс', "Horse coat colour"],
+    ['owner',     'Эзэн',               'owner',         'Эзэмшигч', "Owner"],
+    ['phone',     'Утас',               'phone',         'Утас', "Phone"],
+    ['symptoms',  'Шинж тэмдэг/анамнез','symptoms',      'Бүртгэлийн үед бичсэн', "Complaint / history taken at reception"],
+    ['province',  'Аймаг',              'province',      'Аймаг', "Province"],
+    ['soum',      'Сум',                'soum',          'Сум', "District"],
+    ['ms',        'Бүртгэсэн (ms)',     'queued_at_ms',  'Дараалалд орсон агшин', "Queued at (epoch ms)"]
+  ],
+  exams: [
+    ['id',           'ID',               'id',              'Дотоод дугаар', "Internal record id"],
+    ['examNum',      'Үзлэгийн хуудасны №','exam_no',       'Үзлэгийн хуудасны дугаар', "Exam sheet number (paper form number, business key)"],
+    ['date',         'Огноо',            'exam_date',       'Үзлэгийн огноо (YYYY-MM-DD)', "Exam date (YYYY-MM-DD)"],
+    ['time',         'Цаг',              'exam_time',       'Үзлэгийн цаг (HH:MM)', "Exam time (HH:MM)"],
+    ['horseId',      'Адууны ID',        'horse_id',        'horses.id', "FK to Horses.id"],
+    ['horse',        'Зүс',              'horse_name',      'Адууны зүс', "Horse coat colour"],
+    ['owner',        'Эзэн',             'owner',           'Эзэмшигч', "Owner"],
+    ['phone',        'Утас',             'phone',           'Утас', "Phone"],
+    ['province',     'Аймаг',            'province',        'Аймаг', "Province"],
+    ['soum',         'Сум',              'soum',            'Сум', "District"],
+    ['docId',        'Эмчийн ID',        'doctor_id',       'doctors.id', "FK to Doctors.id (lead vet)"],
+    ['docName',      'Эмч',              'doctor_name',     'Үндсэн эмч', "Lead veterinarian name"],
+    ['assistDocId',  'Хамтрагч эмчийн ID','assistant_doctor_id','doctors.id', "FK to Doctors.id (assisting vet)"],
+    ['assistDocName','Хамтрагч эмч',     'assistant_doctor_name','Хамтран оролцсон эмч', "Assisting veterinarian name"],
+    ['anamnesis',    'Анамнез',          'anamnesis',       'Бүртгэлийн үед бичсэн түүх', "Case history recorded at reception"],
+    ['@symptoms',    'Шинж тэмдэг',      'symptoms',        'Эмчийн сонгосон шинж тэмдгүүд (таслалаар)', "Symptoms selected by the vet (comma separated)"],
+    ['diagnosis',    'Онош',             'diagnosis',       'Онош', "Diagnosis"],
+    ['note',         'Эмчийн тэмдэглэл', 'doctor_note',     'Эмчийн тэмдэглэл', "Veterinarian note"],
+    ['temp',         'Температур',       'temperature',     '°C', "Body temperature (°C)"],
+    ['pulse',        'Зүрхний цохилт',   'pulse',           'уд/мин', "Heart rate (bpm)"],
+    ['resp',         'Амьсгал',          'respiration',     'уд/мин', "Respiration rate (per min)"],
+    ['wt',           'Жин',              'weight_kg',       'кг', "Body weight (kg)"],
+    ['@services',    'Үйлчилгээ',        'services',        'Үйлчилгээний нэрс (таслалаар) — дэлгэрэнгүйг ExamServices хуудсаас', "Service names (comma separated) — see ExamServices sheet for line items"],
+    ['@meds',        'Эм',               'medicines',       'Эмийн нэрс (таслалаар) — дэлгэрэнгүйг ExamMedicines хуудсаас', "Medicine names (comma separated) — see ExamMedicines sheet"],
+    ['amount',       'Нийт дүн',         'total_amount',    '₮', "Total invoiced amount (MNT)"],
+    ['durationMin',  'Үргэлжилсэн (мин)','duration_min',    'Бүртгэснээс дуусгах хүртэлх минут', "Minutes from registration to completion"],
+    ['@inpatient',   'Байрлан эмчлүүлсэн эсэх','is_inpatient','Тийм/Үгүй', "Whether the case was admitted as inpatient"],
+    ['@imageCount',  'Зургийн тоо',      'image_count',     'Хавсаргасан зургийн тоо', "Number of attached photos (files stay in Firebase Storage)"],
+    ['bonusCat',     'Урамшууллын ангилал','bonus_category','Клиник/Зонд/Дуудлага (гараар зассан бол)', "Bonus category override (Clinic / Tube / Call-out)"],
+    ['@bonusSkip',   'Урамшууллаас хассан','bonus_excluded','Тийм/Үгүй', "Excluded from doctor bonus calculation"],
+    ['regMs',        'Бүртгэсэн (ms)',   'registered_at_ms','Адуу бүртгэсэн агшин', "Horse registered at (epoch ms)"],
+    ['doneMs',       'Дуусгасан (ms)',   'completed_at_ms', 'Үзлэг дуусгасан агшин', "Exam completed at (epoch ms)"],
+    ['ms',           'Сүүлд өөрчилсөн (ms)','updated_at_ms','Сүүлд өөрчилсөн агшин', "Last modified (epoch ms)"]
+  ],
+  examServices: [
+    ['examId',   'Үзлэгийн ID',        'exam_id',    'exams.id', "FK to Exams.id"],
+    ['examNum',  'Үзлэгийн хуудасны №','exam_no',    'Үзлэгийн дугаар', "Exam sheet number"],
+    ['date',     'Огноо',              'exam_date',  'Үзлэгийн огноо', "Exam date"],
+    ['horse',    'Зүс',                'horse_name', 'Адуу', "Horse"],
+    ['name',     'Үйлчилгээ',          'service_name','Үйлчилгээний нэр', "Service name"],
+    ['price',    'Үнэ',                'price',      '₮', "Line price (MNT)"]
+  ],
+  examMeds: [
+    ['examId',   'Үзлэгийн ID',        'exam_id',    'exams.id', "FK to Exams.id"],
+    ['examNum',  'Үзлэгийн хуудасны №','exam_no',    'Үзлэгийн дугаар', "Exam sheet number"],
+    ['date',     'Огноо',              'exam_date',  'Үзлэгийн огноо', "Exam date"],
+    ['horse',    'Зүс',                'horse_name', 'Адуу', "Horse"],
+    ['name',     'Эмийн нэр',          'medicine_name','Эмийн нэр', "Medicine name"],
+    ['note',     'Заавар',             'dosage_note','Хэрэглэх заавар', "Dosage / administration note"]
+  ],
+  fins: [
+    ['id',        'ID',                 'id',            'Дотоод дугаар', "Internal record id"],
+    ['examId',    'Үзлэгийн ID',        'exam_id',       'exams.id', "FK to Exams.id"],
+    ['examNum',   'Үзлэгийн хуудасны №','exam_no',       'Үзлэгийн дугаар', "Exam sheet number"],
+    ['date',      'Огноо',              'invoice_date',  'Нэхэмжилсэн огноо', "Invoice date"],
+    ['horse',     'Зүс',                'horse_name',    'Адуу', "Horse"],
+    ['owner',     'Эзэн',               'owner',         'Эзэмшигч', "Owner"],
+    ['phone',     'Утас',               'phone',         'Утас', "Phone"],
+    ['docName',   'Эмч',                'doctor_name',   'Эмч', "Veterinarian"],
+    ['services',  'Үйлчилгээ',          'services',      'Үйлчилгээний нэрс', "Services billed (text)"],
+    ['amount',    'Нийт дүн',           'total_amount',  '₮', "Invoice total (MNT)"],
+    ['@paidSum',  'Төлсөн дүн',         'paid_amount',   'Хийгдсэн төлбөрийн нийлбэр', "Sum of recorded payments (MNT)"],
+    ['@due',      'Үлдэгдэл',           'balance_due',   'Төлөгдөөгүй үлдэгдэл', "Outstanding balance (MNT)"],
+    ['@status',   'Төлөв',              'status',        'Төлсөн / Хэсэгчлэн / Төлөөгүй', "Paid / Partial / Unpaid"],
+    ['method',    'Төлбөрийн хэлбэр',   'payment_method','Бэлэн/карт/QPay/дансаар...', "Payment method"],
+    ['paidDate',  'Төлсөн огноо',       'paid_date',     'Бүрэн төлөгдсөн огноо', "Date fully paid"],
+    ['paidMs',    'Төлсөн (ms)',        'paid_at_ms',    'Төлсөн агшин', "Paid at (epoch ms)"],
+    ['ms',        'Сүүлд өөрчилсөн (ms)','updated_at_ms','Сүүлд өөрчилсөн агшин', "Last modified (epoch ms)"]
+  ],
+  payments: [
+    ['finId',    'Санхүүгийн ID',      'finance_id',  'fins.id', "FK to Finance.id"],
+    ['examNum',  'Үзлэгийн хуудасны №','exam_no',     'Үзлэгийн дугаар', "Exam sheet number"],
+    ['horse',    'Зүс',                'horse_name',  'Адуу', "Horse"],
+    ['date',     'Огноо',              'payment_date','Төлбөр хийсэн огноо', "Payment date"],
+    ['amount',   'Дүн',                'amount',      '₮', "Amount (MNT)"],
+    ['method',   'Хэлбэр',             'method',      'Бэлэн/карт/QPay/дансаар/зээл', "Cash / Card / QPay / Bank transfer / Credit"],
+    ['note',     'Тэмдэглэл',          'note',        'Тэмдэглэл', "Note"]
+  ],
+  inps: [
+    ['id',            'ID',              'id',              'Дотоод дугаар', "Internal record id"],
+    ['examId',        'Үзлэгийн ID',     'exam_id',         'exams.id', "FK to Exams.id"],
+    ['horse',         'Зүс',             'horse_name',      'Адуу', "Horse"],
+    ['owner',         'Эзэн',            'owner',           'Эзэмшигч', "Owner"],
+    ['phone',         'Утас',            'phone',           'Утас', "Phone"],
+    ['docName',       'Эмч',             'doctor_name',     'Хариуцсан эмч', "Attending veterinarian"],
+    ['diagnosis',     'Онош',            'diagnosis',       'Онош', "Admission diagnosis"],
+    ['admittedDate',  'Орсон огноо',     'admitted_date',   'Байрлан эмчлүүлэхэд орсон огноо', "Admission date"],
+    ['dischargedDate','Гарсан огноо',    'discharged_date', 'Гарсан огноо', "Discharge date"],
+    ['@discharged',   'Гарсан эсэх',     'is_discharged',   'Тийм/Үгүй', "Whether discharged"],
+    ['@days',         'Хоног',           'days',            'Хэвтсэн хоног', "Days hospitalised"],
+    ['initialAmount', 'Анхны дүн',       'initial_amount',  'Хүлээн авах үеийн дүн ₮', "Amount charged on admission (MNT)"],
+    ['@logAmount',    'Өдрийн эмчилгээний дүн','daily_treatment_amount','Өдрийн бичлэгүүдийн нийлбэр ₮', "Sum of daily treatment charges (MNT)"],
+    ['@logCount',     'Өдрийн бичлэгийн тоо','log_entries', 'Өдрийн бичлэгийн тоо', "Number of daily log entries"],
+    ['admittedMs',    'Орсон (ms)',      'admitted_at_ms',  'Орсон агшин', "Admitted at (epoch ms)"],
+    ['dischargedMs',  'Гарсан (ms)',     'discharged_at_ms','Гарсан агшин', "Discharged at (epoch ms)"],
+    ['ms',            'Сүүлд өөрчилсөн (ms)','updated_at_ms','Сүүлд өөрчилсөн агшин', "Last modified (epoch ms)"]
+  ],
+  inpLogs: [
+    ['inpId',     'Байрлангийн ID',   'inpatient_id', 'inps.id', "FK to Inpatients.id"],
+    ['horse',     'Зүс',              'horse_name',   'Адуу', "Horse"],
+    ['date',      'Огноо',            'log_date',     'Эмчилгээний огноо', "Treatment date"],
+    ['docName',   'Эмч',              'doctor_name',  'Эмчилсэн эмч', "Treating veterinarian"],
+    ['diagnosis', 'Онош',             'diagnosis',    'Тухайн өдрийн онош', "Diagnosis that day"],
+    ['note',      'Тэмдэглэл',        'note',         'Эмчилгээний тэмдэглэл', "Treatment note"],
+    ['temp',      'Температур',       'temperature',  '°C', "Temperature (°C)"],
+    ['pulse',     'Зүрхний цохилт',   'pulse',        'уд/мин', "Heart rate (bpm)"],
+    ['wt',        'Жин',              'weight_kg',    'кг', "Weight (kg)"],
+    ['@services', 'Үйлчилгээ',        'services',     'Үйлчилгээний нэрс', "Services performed"],
+    ['@meds',     'Эм',               'medicines',    'Эмийн нэрс', "Medicines given"],
+    ['amount',    'Дүн',              'amount',       '₮', "Charge for the day (MNT)"]
+  ],
+  labs: [
+    ['id',         'ID',                'id',           'Дотоод дугаар', "Internal record id"],
+    ['examId',     'Үзлэгийн ID',       'exam_id',      'exams.id', "FK to Exams.id"],
+    ['examNum',    'Үзлэгийн хуудасны №','exam_no',     'Үзлэгийн дугаар', "Exam sheet number"],
+    ['date',       'Огноо',             'order_date',   'Захиалсан огноо', "Order date"],
+    ['horseId',    'Адууны ID',         'horse_id',     'horses.id', "FK to Horses.id"],
+    ['horse',      'Зүс',               'horse_name',   'Адуу', "Horse"],
+    ['owner',      'Эзэн',              'owner',        'Эзэмшигч', "Owner"],
+    ['docName',    'Эмч',               'doctor_name',  'Захиалсан эмч', "Ordering veterinarian"],
+    ['service',    'Шинжилгээний нэр',  'test_name',    'Шинжилгээний төрөл', "Laboratory test name"],
+    ['price',      'Үнэ',               'price',        '₮', "Price (MNT)"],
+    ['diagnosis',  'Онош',              'diagnosis',    'Үзлэгийн онош', "Clinical diagnosis"],
+    ['@statusMn',  'Төлөв',             'status',       'Захиалсан→Сорьц авсан→Илгээсэн→Хүлээн авсан→Хариу гарсан', "Ordered → Sample collected → Sent to lab → Sample received → Result ready"],
+    ['resultNote', 'Хариуны тайлбар',   'result_note',  'Хариуны тэмдэглэл', "Result note"],
+    ['@resultCount','Хариуны зургийн тоо','result_image_count','Хавсаргасан хариуны зураг', "Number of attached result images"],
+    ['orderedMs',  'Захиалсан (ms)',    'ordered_at_ms','Захиалсан агшин', "Ordered at (epoch ms)"],
+    ['doneMs',     'Хариу гарсан (ms)', 'completed_at_ms','Хариу гарсан агшин', "Result ready at (epoch ms)"],
+    ['ms',         'Сүүлд өөрчилсөн (ms)','updated_at_ms','Сүүлд өөрчилсөн агшин', "Last modified (epoch ms)"]
+  ],
+  labHistory: [
+    ['labId',    'Шинжилгээний ID',  'lab_order_id', 'labs.id', "FK to LabOrders.id"],
+    ['examNum',  'Үзлэгийн хуудасны №','exam_no',    'Үзлэгийн дугаар', "Exam sheet number"],
+    ['horse',    'Зүс',              'horse_name',   'Адуу', "Horse"],
+    ['@statusMn','Төлөв',            'status',       'Шилжсэн төлөв', "Status the order moved into"],
+    ['@date',    'Огноо цаг',        'changed_at',   'Огноо цаг', "Changed at"],
+    ['user',     'Хэрэглэгч',        'changed_by',   'Өөрчилсөн хэрэглэгч', "Changed by"],
+    ['note',     'Тэмдэглэл',        'note',         'Тэмдэглэл', "Note"]
+  ],
+  doctors: [
+    ['id',    'ID',        'id',          'Дотоод дугаар', "Internal record id"],
+    ['name',  'Нэр',       'name',        'Эмчийн нэр', "Veterinarian name"],
+    ['role',  'Албан тушаал','role',      'Ерөнхий эмч / Ахлах эмч / Малын их эмч...', "Position (chief vet / senior vet / veterinarian / intern)"],
+    ['exams', 'Үзлэгийн тоо','exam_count','Хуримтлагдсан үзлэгийн тоо', "Cumulative exam count"],
+    ['rev',   'Орлого',    'revenue',     'Хуримтлагдсан орлого ₮', "Cumulative revenue (MNT)"]
+  ],
+  users: [
+    ['name',    'Нэвтрэх нэр', 'username',      'Нэвтрэх нэр', "Login name"],
+    ['role',    'Эрх',         'role',          'Дүр / эрх', "Role"],
+    ['@pages',  'Хандах хуудас','allowed_pages','Хандах эрхтэй хуудсууд', "Pages this role may open"],
+    ['@labEdit','Шинжилгээ засах','can_edit_lab','Тийм/Үгүй', "May edit laboratory orders"],
+    ['@hasPw',  'Нууц үг тохируулсан','has_password','Тийм/Үгүй (нууц үг өөрөө экспортлогдохгүй)', "Has a password set (the hash itself is not exported)"],
+    ['ms',      'Сүүлд өөрчилсөн (ms)','updated_at_ms','Сүүлд өөрчилсөн агшин', "Last modified (epoch ms)"]
+  ],
+  staff: [
+    ['id',      'Огноо (ID)',  'id',            'YYYY-MM-DD', "Roster date (YYYY-MM-DD)"],
+    ['date',    'Огноо',       'roster_date',   'Огноо', "Roster date"],
+    ['@active', 'Ажилласан эмч','working_doctor_ids','doctors.id (таслалаар)', "Doctor ids working that day"],
+    ['@duty',   'Жижүүр эмч',  'on_duty_doctor_ids','doctors.id (таслалаар)', "Doctor ids on duty that day"]
+  ],
+  schedule: [
+    ['month',    'Сар',        'month',       'YYYY-MM', "Month (YYYY-MM)"],
+    ['docId',    'Эмчийн ID',  'doctor_id',   'doctors.id', "FK to Doctors.id"],
+    ['docName',  'Эмч',        'doctor_name', 'Эмчийн нэр', "Veterinarian name"],
+    ['date',     'Огноо',      'date',        'YYYY-MM-DD', "Date (YYYY-MM-DD)"],
+    ['@statusMn','Төлөв',      'status',      'Ажиллах / Жижүүр / Амрах', "Work / On duty / Off"]
+  ],
+  logs: [
+    ['log_date',   'Огноо цаг',    'logged_at',   'Огноо цаг', "Timestamp"],
+    ['user_name',  'Хэрэглэгч',    'user_name',   'Хэрэглэгчийн нэр', "User name"],
+    ['user_role',  'Эрх',          'user_role',   'Хэрэглэгчийн дүр', "User role"],
+    ['action',     'Үйлдэл',       'action',      'Хийсэн үйлдэл', "Action performed"],
+    ['target_name','Объект',       'target_name', 'Хамаарах бичлэг', "Affected record"],
+    ['details',    'Дэлгэрэнгүй',  'details',     'Дэлгэрэнгүй тайлбар', "Details"],
+    ['exam_id',    'Үзлэгийн №',   'exam_no',     'Хамаарах үзлэгийн дугаар', "Related exam sheet number"],
+    ['target_id',  'Объектын ID',  'target_id',   'Хамаарах бичлэгийн id', "Affected record id"],
+    ['id',         'ID',           'id',          'Логийн дугаар', "Log id"]
+  ],
+  servicePrices: [
+    ['name',  'Үйлчилгээ', 'service_name', 'Үйлчилгээний нэр', "Service name"],
+    ['price', 'Үнэ',       'price',        '₮', "Standard price (MNT)"],
+    ['@src',  'Эх сурвалж','source',       'Үндсэн жагсаалт / Нэмсэн', "Built-in list or custom-added"]
+  ],
+  config: [
+    ['key',   'Тохиргоо', 'setting',  'Тохиргооны нэр', "Setting name"],
+    ['value', 'Утга',     'value',    'Утга', "Value"]
+  ],
+  dictionary: [
+    ['sheet', 'Хуудас',   'sheet',       'Хуудасны нэр', "Sheet name"],
+    ['mn',    'Багана (MN)','column_mn', 'Монгол баганын нэр', "Mongolian column header"],
+    ['en',    'Багана (EN)','column_en', 'Англи баганын нэр', "English column header"],
+    ['key',   'Талбар',   'field_key',   'Firestore дэх талбарын нэр', "Firestore field name"],
+    ['desc',  'Тайлбар',  'description', 'Тайлбар', "Description"]
+  ]
+};
+
+// Төлөв / утгын орчуулга
+const EXPORT_VAL = {
+  yes:  { mn: 'Тийм', en: 'Yes' },
+  no:   { mn: 'Үгүй', en: 'No' },
+  paid: { mn: 'Төлсөн', en: 'Paid' },
+  part: { mn: 'Хэсэгчлэн', en: 'Partial' },
+  unpaid:{ mn: 'Төлөөгүй', en: 'Unpaid' },
+  work: { mn: 'Ажиллах', en: 'Work' },
+  duty: { mn: 'Жижүүр', en: 'On duty' },
+  off:  { mn: 'Амрах', en: 'Off' },
+  base: { mn: 'Үндсэн жагсаалт', en: 'Built-in' },
+  custom:{ mn: 'Нэмсэн', en: 'Custom' }
+};
+const LAB_STATUS_EN = { ordered: 'Ordered', collected: 'Sample collected', sent: 'Sent to lab', received: 'Sample received', done: 'Result ready', cancelled: 'Cancelled' };
+const LAB_STATUS_MN = { ordered: 'Захиалсан', collected: 'Сорьц авсан', sent: 'Төв рүү илгээсэн', received: 'Сорьц хүлээн авсан', done: 'Хариу гарсан', cancelled: 'Цуцалсан' };
+const PAYMETHOD_EN = { 'бэлэн': 'Cash', 'карт': 'Card', 'QPay': 'QPay', 'дансаар': 'Bank transfer', 'шилжүүлэг': 'Bank transfer', 'зээл': 'Credit' };
+
+function exLang() { const el = $('#ex-lang'); return (el && el.value) || 'mn'; }
+function exV(key, lang) { const v = EXPORT_VAL[key]; return v ? v[lang] : key; }
+function exYN(b, lang) { return b ? exV('yes', lang) : exV('no', lang); }
+function exList(arr) { return (Array.isArray(arr) ? arr : []).map(x => (x && typeof x === 'object' ? (x.name || '') : x)).filter(Boolean).join(', '); }
+
+// ── Firestore-оос бүх collection татах ─────────────────────────
+async function fbFetchAllData(onProgress) {
+  const out = { source: 'firestore', fetchedAt: new Date().toISOString(), collections: {} };
+  if (typeof window.__fbColQuery !== 'function') {
+    // Firebase холбогдоогүй — локал STATE-ээс авна
+    out.source = 'local';
+    out.collections = {
+      horses: STATE.horses || [], waiting: STATE.waiting || [], exams: STATE.exams || [],
+      fins: STATE.fins || [], inps: STATE.inps || [], labs: STATE.labs || [],
+      doctors: STATE.doctors || [], users: STATE.users || [], staff: STATE.staff || [],
+      logs: STATE.logs || [], deletedExams: STATE.deletedExams || []
+    };
+    out.config = {
+      servicePrices: STATE.servicePrices || {}, customServices: STATE.customServices || [],
+      removedServices: STATE.removedServices || [], staffSchedule: STATE.staffSchedule || {},
+      labSvcOn: STATE.labSvcOn || [], labSvcOff: STATE.labSvcOff || [],
+      bonusCfg: STATE.bonusCfg || null, examNumCfg: STATE.examNumCfg || null
+    };
+    return out;
+  }
+  for (let i = 0; i < EXPORT_COLLECTIONS.length; i++) {
+    const col = EXPORT_COLLECTIONS[i];
+    if (onProgress) onProgress(col, i, EXPORT_COLLECTIONS.length);
+    try {
+      const docs = await window.__fbColQuery(col);
+      out.collections[col] = docs.map(d => Object.assign({ id: d.id }, d.data()));
+    } catch (e) {
+      console.error('[EXPORT] ' + col + ' татахад алдаа', e);
+      out.collections[col] = (STATE[col === 'deletedExams' ? 'deletedExams' : col] || []).slice();
+      out.warnings = (out.warnings || []).concat(col + ': ' + String(e && e.message || e));
+    }
+  }
+  // clinic_config/main
+  if (onProgress) onProgress('clinic_config', EXPORT_COLLECTIONS.length, EXPORT_COLLECTIONS.length + 1);
+  try {
+    const snap = await window.__fbGetDoc(window.__fbColDoc('clinic_config', 'main'));
+    out.config = snap && snap.exists && snap.exists() ? snap.data() : (snap && snap.data ? snap.data() : {});
+  } catch (e) {
+    out.config = { servicePrices: STATE.servicePrices || {}, staffSchedule: STATE.staffSchedule || {} };
+  }
+  if (out.config && out.config.finPinHash) out.config = Object.assign({}, out.config, { finPinHash: '(hidden)' });
+  return out;
+}
+
+// ── Мөр бэлтгэх — collection тус бүрээр ───────────────────────
+function exBuildRows(D, lang) {
+  const C = D.collections || {};
+  const cfg = D.config || {};
+  const R = {};
+  const hdr = (sheet) => EXPORT_FIELDS[sheet].map(f => lang === 'en' ? f[2] : f[1]);
+  const row = (sheet, obj) => { const o = {}; EXPORT_FIELDS[sheet].forEach(f => { o[lang === 'en' ? f[2] : f[1]] = obj[f[0]] === undefined || obj[f[0]] === null ? '' : obj[f[0]]; }); return o; };
+  const mk = (sheet, list) => { R[sheet] = { header: hdr(sheet), rows: list.map(o => row(sheet, o)) }; };
+  const tsStr = (ms) => { if (!ms) return ''; try { const d = new Date(parseFloat(ms)); return localDateStr(d) + ' ' + String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0'); } catch (_) { return ''; } };
+
+  mk('horses', (C.horses || []).slice().sort((a, b) => (a.date || '') < (b.date || '') ? 1 : -1));
+  mk('waiting', C.waiting || []);
+
+  const exams = (C.exams || []).slice().sort((a, b) => ((a.date || '') + (a.time || '')) < ((b.date || '') + (b.time || '')) ? -1 : 1);
+  mk('exams', exams.map(e => Object.assign({}, e, {
+    '@symptoms': exList(Array.isArray(e.symptoms) ? e.symptoms : (typeof e.symptoms === 'string' ? [] : [])),
+    '@services': exList(e.services), '@meds': exList(e.meds),
+    '@inpatient': exYN(!!e.inpatient, lang), '@bonusSkip': exYN(!!e.bonusSkip, lang),
+    '@imageCount': Array.isArray(e.images) ? e.images.length : 0,
+    anamnesis: e.anamnesis || (typeof e.symptoms === 'string' ? e.symptoms : '')
+  })));
+
+  const es = [], em = [];
+  exams.forEach(e => {
+    (Array.isArray(e.services) ? e.services : []).forEach(s => es.push({ examId: e.id, examNum: e.examNum || '', date: e.date || '', horse: e.horse || '', name: s.name || '', price: parseFloat(s.price) || 0 }));
+    (Array.isArray(e.meds) ? e.meds : []).forEach(m => em.push({ examId: e.id, examNum: e.examNum || '', date: e.date || '', horse: e.horse || '', name: (m && m.name) || m || '', note: (m && m.note) || '' }));
+  });
+  mk('examServices', es); mk('examMeds', em);
+
+  const pays = [];
+  const fins = (C.fins || []).slice().sort((a, b) => (a.date || '') < (b.date || '') ? 1 : -1);
+  mk('fins', fins.map(f => {
+    const ps = Array.isArray(f.payments) ? f.payments : [];
+    const paidSum = ps.length ? ps.reduce((a, p) => a + (parseFloat(p.amount) || 0), 0) : (f.paid ? (parseFloat(f.amount) || 0) : 0);
+    const amt = parseFloat(f.amount) || 0;
+    ps.forEach(p => pays.push({ finId: f.id, examNum: f.examNum || '', horse: f.horse || '', date: p.date || '', amount: parseFloat(p.amount) || 0, method: lang === 'en' ? (PAYMETHOD_EN[p.method] || p.method || '') : (p.method || ''), note: p.note || '' }));
+    const st = (f.paid || (amt > 0 && paidSum >= amt)) ? 'paid' : (paidSum > 0 ? 'part' : 'unpaid');
+    return Object.assign({}, f, { '@paidSum': paidSum, '@due': Math.max(0, amt - paidSum), '@status': exV(st, lang),
+      method: lang === 'en' ? (PAYMETHOD_EN[f.method] || f.method || '') : (f.method || '') });
+  }));
+  mk('payments', pays);
+
+  const ilogs = [];
+  mk('inps', (C.inps || []).map(i => {
+    const lg = Array.isArray(i.log) ? i.log : [];
+    lg.forEach(l => ilogs.push({ inpId: i.id, horse: i.horse || '', date: l.date || '', docName: l.docName || '', diagnosis: l.diagnosis || '', note: l.note || '', temp: l.temp || '', pulse: l.pulse || '', wt: l.wt || '', '@services': exList(l.services), '@meds': exList(l.meds), amount: parseFloat(l.amount) || 0 }));
+    let days = '';
+    try { days = inpatientDays(i.admittedMs, i.dischargedMs); } catch (_) {}
+    return Object.assign({}, i, { '@discharged': exYN(!!i.discharged, lang), '@days': days,
+      '@logCount': lg.length, '@logAmount': lg.reduce((a, l) => a + (parseFloat(l.amount) || 0), 0) });
+  }));
+  mk('inpLogs', ilogs);
+
+  const lh = [];
+  mk('labs', (C.labs || []).map(l => {
+    (Array.isArray(l.history) ? l.history : []).forEach(h => lh.push({ labId: l.id, examNum: l.examNum || '', horse: l.horse || '',
+      '@statusMn': lang === 'en' ? (LAB_STATUS_EN[h.status] || h.status || '') : (LAB_STATUS_MN[h.status] || h.status || ''),
+      '@date': tsStr(h.ms), user: h.user || '', note: h.note || '' }));
+    return Object.assign({}, l, {
+      '@statusMn': lang === 'en' ? (LAB_STATUS_EN[l.status] || l.status || '') : (LAB_STATUS_MN[l.status] || l.status || ''),
+      '@resultCount': Array.isArray(l.results) ? l.results.length : 0 });
+  }));
+  mk('labHistory', lh);
+
+  mk('doctors', C.doctors || []);
+  mk('users', (C.users || []).map(u => Object.assign({}, u, {
+    '@pages': (Array.isArray(u.pages) ? u.pages : []).join(', '),
+    '@labEdit': exYN(!!u.labEdit, lang), '@hasPw': exYN(!!(u.pwHash || u.pw), lang) })));
+  mk('staff', (C.staff || []).map(s => Object.assign({}, s, {
+    '@active': (Array.isArray(s.active) ? s.active : []).join(', '),
+    '@duty': (Array.isArray(s.duty) ? s.duty : []).join(', ') })));
+
+  // Сарын хуваарь — { 'YYYY-MM': { docId: { 'YYYY-MM-DD': status } } }
+  const sched = [];
+  const schedObj = (cfg.staffSchedule && typeof cfg.staffSchedule === 'object') ? cfg.staffSchedule : {};
+  const docName = (id) => { const d = (C.doctors || []).find(x => String(x.id) === String(id)); return d ? d.name : id; };
+  Object.keys(schedObj).sort().forEach(month => {
+    const byDoc = schedObj[month] || {};
+    Object.keys(byDoc).forEach(docId => {
+      const days = byDoc[docId] || {};
+      Object.keys(days).sort().forEach(date => {
+        sched.push({ month, docId, docName: docName(docId), date, '@statusMn': exV(days[date], lang) });
+      });
+    });
+  });
+  mk('schedule', sched);
+
+  mk('logs', (C.logs || []).slice().sort((a, b) => (b.ms || 0) - (a.ms || 0)));
+  // Устгасан үзлэг — «Үзлэг» хуудастай ижил баганатай
+  R.deletedExams = { header: hdr('exams'), rows: (C.deletedExams || []).map(e => row('exams', Object.assign({}, e, {
+    '@symptoms': '', '@services': exList(e.services), '@meds': exList(e.meds),
+    '@inpatient': exYN(!!e.inpatient, lang), '@bonusSkip': exYN(!!e.bonusSkip, lang),
+    '@imageCount': Array.isArray(e.images) ? e.images.length : 0 }))) };
+
+  // Үйлчилгээний үнэ
+  const sp = (cfg.servicePrices && typeof cfg.servicePrices === 'object') ? cfg.servicePrices : {};
+  const custom = new Set((cfg.customServices || []).map(String));
+  mk('servicePrices', Object.keys(sp).sort().map(n => ({ name: n, price: parseFloat(sp[n]) || 0, '@src': exV(custom.has(n) ? 'custom' : 'base', lang) })));
+
+  // Тохиргоо
+  const cRows = [];
+  const push = (k, v) => cRows.push({ key: k, value: v });
+  push(lang === 'en' ? 'Custom services' : 'Нэмсэн үйлчилгээ', (cfg.customServices || []).join(', '));
+  push(lang === 'en' ? 'Removed services' : 'Хассан үйлчилгээ', (cfg.removedServices || []).join(', '));
+  push(lang === 'en' ? 'Lab services (forced on)' : 'Шинжилгээ гэж тэмдэглэсэн', (cfg.labSvcOn || []).join(', '));
+  push(lang === 'en' ? 'Lab services (forced off)' : 'Шинжилгээнээс хассан', (cfg.labSvcOff || []).join(', '));
+  if (cfg.bonusCfg) Object.keys(cfg.bonusCfg).forEach(k => push('bonusCfg.' + k, cfg.bonusCfg[k]));
+  if (cfg.examNumCfg) Object.keys(cfg.examNumCfg).forEach(k => push('examNumCfg.' + k, cfg.examNumCfg[k]));
+  push(lang === 'en' ? 'Exported at' : 'Татсан огноо', D.fetchedAt || '');
+  push(lang === 'en' ? 'Source' : 'Эх сурвалж', D.source === 'firestore' ? 'Firebase Firestore' : (lang === 'en' ? 'Local device' : 'Локал төхөөрөмж'));
+  mk('config', cRows);
+
+  // Талбарын тайлбар (data dictionary)
+  const dict = [];
+  Object.keys(EXPORT_FIELDS).forEach(sheet => {
+    if (sheet === 'dictionary') return;
+    EXPORT_FIELDS[sheet].forEach(f => dict.push({ sheet: EXPORT_SHEETS[sheet] ? EXPORT_SHEETS[sheet][lang] : sheet, mn: f[1], en: f[2], key: String(f[0]).replace(/^@/, '(derived) '), desc: (lang === 'en' && f[4]) ? f[4] : f[3] }));
+  });
+  mk('dictionary', dict);
+  return R;
+}
+
+// ── Excel татах ────────────────────────────────────────────────
+function exSheetName(key, lang) { const s = EXPORT_SHEETS[key]; return (s ? s[lang] : key).slice(0, 31); }
+async function exportFullExcel() {
+  const lang = exLang();
+  await exWithProgress(async (setMsg) => {
+    if (typeof XLSX === 'undefined') {
+      setMsg(lang === 'en' ? 'Loading Excel library…' : 'Excel сан ачаалж байна…');
+      const CDNS = ['https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js', 'https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js', 'xlsx.full.min.js'];
+      let loaded = false;
+      for (const url of CDNS) {
+        try {
+          await new Promise((res, rej) => { const el = document.createElement('script'); el.src = url; el.onload = res; el.onerror = () => rej(new Error('load failed')); document.head.appendChild(el); });
+          if (typeof XLSX !== 'undefined') { loaded = true; break; }
+        } catch (_) {}
+      }
+      if (!loaded) throw new Error(lang === 'en' ? 'Excel library could not be loaded — check your internet connection, or use the JSON / CSV export instead.' : 'Excel сан ачаалж чадсангүй — интернэт холболтоо шалгах, эсвэл JSON / CSV татах хувилбарыг ашиглана уу.');
+    }
+    const D = await fbFetchAllData((col, i, n) => setMsg((lang === 'en' ? 'Downloading' : 'Татаж байна') + ': ' + col + ' (' + (i + 1) + '/' + n + ')'));
+    setMsg(lang === 'en' ? 'Building workbook…' : 'Excel бэлтгэж байна…');
+    const R = exBuildRows(D, lang);
+    const wb = XLSX.utils.book_new();
+    const order = ['dictionary', 'horses', 'exams', 'examServices', 'examMeds', 'fins', 'payments', 'inps', 'inpLogs', 'labs', 'labHistory', 'waiting', 'doctors', 'users', 'staff', 'schedule', 'servicePrices', 'logs', 'deletedExams', 'config'];
+    order.forEach(k => {
+      const t = R[k]; if (!t) return;
+      const ws = XLSX.utils.json_to_sheet(t.rows, { header: t.header });
+      ws['!cols'] = t.header.map(h => ({ wch: Math.min(38, Math.max(10, String(h).length + 4)) }));
+      ws['!freeze'] = { xSplit: 0, ySplit: 1 };
+      XLSX.utils.book_append_sheet(wb, ws, exSheetName(k, lang));
+    });
+    XLSX.writeFile(wb, (lang === 'en' ? 'Moriton_full_export_' : 'Морьтон_бүх_дата_') + todayStr() + '.xlsx');
+    try { writeLog('Бүх дата татав (Excel)', '', '', (D.source === 'firestore' ? 'Firestore' : 'Локал') + ' · ' + lang.toUpperCase()); } catch (_) {}
+    return (lang === 'en' ? '✅ Excel downloaded' : '✅ Excel татагдлаа');
+  });
+}
+
+// ── JSON татах (түүхий, бүрэн — систем шилжүүлэхэд) ────────────
+async function exportFullJSON(english) {
+  const lang = english ? 'en' : exLang();
+  await exWithProgress(async (setMsg) => {
+    const D = await fbFetchAllData((col, i, n) => setMsg((lang === 'en' ? 'Downloading' : 'Татаж байна') + ': ' + col + ' (' + (i + 1) + '/' + n + ')'));
+    setMsg(lang === 'en' ? 'Preparing file…' : 'Файл бэлтгэж байна…');
+    const payload = {
+      _meta: {
+        system: 'Moriton Equine Clinic', exportedAt: D.fetchedAt, source: D.source,
+        schemaLanguage: 'original (Firestore field names)',
+        note: 'Nested arrays (services, meds, payments, log, history, images) are preserved as-is. See the Excel export DataDictionary sheet for English field descriptions.',
+        counts: Object.keys(D.collections).reduce((a, k) => { a[k] = (D.collections[k] || []).length; return a; }, {}),
+        warnings: D.warnings || []
+      },
+      config: D.config || {},
+      data: Object.assign({}, D.collections, {
+        // Нууц үгийн hash-ийг экспортод оруулахгүй
+        users: (D.collections.users || []).map(u => { const o = Object.assign({}, u); delete o.pwHash; delete o.pw; o.hasPassword = !!(u.pwHash || u.pw); return o; })
+      })
+    };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'moriton_full_backup_' + todayStr() + '.json';
+    document.body.appendChild(a); a.click();
+    setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 800);
+    try { writeLog('Бүх дата татав (JSON)', '', '', (D.source === 'firestore' ? 'Firestore' : 'Локал')); } catch (_) {}
+    return (lang === 'en' ? '✅ JSON downloaded' : '✅ JSON татагдлаа');
+  });
+}
+
+// ── CSV багц (нэг хуудас = нэг файл) ──────────────────────────
+async function exportFullCSV() {
+  const lang = exLang();
+  await exWithProgress(async (setMsg) => {
+    const D = await fbFetchAllData((col, i, n) => setMsg((lang === 'en' ? 'Downloading' : 'Татаж байна') + ': ' + col + ' (' + (i + 1) + '/' + n + ')'));
+    const R = exBuildRows(D, lang);
+    const order = ['horses', 'exams', 'examServices', 'examMeds', 'fins', 'payments', 'inps', 'inpLogs', 'labs', 'labHistory', 'doctors', 'schedule', 'servicePrices', 'logs'];
+    let n = 0;
+    for (const k of order) {
+      const t = R[k]; if (!t || !t.rows.length) continue;
+      const rows = [t.header].concat(t.rows.map(r => t.header.map(h => r[h])));
+      downloadCSV(rows, exSheetName(k, lang) + '_' + todayStr() + '.csv');
+      n++;
+      await new Promise(r => setTimeout(r, 350)); // browser олон файлыг дараалуулж татахад завсарлага хэрэгтэй
+    }
+    try { writeLog('Бүх дата татав (CSV)', '', '', n + ' файл'); } catch (_) {}
+    return (lang === 'en' ? '✅ ' + n + ' CSV files downloaded' : '✅ ' + n + ' CSV файл татагдлаа');
+  });
+}
+
+// ── Явцын мэдээлэл ────────────────────────────────────────────
+async function exWithProgress(fn) {
+  const box = $('#ex-progress');
+  const btns = $$('#export-card button');
+  btns.forEach(b => b.disabled = true);
+  const setMsg = (m) => { if (box) box.innerHTML = '<span class="badge b-o">⏳ ' + escHTML(m) + '</span>'; };
+  setMsg('...');
+  try {
+    const done = await fn(setMsg);
+    if (box) box.innerHTML = '<span class="badge b-g">' + escHTML(done) + '</span>';
+    toast(done, 'ok');
+  } catch (e) {
+    console.error(e);
+    if (box) box.innerHTML = '<span class="badge b-r">⚠️ ' + escHTML(String(e && e.message || e)) + '</span>';
+    toast('Татахад алдаа гарлаа', 'err');
+  } finally {
+    btns.forEach(b => b.disabled = false);
+  }
+}
+
+// ── Тойм (юу татагдахыг урьдчилан харуулах) ───────────────────
+function renderExportSummary() {
+  const el = $('#ex-summary'); if (!el) return;
+  const lang = exLang();
+  const items = [
+    ['horses', STATE.horses], ['exams', STATE.exams], ['fins', STATE.fins],
+    ['inps', STATE.inps], ['labs', STATE.labs], ['waiting', STATE.waiting],
+    ['doctors', STATE.doctors], ['users', STATE.users], ['logs', STATE.logs]
+  ];
+  el.innerHTML = items.map(([k, arr]) => {
+    const s = EXPORT_SHEETS[k] || { mn: k, en: k };
+    return '<span class="badge" style="margin:2px 4px 2px 0">' + escHTML(s[lang]) + ': <b>' + ((arr && arr.length) || 0) + '</b></span>';
+  }).join('') + '<div class="muted" style="font-size:11px;margin-top:6px">' +
+    (lang === 'en'
+      ? 'Counts shown are what this device has loaded; the export pulls the authoritative copy from Firestore.'
+      : 'Эдгээр нь энэ төхөөрөмж дээр ачаалагдсан тоо; татахдаа Firestore-оос эх хувийг нь дахин татна.') + '</div>';
+}
+
+// ============================================================
 // HISTORY
 // ============================================================
 // Pagination — нэг хуудсанд 50 мөр харуулна
@@ -6846,6 +7422,7 @@ function renderAdmin() {
   try { renderFinPinStatus(); } catch(_) {}
   try { renderBonusCfg(); } catch(_) {}
   try { renderExamNumCfg(); } catch(_) {}
+  try { renderExportSummary(); } catch(_) {}
   $('#a-url').value = STATE.syncURL;
   const list = $('#a-doc-list');
   list.innerHTML = STATE.doctors.map(d => `
