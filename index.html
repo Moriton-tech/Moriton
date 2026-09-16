@@ -103,6 +103,7 @@
         <div class="ni" data-page="waiting"><div class="ni-icon">⏳</div><div class="ni-label">Хүлээж байгаа</div><span class="ni-badge" id="bdg-w">0</span></div>
         <div class="ni" data-page="exam"><div class="ni-icon">🩺</div><div class="ni-label">Үзлэг / Эмчилгээ</div></div>
         <div class="ni" data-page="inpatient"><div class="ni-icon">🏥</div><div class="ni-label">Байрлан эмчлүүлэх</div><span class="ni-badge b-p" id="bdg-i">0</span></div>
+        <div class="ni" data-page="planned"><div class="ni-icon">🗓️</div><div class="ni-label">Төлөвлөгөөт үзлэг</div></div>
         <div class="ni" data-page="lab"><div class="ni-icon">🧪</div><div class="ni-label">Шинжилгээ</div><span class="ni-badge b-a" id="bdg-lab">0</span></div>
       </div>
       <div class="sb-section">Бүртгэл</div>
@@ -140,6 +141,7 @@
         <div class="ni" data-page="waiting"><div class="ni-icon">⏳</div><div class="ni-label">Хүлээж байгаа</div><span class="ni-badge" id="bdg-w2">0</span></div>
         <div class="ni" data-page="exam"><div class="ni-icon">🩺</div><div class="ni-label">Үзлэг / Эмчилгээ</div></div>
         <div class="ni" data-page="inpatient"><div class="ni-icon">🏥</div><div class="ni-label">Байрлан эмчлүүлэх</div><span class="ni-badge b-p" id="bdg-i2">0</span></div>
+        <div class="ni" data-page="planned"><div class="ni-icon">🗓️</div><div class="ni-label">Төлөвлөгөөт үзлэг</div></div>
         <div class="ni" data-page="lab"><div class="ni-icon">🧪</div><div class="ni-label">Шинжилгээ</div><span class="ni-badge b-a" id="bdg-lab2">0</span></div>
       </div>
       <div class="sb-section" style="color:var(--gold);opacity:0.85">Бүртгэл</div>
@@ -607,6 +609,46 @@
         </div>
       </section>
 
+      <!-- ====== PLANNED (ТӨЛӨВЛӨГӨӨТ ҮЗЛЭГ) ====== -->
+      <section class="page" id="page-planned">
+        <div class="ph">
+          <div class="ph-l">
+            <div class="ph-title">🗓️ Төлөвлөгөөт үзлэг</div>
+            <div class="ph-sub">Хээрийн явцын цаасан маягтыг системд шивэх</div>
+          </div>
+        </div>
+        <div class="grid2" style="display:grid;grid-template-columns:360px 1fr;gap:14px;align-items:start">
+          <div>
+            <div class="card">
+              <div class="ch">➕ Шинэ явц</div>
+              <div class="fg r2">
+                <div class="fld"><label>Эхэлсэн огноо *</label><input class="inp" type="date" id="pl-t-date"></div>
+                <div class="fld"><label>Дууссан огноо</label><input class="inp" type="date" id="pl-t-end"></div>
+              </div>
+              <div class="fg r2" style="margin-top:8px">
+                <div class="fld"><label>Байршил *</label><input class="inp" id="pl-t-loc" placeholder="ж: Асгат, Галшар, Хүй 7"></div>
+                <div class="fld"><label>Аймаг</label><select class="inp" id="pl-t-prov"></select></div>
+              </div>
+              <div class="fg r2" style="margin-top:8px">
+                <div class="fld"><label>Сум</label><input class="inp" id="pl-t-soum"></div>
+                <div class="fld"><label>Эзэн (анхдагч)</label><input class="inp" id="pl-t-owner"></div>
+              </div>
+              <div class="fg r2" style="margin-top:8px">
+                <div class="fld"><label>Үндсэн эмч</label><select class="inp" id="pl-t-doc"></select></div>
+                <div class="fld"><label>Хамтрагч эмч</label><select class="inp" id="pl-t-asst"></select></div>
+              </div>
+              <div class="fld" style="margin-top:8px"><label>Тэмдэглэл</label><input class="inp" id="pl-t-note" placeholder="ж: хаврын төлөвлөгөөт үзлэг, туулга"></div>
+              <button class="btn btn-p btn-sm" style="margin-top:10px" onclick="saveTrip()">🗓️ Явц үүсгэх</button>
+            </div>
+            <div class="card">
+              <div class="ch">📚 Явцууд</div>
+              <div class="list" id="pl-trip-list" style="max-height:60vh;overflow-y:auto"></div>
+            </div>
+          </div>
+          <div id="pl-detail"></div>
+        </div>
+      </section>
+
       <!-- ====== FINANCE ====== -->
       <section class="page" id="page-finance">
         <div class="ph">
@@ -615,6 +657,7 @@
             <div class="ph-sub">Нэхэмжлэх ба орлого</div>
           </div>
           <div class="ph-r">
+            <select class="inp" id="f-kind" style="width:auto;padding:6px 10px;font-size:12px" onchange="onKindFilterChange('f-kind')"><option value="all">Бүх үзлэг</option><option value="clinic">Зөвхөн клиник</option><option value="planned">Зөвхөн төлөвлөгөөт (ТҮ)</option></select>
             <button class="btn btn-sm" onclick="exportCSV()">⬇ CSV</button>
           </div>
         </div>
@@ -727,7 +770,7 @@
             <div class="ph-title">📈 KPI самбар</div>
             <div class="ph-sub">Эмчийн гүйцэтгэл, ажилласан өдөр</div>
           </div>
-          <div class="ph-r" id="k-fin-lock"></div>
+          <div class="ph-r"><select class="inp" id="k-kind" style="width:auto;padding:6px 10px;font-size:12px" onchange="onKindFilterChange('k-kind')"><option value="all">Бүх үзлэг</option><option value="clinic">Зөвхөн клиник</option><option value="planned">Зөвхөн төлөвлөгөөт (ТҮ)</option></select><span id="k-fin-lock"></span></div>
         </div>
 
         <div class="card">
@@ -794,7 +837,7 @@
             <div class="ph-title">📄 Тайлан</div>
             <div class="ph-sub">Хугацаа, эмч сонгож тайлан үүсгэх</div>
           </div>
-          <div class="ph-r" id="rp-fin-lock"></div>
+          <div class="ph-r"><select class="inp" id="rp-kind" style="width:auto;padding:6px 10px;font-size:12px" onchange="onKindFilterChange('rp-kind')"><option value="all">Бүх үзлэг</option><option value="clinic">Зөвхөн клиник</option><option value="planned">Зөвхөн төлөвлөгөөт (ТҮ)</option></select><span id="rp-fin-lock"></span></div>
         </div>
 
         <div class="card">
@@ -884,7 +927,7 @@
             <div class="ph-title">📋 Түүх</div>
             <div class="ph-sub">Бүх үзлэгийн бүртгэл</div>
           </div>
-          <div class="ph-r"><button class="btn btn-sm" onclick="exportHistCSV()">⬇ CSV</button></div>
+          <div class="ph-r"><select class="inp" id="h-kind" style="width:auto;padding:6px 10px;font-size:12px" onchange="onKindFilterChange('h-kind')"><option value="all">Бүх үзлэг</option><option value="clinic">Зөвхөн клиник</option><option value="planned">Зөвхөн төлөвлөгөөт (ТҮ)</option></select><button class="btn btn-sm" onclick="exportHistCSV()">⬇ CSV</button></div>
         </div>
 
         <div class="card">
@@ -1476,7 +1519,7 @@
 
 <div id="print-area"></div>
 
-<script src="app.js?v=20260910"></script>
+<script src="app.js?v=20260916"></script>
 <script src="lab.js?v=20260731"></script>
 
 <!-- PWA: service worker бүртгэх, автомат шинэчлэлт, суулгах товч -->

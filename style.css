@@ -1557,3 +1557,8 @@ tbody tr:hover { background: #fafbfd; }
   .bn-print .pr-h1 { font-size: 13pt; margin-bottom: 8px; }
   .bn-print .pr-tbl { font-size: 9pt; }
 }
+
+/* 🗓️ Төлөвлөгөөт үзлэг — нарийн дэлгэцэнд нэг багана */
+@media (max-width: 1000px) {
+  #page-planned .grid2 { grid-template-columns: 1fr !important; }
+}
