@@ -114,3 +114,4 @@
 **Эрх:** `planned` хуудас `ALL_PAGES`-д нэмэгдсэн; Ерөнхий/Ахлах эмч, Бүртгэл, Админ-д анхдагчаар орсон. Одоо байгаа хэрэглэгчдийн pages Firestore-д хадгалагдсан тул: **«register» (адуу бүртгэх) эрхтэй хүн бүр автоматаар орж чадна** (`canAccess` fallback) — тусад нь эрх өгөх шаардлагагүй; хасахыг хүсвэл тухайн хэрэглэгчээс register-ийг хасна.
 
 - Код: `isPlanned/kindBadge/examKindOk/onKindFilterChange`, `renderPlanned/saveTrip/toggleTripStatus/deleteTrip/editTripField`, `renderTripDetail/setupPlannedForm/savePlannedExam/clearPlannedForm`, `printTripReport/exportTripCSV`; `STATE.trips/selectedTrip`; `index.html` `#page-planned`, `#h-kind/#f-kind/#k-kind/#rp-kind`; `sw.js` `2026-09-16-1`.
+- (засвар 2026-09-16-2) `applyRolePermissions` цэсний зүйлсийг `pages.includes` биш `canAccess()`-ээр нууж/харуулдаг болсон — өмнө нь Firestore-д хадгалагдсан хуучин pages-тэй хэрэглэгчдэд «Төлөвлөгөөт үзлэг» цэс харагдахгүй байсан.

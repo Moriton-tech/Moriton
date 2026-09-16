@@ -1266,14 +1266,15 @@ function applyRolePermissions() {
   const pages = (me && Array.isArray(me.pages)) ? me.pages : pagesForRole(STATE.user.role);
   if (!pages || !pages.length) return;
   // Hide bottom nav buttons the role can't access
+  // canAccess-ийг ашиглана — 'planned' хуудасны fallback (register эрхтэй бол) цэсэнд ч үйлчилнэ
   document.querySelectorAll('.bn-i[data-page]').forEach(btn => {
     const p = btn.dataset.page;
-    btn.style.display = pages.includes(p) ? '' : 'none';
+    btn.style.display = canAccess(p) ? '' : 'none';
   });
   // Hide drawer items the role can't access
   document.querySelectorAll('.ni[data-page]').forEach(el => {
     const p = el.dataset.page;
-    el.style.display = pages.includes(p) ? '' : 'none';
+    el.style.display = canAccess(p) ? '' : 'none';
   });
   // "Үнэ оруулах" товчийг зөвхөн Админд харуулна
   const isAdminUser = STATE.user.role === 'Админ';
