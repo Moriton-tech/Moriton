@@ -12,7 +12,7 @@
       Ингэснээр хуучин кэш устаж, бүх хэрэглэгч шинэ хувилбар авна.
    ============================================================ */
 
-const APP_VERSION = '2026-09-16-2';
+const APP_VERSION = '2026-09-17-1';
 
 const SHELL_CACHE = 'moriton-shell-' + APP_VERSION;
 const CDN_CACHE   = 'moriton-cdn-v1';

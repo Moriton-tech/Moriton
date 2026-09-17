@@ -614,7 +614,7 @@
         <div class="ph">
           <div class="ph-l">
             <div class="ph-title">🗓️ Төлөвлөгөөт үзлэг</div>
-            <div class="ph-sub">Хээрийн явцын цаасан маягтыг системд шивэх</div>
+            <div class="ph-sub">Хээрийн явц — 3 эмчийн баг, 3–5 аймаг; цаасан маягтыг системд шивэх</div>
           </div>
         </div>
         <div class="grid2" style="display:grid;grid-template-columns:360px 1fr;gap:14px;align-items:start">
@@ -625,19 +625,14 @@
                 <div class="fld"><label>Эхэлсэн огноо *</label><input class="inp" type="date" id="pl-t-date"></div>
                 <div class="fld"><label>Дууссан огноо</label><input class="inp" type="date" id="pl-t-end"></div>
               </div>
+              <div class="fld" style="margin-top:8px"><label>Маршрут — явсан аймгууд *</label><input class="inp" id="pl-t-route" placeholder="ж: Хэнтий, Сүхбаатар, Дорнод"></div>
+              <div class="fld" style="margin-top:8px"><label>Багийн эмч 1 (ахлах)</label><select class="inp" id="pl-t-doc1"></select></div>
               <div class="fg r2" style="margin-top:8px">
-                <div class="fld"><label>Байршил *</label><input class="inp" id="pl-t-loc" placeholder="ж: Асгат, Галшар, Хүй 7"></div>
-                <div class="fld"><label>Аймаг</label><select class="inp" id="pl-t-prov"></select></div>
+                <div class="fld"><label>Эмч 2</label><select class="inp" id="pl-t-doc2"></select></div>
+                <div class="fld"><label>Эмч 3</label><select class="inp" id="pl-t-doc3"></select></div>
               </div>
-              <div class="fg r2" style="margin-top:8px">
-                <div class="fld"><label>Сум</label><input class="inp" id="pl-t-soum"></div>
-                <div class="fld"><label>Эзэн (анхдагч)</label><input class="inp" id="pl-t-owner"></div>
-              </div>
-              <div class="fg r2" style="margin-top:8px">
-                <div class="fld"><label>Үндсэн эмч</label><select class="inp" id="pl-t-doc"></select></div>
-                <div class="fld"><label>Хамтрагч эмч</label><select class="inp" id="pl-t-asst"></select></div>
-              </div>
-              <div class="fld" style="margin-top:8px"><label>Тэмдэглэл</label><input class="inp" id="pl-t-note" placeholder="ж: хаврын төлөвлөгөөт үзлэг, туулга"></div>
+              <div class="fld" style="margin-top:8px"><label>Эзэн (анхдагч)</label><input class="inp" id="pl-t-owner"></div>
+              <div class="fld" style="margin-top:8px"><label>Тэмдэглэл</label><input class="inp" id="pl-t-note" placeholder="ж: намрын төлөвлөгөөт үзлэг, туулга"></div>
               <button class="btn btn-p btn-sm" style="margin-top:10px" onclick="saveTrip()">🗓️ Явц үүсгэх</button>
             </div>
             <div class="card">
@@ -1519,7 +1514,7 @@
 
 <div id="print-area"></div>
 
-<script src="app.js?v=20260916b"></script>
+<script src="app.js?v=20260917"></script>
 <script src="lab.js?v=20260731"></script>
 
 <!-- PWA: service worker бүртгэх, автомат шинэчлэлт, суулгах товч -->

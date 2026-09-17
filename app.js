@@ -6829,11 +6829,9 @@ const EXPORT_FIELDS = {
     ['id',          'ID',             'id',               'Дотоод дугаар', "Internal record id"],
     ['date',        'Огноо',          'date',             'Явц эхэлсэн огноо', "Trip start date"],
     ['endDate',     'Дуусах огноо',   'end_date',         'Явц дууссан огноо', "Trip end date"],
-    ['location',    'Байршил',        'location',         'Байршил (ж: Асгат)', "Location name"],
-    ['province',    'Аймаг',          'province',         'Аймаг', "Province"],
-    ['soum',        'Сум',            'soum',             'Сум', "District"],
-    ['docName',     'Үндсэн эмч',     'doctor_name',      'Үндсэн эмч', "Lead veterinarian"],
-    ['assistName',  'Хамтрагч эмч',   'assistant_name',   'Хамтрагч эмч', "Assisting veterinarian"],
+    ['@route',      'Маршрут',        'route',            'Явсан аймгууд', "Route (provinces visited)"],
+    ['@team',       'Баг (эмч нар)',  'team',             'Явцын эмч нар', "Veterinarians on the trip"],
+    ['docName',     'Ахлах эмч',      'lead_doctor',      'Багийн ахлах эмч', "Lead veterinarian"],
     ['owner',       'Эзэн (анхдагч)', 'default_owner',    'Анхдагч эзэмшигч', "Default owner for horses on this trip"],
     ['@n',          'Үзлэгийн тоо',   'exam_count',       'Явцад шивсэн үзлэг', "Exams recorded on this trip"],
     ['@amount',     'Нийт дүн',       'total_amount',     '₮', "Total invoiced amount (MNT)"],
@@ -7068,7 +7066,7 @@ function exBuildRows(D, lang) {
   mk('waiting', C.waiting || []);
 
   const exams = (C.exams || []).slice().sort((a, b) => ((a.date || '') + (a.time || '')) < ((b.date || '') + (b.time || '')) ? -1 : 1);
-  mk('trips', (C.trips || []).map(t => { const ex = (C.exams || []).filter(e => e.kind === 'planned' && String(e.tripId) === String(t.id)); return Object.assign({}, t, { '@n': ex.length, '@amount': ex.reduce((a, e) => a + (parseFloat(e.amount) || 0), 0), '@statusMn': t.status === 'closed' ? (lang === 'en' ? 'Closed' : 'Хаагдсан') : (lang === 'en' ? 'Open' : 'Нээлттэй') }); }));
+  mk('trips', (C.trips || []).map(t => { const ex = (C.exams || []).filter(e => e.kind === 'planned' && String(e.tripId) === String(t.id)); const team = (Array.isArray(t.docIds) ? t.docIds : [t.docId, t.assistDocId]).filter(Boolean).map(id => { const d = (C.doctors || []).find(x => String(x.id) === String(id)); return d ? d.name : id; }).join(', '); return Object.assign({}, t, { '@route': t.route || t.location || '', '@team': team, '@n': ex.length, '@amount': ex.reduce((a, e) => a + (parseFloat(e.amount) || 0), 0), '@statusMn': t.status === 'closed' ? (lang === 'en' ? 'Closed' : 'Хаагдсан') : (lang === 'en' ? 'Open' : 'Нээлттэй') }); }));
   mk('exams', exams.map(e => Object.assign({}, e, {
     '@kind': e.kind === 'planned' ? (lang === 'en' ? 'Planned' : 'Төлөвлөгөөт') : (lang === 'en' ? 'Clinic' : 'Клиник'),
     '@symptoms': exList(Array.isArray(e.symptoms) ? e.symptoms : (typeof e.symptoms === 'string' ? [] : [])),
@@ -7344,15 +7342,17 @@ function tripStats(t) {
     amount: ex.reduce((a, e) => a + (parseFloat(e.amount) || 0), 0),
     services: ex.reduce((a, e) => a + (Array.isArray(e.services) ? e.services.length : 0), 0) };
 }
-function tripLabel(t) { return (t.date || '') + (t.endDate && t.endDate !== t.date ? ' → ' + t.endDate : '') + ' · ' + (t.location || t.province || '—'); }
+function tripLabel(t) { return (t.date || '') + (t.endDate && t.endDate !== t.date ? ' → ' + t.endDate : '') + ' · ' + (t.route || t.location || t.province || '—'); }
+// Явцын эмч нар (3 хүртэл) — үзлэгийн маягт дээр эндээс 2-ыг сонгоно
+function tripDocs(t) { const ids = Array.isArray(t.docIds) ? t.docIds : [t.docId, t.assistDocId]; return ids.filter(Boolean).map(id => (STATE.doctors || []).find(d => String(d.id) === String(id))).filter(Boolean); }
+function tripDocNames(t) { return tripDocs(t).map(d => d.name).join(', '); }
 
 function renderPlanned() {
   if (!Array.isArray(STATE.trips)) STATE.trips = [];
   // Эмчийн сонголтууд
   const docOpts = (sel, blank) => (blank ? '<option value="">— байхгүй —</option>' : '') + (STATE.doctors || []).map(d => `<option value="${escHTML(d.id)}" ${String(d.id) === String(sel) ? 'selected' : ''}>${escHTML(d.name)} (${escHTML(d.role || '')})</option>`).join('');
-  ['pl-t-doc', 'pl-e-doc'].forEach(id => { const el = $('#' + id); if (el && !el.options.length) el.innerHTML = docOpts(''); });
-  ['pl-t-asst', 'pl-e-asst'].forEach(id => { const el = $('#' + id); if (el && !el.options.length) el.innerHTML = docOpts('', true); });
-  const pv = $('#pl-t-prov'); if (pv && !pv.options.length) pv.innerHTML = '<option value="">— аймаг —</option>' + PROVS.map(p => `<option>${escHTML(p)}</option>`).join('');
+  ['pl-t-doc1'].forEach(id => { const el = $('#' + id); if (el && !el.options.length) el.innerHTML = docOpts(''); });
+  ['pl-t-doc2', 'pl-t-doc3'].forEach(id => { const el = $('#' + id); if (el && !el.options.length) el.innerHTML = docOpts('', true); });
   if ($('#pl-t-date') && !$('#pl-t-date').value) $('#pl-t-date').value = todayStr();
   if ($('#pl-t-owner') && !$('#pl-t-owner').value) $('#pl-t-owner').value = PLANNED_DEFAULT_OWNER;
 
@@ -7365,7 +7365,7 @@ function renderPlanned() {
     return `<div class="li ${String(t.id) === String(STATE.selectedTrip) ? 'sel' : ''}" onclick="selectTrip('${escHTML(String(t.id))}')" style="cursor:pointer">
       <div class="li-av">${t.status === 'closed' ? '✅' : '🗓️'}</div>
       <div class="li-info"><div class="li-name">${escHTML(tripLabel(t))}</div>
-        <div class="li-sub">${escHTML(t.docName || '—')}${t.assistName ? ' + ' + escHTML(t.assistName) : ''} · ${s.n} үзлэг · ${fmtCompact(s.amount)}</div></div>
+        <div class="li-sub">${escHTML(tripDocNames(t) || t.docName || '—')} · ${s.n} үзлэг · ${fmtCompact(s.amount)}</div></div>
     </div>`;
   }).join('') : '<div class="empty"><div class="empty-em">🗓️</div>Явц бүртгээгүй байна — дээрх маягтаар шинэ явц үүсгэнэ үү</div>';
   renderTripDetail();
@@ -7374,20 +7374,21 @@ function selectTrip(id) { STATE.selectedTrip = id; renderPlanned(); }
 
 function saveTrip() {
   const v = id => (($('#' + id) || {}).value || '').trim();
-  const date = v('pl-t-date'), location = v('pl-t-loc');
+  const date = v('pl-t-date'), route = v('pl-t-route');
   if (!date) { toast('Огноо оруулна уу', 'err'); return; }
-  if (!location && !v('pl-t-prov')) { toast('Байршил эсвэл аймаг оруулна уу', 'err'); return; }
-  const doc = (STATE.doctors || []).find(d => String(d.id) === v('pl-t-doc'));
-  const asst = (STATE.doctors || []).find(d => String(d.id) === v('pl-t-asst'));
-  const t = { id: uid(), date, endDate: v('pl-t-end') || date, location, province: v('pl-t-prov'), soum: v('pl-t-soum'),
-    docId: doc ? doc.id : '', docName: doc ? doc.name : '', assistDocId: asst ? asst.id : '', assistName: asst ? asst.name : '',
+  if (!route) { toast('Маршрут (аймгууд) оруулна уу', 'err'); return; }
+  const ids = [...new Set([v('pl-t-doc1'), v('pl-t-doc2'), v('pl-t-doc3')].filter(Boolean))];
+  const docs = ids.map(id => (STATE.doctors || []).find(d => String(d.id) === id)).filter(Boolean);
+  if (!docs.length) { toast('Багийн эмч сонгоно уу', 'err'); return; }
+  const t = { id: uid(), date, endDate: v('pl-t-end') || date, route, location: route, province: '', soum: '',
+    docIds: docs.map(d => d.id), docId: docs[0].id, docName: docs[0].name, assistDocId: docs[1] ? docs[1].id : '', assistName: docs[1] ? docs[1].name : '',
     owner: v('pl-t-owner') || PLANNED_DEFAULT_OWNER, note: v('pl-t-note'), status: 'open',
     createdBy: (STATE.user && STATE.user.name) || '', ms: nowMs() };
   if (!Array.isArray(STATE.trips)) STATE.trips = [];
   STATE.trips.push(t); STATE.selectedTrip = t.id;
   lsSet('mt_trips', STATE.trips); fbSaveRecord('trips', t);
-  writeLog('Төлөвлөгөөт үзлэгийн явц үүсгэв', t.id, tripLabel(t), 'Эмч: ' + t.docName);
-  ['pl-t-loc', 'pl-t-soum', 'pl-t-note', 'pl-t-end'].forEach(id => { if ($('#' + id)) $('#' + id).value = ''; });
+  writeLog('Төлөвлөгөөт үзлэгийн явц үүсгэв', t.id, tripLabel(t), 'Баг: ' + tripDocNames(t));
+  ['pl-t-route', 'pl-t-note', 'pl-t-end'].forEach(id => { if ($('#' + id)) $('#' + id).value = ''; });
   toast('✅ Явц үүслээ — одоо адуу тус бүрийн үзлэгийг шивнэ', 'ok');
   renderPlanned();
   setTimeout(() => { const h = $('#pl-e-horse'); if (h) h.focus(); }, 100);
@@ -7411,17 +7412,19 @@ function deleteTrip() {
 }
 function editTripField(field, val) {
   const t = tripById(STATE.selectedTrip); if (!t) return;
-  if (field === 'docId' || field === 'assistDocId') {
-    const d = (STATE.doctors || []).find(x => String(x.id) === String(val));
-    if (field === 'docId') { t.docId = d ? d.id : ''; t.docName = d ? d.name : ''; }
-    else { t.assistDocId = d ? d.id : ''; t.assistName = d ? d.name : ''; }
+  if (field === 'doc0' || field === 'doc1' || field === 'doc2') {
+    const ids = (Array.isArray(t.docIds) ? t.docIds.slice() : [t.docId, t.assistDocId]); while (ids.length < 3) ids.push('');
+    ids[parseInt(field.slice(3), 10)] = val || '';
+    const docs = [...new Set(ids.filter(Boolean))].map(id => (STATE.doctors || []).find(x => String(x.id) === String(id))).filter(Boolean);
+    t.docIds = docs.map(d => d.id); t.docId = docs[0] ? docs[0].id : ''; t.docName = docs[0] ? docs[0].name : ''; t.assistDocId = docs[1] ? docs[1].id : ''; t.assistName = docs[1] ? docs[1].name : '';
   } else t[field] = val;
   t.ms = nowMs(); lsSet('mt_trips', STATE.trips); fbSaveRecord('trips', t);
   renderPlanned();
 }
 
 // ── Явцын дэлгэрэнгүй + шивэх маягт ───────────────────────────
-let PL_DRAFT = { services: [], meds: [], symptoms: [] };
+let PL_DRAFT = { services: [], meds: [], symptoms: [], manualTotal: false };
+let PL_STICKY = { tripId: null }; // аймаг/сум/эмч — дараагийн маягтад хэвээр
 function renderTripDetail() {
   const host = $('#pl-detail'); if (!host) return;
   const t = tripById(STATE.selectedTrip);
@@ -7430,11 +7433,21 @@ function renderTripDetail() {
   const ex = tripExams(t.id).slice().sort((a, b) => (b.ms || 0) - (a.ms || 0));
   const closed = t.status === 'closed';
   const docOpts = (sel, blank) => (blank ? '<option value="">— байхгүй —</option>' : '') + (STATE.doctors || []).map(d => `<option value="${escHTML(d.id)}" ${String(d.id) === String(sel) ? 'selected' : ''}>${escHTML(d.name)}</option>`).join('');
+  const tdocs = tripDocs(t);
+  // Үзлэгийн маягт дээр зөвхөн багийн эмч нараас сонгоно (баг тодорхойгүй бол бүх эмч)
+  const teamOpts = (sel, blank) => (blank ? '<option value="">— байхгүй —</option>' : '') + (tdocs.length ? tdocs : (STATE.doctors || [])).map(d => `<option value="${escHTML(d.id)}" ${String(d.id) === String(sel) ? 'selected' : ''}>${escHTML(d.name)}</option>`).join('');
+  const ids3 = (Array.isArray(t.docIds) ? t.docIds : [t.docId, t.assistDocId]).slice(); while (ids3.length < 3) ids3.push('');
+  const provOpts = (sel) => '<option value="">— аймаг —</option>' + PROVS.map(p => `<option ${p === sel ? 'selected' : ''}>${escHTML(p)}</option>`).join('');
+  // Сүүлд шивсэн аймаг/сум-ыг санана (3–5 аймгаар явдаг тул аймаг солигдох бүрд нэг л удаа өөрчилнө)
+  const lastEx = ex[0] || {};
+  const stickyProv = (PL_STICKY.tripId === t.id && PL_STICKY.province) || lastEx.province || '';
+  const stickySoum = (PL_STICKY.tripId === t.id && PL_STICKY.soum !== undefined) ? PL_STICKY.soum : (lastEx.soum || '');
+  const byProv = {}; ex.forEach(e => { const k = e.province || '—'; byProv[k] = (byProv[k] || 0) + 1; });
   host.innerHTML = `
     <div class="card">
       <div class="row" style="justify-content:space-between;gap:8px;flex-wrap:wrap">
         <div><div class="ph-title" style="font-size:16px">🗓️ ${escHTML(tripLabel(t))} ${closed ? '<span class="badge b-g">Хаагдсан</span>' : '<span class="badge b-o">Нээлттэй</span>'}</div>
-          <div class="muted" style="font-size:12px">${escHTML([t.province, t.soum].filter(Boolean).join(', '))}${t.note ? ' · ' + escHTML(t.note) : ''} · үүсгэсэн: ${escHTML(t.createdBy || '—')}</div></div>
+          <div class="muted" style="font-size:12px">Баг: ${escHTML(tripDocNames(t) || '—')}${t.note ? ' · ' + escHTML(t.note) : ''} · үүсгэсэн: ${escHTML(t.createdBy || '—')}</div></div>
         <div class="row" style="gap:6px">
           <button class="btn btn-sm" onclick="printTripReport()">🖨️ Явцын тайлан</button>
           <button class="btn btn-sm" onclick="exportTripCSV()">⬇ CSV</button>
@@ -7448,9 +7461,11 @@ function renderTripDetail() {
         <div class="stat purple"><div class="stat-l">💉 Үйлчилгээ</div><div class="snum">${s.services}</div></div>
         <div class="stat green"><div class="stat-l">💰 Нийт дүн</div><div class="snum">${fmtCompact(s.amount)}</div></div>
       </div>
-      <div class="fg r3" style="margin-top:10px">
-        <div class="fld"><label>Үндсэн эмч (анхдагч)</label><select class="inp" onchange="editTripField('docId',this.value)">${docOpts(t.docId)}</select></div>
-        <div class="fld"><label>Хамтрагч эмч (анхдагч)</label><select class="inp" onchange="editTripField('assistDocId',this.value)">${docOpts(t.assistDocId, true)}</select></div>
+      ${Object.keys(byProv).length ? '<div class="row" style="gap:6px;flex-wrap:wrap;margin-top:8px">' + Object.keys(byProv).sort().map(k => '<span class="badge">' + escHTML(k) + ': <b>' + byProv[k] + '</b></span>').join('') + '</div>' : ''}
+      <div class="fg r4" style="margin-top:10px">
+        <div class="fld"><label>Эмч 1 (ахлах)</label><select class="inp" onchange="editTripField('doc0',this.value)">${docOpts(ids3[0])}</select></div>
+        <div class="fld"><label>Эмч 2</label><select class="inp" onchange="editTripField('doc1',this.value)">${docOpts(ids3[1], true)}</select></div>
+        <div class="fld"><label>Эмч 3</label><select class="inp" onchange="editTripField('doc2',this.value)">${docOpts(ids3[2], true)}</select></div>
         <div class="fld"><label>Эзэн (анхдагч)</label><input class="inp" value="${escHTML(t.owner || '')}" onchange="editTripField('owner',this.value)"></div>
       </div>
     </div>
@@ -7462,19 +7477,19 @@ function renderTripDetail() {
         <div class="fld"><label>Үзлэгийн хуудасны №</label><div class="row" style="gap:4px"><input class="inp" id="pl-e-num" placeholder="маягт дээрх дугаар" style="font-weight:800"><button class="btn btn-xs" type="button" title="Системийн дараагийн дугаар" onclick="$('#pl-e-num').value=nextExamNum()">авто</button></div></div>
         <div class="fld"><label>Огноо</label><input class="inp" type="date" id="pl-e-date" value="${escHTML(t.date)}"></div>
         <div class="fld"><label>Цаг</label><input class="inp" type="time" id="pl-e-time"></div>
-        <div class="fld"><label>Дүн (авто)</label><div class="inp" id="pl-e-total" style="font-weight:900;background:var(--orange-soft);color:var(--orange-dark)">₮0</div></div>
+        <div class="fld"><label>Дүн <span class="muted" id="pl-e-total-mode" style="font-weight:600;text-transform:none">(авто)</span></label><div class="row" style="gap:4px"><input class="inp" type="number" id="pl-e-total" value="0" style="font-weight:900;background:var(--orange-soft);color:var(--orange-dark)" oninput="PL_DRAFT.manualTotal=true;$('#pl-e-total-mode').textContent='(гараар)'"><button class="btn btn-xs" type="button" title="Үйлчилгээний нийлбэрээр дахин тооцох" onclick="PL_DRAFT.manualTotal=false;updatePlTotal()">↺</button></div></div>
+      </div>
+      <div class="fg r4" style="margin-top:8px">
+        <div class="fld"><label>Аймаг</label><select class="inp" id="pl-e-prov">${provOpts(stickyProv)}</select></div>
+        <div class="fld"><label>Сум / байршил</label><input class="inp" id="pl-e-soum" value="${escHTML(stickySoum)}" placeholder="ж: Асгат"></div>
+        <div class="fld"><label>Эмч</label><select class="inp" id="pl-e-doc">${teamOpts(PL_STICKY.tripId === t.id && PL_STICKY.docId ? PL_STICKY.docId : t.docId)}</select></div>
+        <div class="fld"><label>Хамтрагч эмч</label><select class="inp" id="pl-e-asst">${teamOpts(PL_STICKY.tripId === t.id && PL_STICKY.asstId !== undefined ? PL_STICKY.asstId : t.assistDocId, true)}</select></div>
       </div>
       <div class="fg r4" style="margin-top:8px">
         <div class="fld"><label>Зүс (нэр) *</label><input class="inp" id="pl-e-horse" placeholder="ж: Хээр" list="pl-horse-dl" autocomplete="off"><datalist id="pl-horse-dl"></datalist></div>
-        <div class="fld"><label>ИАБД</label><input class="inp" id="pl-e-iabd" placeholder="бүртгэлийн дугаар"></div>
+        <div class="fld"><label>Нас</label><input class="inp" id="pl-e-age" placeholder="ж: 5"></div>
         <div class="fld"><label>Эзэн</label><input class="inp" id="pl-e-owner" value="${escHTML(t.owner || PLANNED_DEFAULT_OWNER)}"></div>
         <div class="fld"><label>Утас</label><input class="inp" id="pl-e-phone"></div>
-      </div>
-      <div class="fg r4" style="margin-top:8px">
-        <div class="fld"><label>Нас</label><input class="inp" id="pl-e-age" placeholder="ж: 5"></div>
-        <div class="fld"><label>Үүлдэр</label><input class="inp" id="pl-e-breed"></div>
-        <div class="fld"><label>Эмч</label><select class="inp" id="pl-e-doc">${docOpts(t.docId)}</select></div>
-        <div class="fld"><label>Хамтрагч</label><select class="inp" id="pl-e-asst">${docOpts(t.assistDocId, true)}</select></div>
       </div>
       <div class="fg r2" style="margin-top:8px">
         <div class="fld"><label>Анамнез (маягтын дээд хэсэг)</label><textarea class="inp" id="pl-e-anam" rows="2"></textarea></div>
@@ -7507,13 +7522,13 @@ function renderTripDetail() {
     <div class="card">
       <div class="ch">📋 Энэ явцад шивсэн үзлэгүүд <span class="ch-r">${ex.length}</span></div>
       ${ex.length ? `<div class="tbl-wrap" style="overflow-x:auto"><table style="min-width:820px;font-size:12px">
-        <thead><tr><th>#</th><th>Дугаар</th><th>Огноо</th><th>Зүс</th><th>ИАБД</th><th>Эзэн</th><th>Онош</th><th>Үйлчилгээ</th><th>Эмч</th><th style="text-align:right">Дүн</th><th></th></tr></thead>
+        <thead><tr><th>#</th><th>Дугаар</th><th>Огноо</th><th>Аймаг / сум</th><th>Зүс</th><th>Эзэн</th><th>Онош</th><th>Үйлчилгээ</th><th>Эмч</th><th style="text-align:right">Дүн</th><th></th></tr></thead>
         <tbody>${ex.map((e, i) => `<tr>
           <td class="muted">${ex.length - i}</td>
           <td class="bold" style="cursor:pointer" onclick="openExamDetail('${escHTML(String(e.id))}')">${escHTML(e.examNum || '—')}</td>
           <td>${escHTML(e.date || '')}</td>
+          <td style="font-size:11px">${escHTML([e.province, e.soum].filter(Boolean).join(' / ')) || '—'}</td>
           <td class="bold">${escHTML(e.horse || '')}</td>
-          <td>${escHTML(rpIabdOf(e)) || '—'}</td>
           <td style="max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escHTML(e.owner || '')}</td>
           <td style="max-width:160px;white-space:normal">${escHTML(e.diagnosis || '')}</td>
           <td style="white-space:normal;font-size:11px">${escHTML((e.services || []).map(s => s.name).join(', '))}</td>
@@ -7526,14 +7541,11 @@ function renderTripDetail() {
 }
 
 function setupPlannedForm() {
-  PL_DRAFT = { services: [], meds: [], symptoms: [] };
+  PL_DRAFT = { services: [], meds: [], symptoms: [], manualTotal: false };
   renderPlSymptoms(); renderPlSvcs(); renderPlMeds();
   // адууны зүсний санал (сүүлийн бүртгэлүүд)
   const dl = $('#pl-horse-dl');
   if (dl) { const names = [...new Set((STATE.horses || []).map(h => h.name).filter(Boolean))].slice(-300); dl.innerHTML = names.map(n => `<option value="${escHTML(n)}">`).join(''); }
-  // ИАБД бичихэд адууны мэдээлэл автоматаар бөглөнө
-  const iabd = $('#pl-e-iabd');
-  if (iabd) iabd.onchange = () => { const h = (STATE.horses || []).find(x => x.iabd && String(x.iabd).trim() === iabd.value.trim()); if (h) { if ($('#pl-e-horse')) $('#pl-e-horse').value = h.name || ''; if (h.owner && $('#pl-e-owner')) $('#pl-e-owner').value = h.owner; if (h.phone && $('#pl-e-phone')) $('#pl-e-phone').value = h.phone; if (h.age && $('#pl-e-age')) $('#pl-e-age').value = h.age; if (h.breed && $('#pl-e-breed')) $('#pl-e-breed').value = h.breed; toast('Адууны мэдээлэл ИАБД-аар олдлоо', 'ok'); } };
   // Үйлчилгээ хайлт
   const ss = $('#pl-svc-search'), sdd = $('#pl-svc-dd');
   if (ss) ss.oninput = () => {
@@ -7575,7 +7587,7 @@ function renderPlSvcs() {
   w.querySelectorAll('button[data-rm]').forEach(b => b.onclick = () => { PL_DRAFT.services.splice(+b.dataset.rm, 1); renderPlSvcs(); });
   updatePlTotal();
 }
-function updatePlTotal() { const t = PL_DRAFT.services.reduce((a, b) => a + (parseFloat(b.price) || 0), 0); if ($('#pl-e-total')) $('#pl-e-total').textContent = fmt(t); }
+function updatePlTotal() { if (PL_DRAFT.manualTotal) return; const t = PL_DRAFT.services.reduce((a, b) => a + (parseFloat(b.price) || 0), 0); if ($('#pl-e-total')) $('#pl-e-total').value = t; if ($('#pl-e-total-mode')) $('#pl-e-total-mode').textContent = '(авто)'; }
 function addPlMed(name) { name = (name || '').trim(); if (!name) return; if (!PL_DRAFT.meds.find(x => x.name === name)) PL_DRAFT.meds.push({ name, note: '' }); renderPlMeds(); }
 function renderPlMeds() {
   const w = $('#pl-med-chips'); if (!w) return;
@@ -7584,8 +7596,8 @@ function renderPlMeds() {
   w.querySelectorAll('button[data-rm]').forEach(b => b.onclick = () => { PL_DRAFT.meds.splice(+b.dataset.rm, 1); renderPlMeds(); });
 }
 function clearPlannedForm() {
-  ['pl-e-num', 'pl-e-time', 'pl-e-horse', 'pl-e-iabd', 'pl-e-phone', 'pl-e-age', 'pl-e-breed', 'pl-e-anam', 'pl-e-diag', 'pl-e-temp', 'pl-e-pulse', 'pl-e-resp', 'pl-e-wt', 'pl-e-note', 'pl-svc-search', 'pl-med-search'].forEach(id => { const el = $('#' + id); if (el) el.value = ''; });
-  PL_DRAFT = { services: [], meds: [], symptoms: [] };
+  ['pl-e-num', 'pl-e-time', 'pl-e-horse', 'pl-e-phone', 'pl-e-age', 'pl-e-anam', 'pl-e-diag', 'pl-e-temp', 'pl-e-pulse', 'pl-e-resp', 'pl-e-wt', 'pl-e-note', 'pl-svc-search', 'pl-med-search'].forEach(id => { const el = $('#' + id); if (el) el.value = ''; });
+  PL_DRAFT = { services: [], meds: [], symptoms: [], manualTotal: false };
   renderPlSymptoms(); renderPlSvcs(); renderPlMeds();
   const h = $('#pl-e-horse'); if (h) h.focus();
 }
@@ -7601,27 +7613,23 @@ function savePlannedExam() {
   const dup = findExamNumDuplicate(examNum);
   if (dup) { toast('⚠️ ' + examNum + ' дугаар аль хэдийн байна (' + (dup.rec.horse || '') + ')', 'err'); $('#pl-e-num').focus(); return; }
   if (!PL_DRAFT.services.length && !confirm('Үйлчилгээ сонгоогүй байна. Үйлчилгээгүйгээр хадгалах уу?')) return;
-  const owner = v('pl-e-owner') || t.owner || PLANNED_DEFAULT_OWNER, phone = v('pl-e-phone'), iabd = v('pl-e-iabd');
+  const owner = v('pl-e-owner') || t.owner || PLANNED_DEFAULT_OWNER, phone = v('pl-e-phone');
+  const province = v('pl-e-prov'), soum = v('pl-e-soum');
+  if (!province) { toast('Аймаг сонгоно уу', 'err'); $('#pl-e-prov').focus(); return; }
   const date = v('pl-e-date') || t.date, time = v('pl-e-time');
   const doc = (STATE.doctors || []).find(d => String(d.id) === v('pl-e-doc'));
   const asst = (STATE.doctors || []).find(d => String(d.id) === v('pl-e-asst'));
   if (!doc) { toast('Эмч сонгоно уу', 'err'); return; }
 
-  // Адуу: ИАБД-аар, эс бол зүс+эзнээр олно; байхгүй бол шинээр бүртгэнэ
-  let horse = iabd ? (STATE.horses || []).find(h => h.iabd && String(h.iabd).trim() === iabd) : null;
-  if (!horse) horse = (STATE.horses || []).find(h => (h.name || '').trim().toLowerCase() === horseName.toLowerCase() && (h.owner || '').trim().toLowerCase() === owner.toLowerCase());
+  // Адуу: зүс + эзэн + аймгаар олно (ИАБД хээрийн үзлэгт байхгүй); байхгүй бол шинээр бүртгэнэ
+  let horse = (STATE.horses || []).find(h => (h.name || '').trim().toLowerCase() === horseName.toLowerCase() && (h.owner || '').trim().toLowerCase() === owner.toLowerCase() && (!h.province || h.province === province));
   if (!horse) {
-    horse = { id: uid(), name: horseName, owner, phone, iabd, age: v('pl-e-age'), breed: v('pl-e-breed'), mark: '', province: t.province || '', soum: t.soum || '', date, extra: 'Төлөвлөгөөт үзлэг: ' + tripLabel(t), createdAt: nowMs(), ms: nowMs(), kind: 'planned' };
+    horse = { id: uid(), name: horseName, owner, phone, iabd: '', age: v('pl-e-age'), breed: '', mark: '', province, soum, date, extra: 'Төлөвлөгөөт үзлэг: ' + tripLabel(t), createdAt: nowMs(), ms: nowMs(), kind: 'planned' };
     STATE.horses.push(horse); fbSaveRecord('horses', horse);
-  } else {
-    let ch = false;
-    if (iabd && !horse.iabd) { horse.iabd = iabd; ch = true; }
-    if (v('pl-e-age') && !horse.age) { horse.age = v('pl-e-age'); ch = true; }
-    if (v('pl-e-breed') && !horse.breed) { horse.breed = v('pl-e-breed'); ch = true; }
-    if (ch) { horse.ms = nowMs(); fbSaveRecord('horses', horse); }
-  }
+  } else if (v('pl-e-age') && !horse.age) { horse.age = v('pl-e-age'); horse.ms = nowMs(); fbSaveRecord('horses', horse); }
   const services = PL_DRAFT.services.map(s => ({ name: s.name, price: parseFloat(s.price) || 0 }));
-  const total = services.reduce((a, b) => a + b.price, 0);
+  const svcSum = services.reduce((a, b) => a + b.price, 0);
+  const total = PL_DRAFT.manualTotal ? (parseFloat(v('pl-e-total')) || 0) : svcSum;
   const ms = nowMs();
   const exam = { id: uid(), kind: 'planned', tripId: t.id, tripLocation: t.location || t.province || '',
     horseId: horse.id, horse: horseName, owner, phone, docId: doc.id, docName: doc.name,
@@ -7630,7 +7638,7 @@ function savePlannedExam() {
     services, meds: PL_DRAFT.meds.map(m => ({ name: m.name, note: m.note || '' })),
     symptoms: PL_DRAFT.symptoms.slice(), anamnesis: v('pl-e-anam'),
     temp: v('pl-e-temp'), pulse: v('pl-e-pulse'), resp: v('pl-e-resp'), wt: v('pl-e-wt'),
-    province: t.province || '', soum: t.soum || '', images: [], amount: total,
+    province, soum, images: [], amount: total, amountManual: PL_DRAFT.manualTotal && total !== svcSum,
     regMs: null, doneMs: ms, durationMin: null, enteredBy: (STATE.user && STATE.user.name) || '', ms };
   STATE.exams.push(exam);
   const fin = { id: uid(), kind: 'planned', tripId: t.id, examId: exam.id, examNum, horse: horseName, owner, phone, docName: doc.name, amount: total,
@@ -7642,11 +7650,10 @@ function savePlannedExam() {
   writeLog('Төлөвлөгөөт үзлэг шивэв', exam.id, horseName + ' — ' + doc.name, 'Явц: ' + tripLabel(t) + (diag ? ' · Онош: ' + diag : ''), examNum);
   updateBadges();
   toast('✅ ' + horseName + ' (' + examNum + ') хадгалагдлаа' + (labN ? ' · 🧪 ' + labN + ' шинжилгээ' : ''), 'ok');
-  // Явцын анхдагч утгуудыг үлдээж, адууны талбаруудыг цэвэрлэнэ
-  const keepDoc = v('pl-e-doc'), keepAsst = v('pl-e-asst'), keepDate = date;
+  // Аймаг/сум/эмч/огноог дараагийн маягтад хэвээр үлдээнэ, адууны талбаруудыг цэвэрлэнэ
+  PL_STICKY = { tripId: t.id, province, soum, docId: doc.id, asstId: asst ? asst.id : '' };
+  const keepDate = date;
   renderPlanned();
-  if ($('#pl-e-doc')) $('#pl-e-doc').value = keepDoc;
-  if ($('#pl-e-asst')) $('#pl-e-asst').value = keepAsst;
   if ($('#pl-e-date')) $('#pl-e-date').value = keepDate;
   // Дараагийн дугаар: маягт дараалсан бол +1 санал болгоно
   const nv = examNumValue(examNum);
@@ -7657,22 +7664,22 @@ function savePlannedExam() {
 // ── Явцын тайлан хэвлэх / CSV ─────────────────────────────────
 function printTripReport() {
   const t = tripById(STATE.selectedTrip); if (!t) return;
-  const ex = tripExams(t.id).slice().sort((a, b) => (a.examNum || '') < (b.examNum || '') ? -1 : 1);
+  const ex = tripExams(t.id).slice().sort((a, b) => ((a.province || '') + (a.examNum || '')) < ((b.province || '') + (b.examNum || '')) ? -1 : 1);
   const s = tripStats(t);
   const svcStats = rpServiceStats(ex);
   $('#print-area').innerHTML = `<div class="rp-print">
     <div class="pr-h1">Төлөвлөгөөт үзлэгийн явцын тайлан</div>
     <div style="text-align:center;margin-bottom:8px">Морьтон Адууны Төв · ${escHTML(tripLabel(t))}${t.soum ? ' · ' + escHTML(t.soum) : ''}</div>
-    <table class="pr-tbl"><tr><th>Огноо</th><th>Байршил</th><th>Үндсэн эмч</th><th>Хамтрагч</th><th>Адуу</th><th>Үзлэг</th><th>Үйлчилгээ</th><th>Нийт дүн</th></tr>
-      <tr><td>${escHTML(t.date)}${t.endDate && t.endDate !== t.date ? ' → ' + escHTML(t.endDate) : ''}</td><td>${escHTML([t.location, t.province, t.soum].filter(Boolean).join(', '))}</td><td>${escHTML(t.docName || '')}</td><td>${escHTML(t.assistName || '')}</td><td>${s.horses}</td><td>${s.n}</td><td>${s.services}</td><td>${fmt(s.amount)}</td></tr></table>
+    <table class="pr-tbl"><tr><th>Огноо</th><th>Маршрут</th><th colspan="2">Баг (эмч нар)</th><th>Адуу</th><th>Үзлэг</th><th>Үйлчилгээ</th><th>Нийт дүн</th></tr>
+      <tr><td>${escHTML(t.date)}${t.endDate && t.endDate !== t.date ? ' → ' + escHTML(t.endDate) : ''}</td><td>${escHTML(t.route || t.location || '')}</td><td colspan="2">${escHTML(tripDocNames(t))}</td><td>${s.horses}</td><td>${s.n}</td><td>${s.services}</td><td>${fmt(s.amount)}</td></tr></table>
     ${t.note ? '<div style="font-size:9.5pt;margin-bottom:6px"><b>Тэмдэглэл:</b> ' + escHTML(t.note) + '</div>' : ''}
     <div class="pr-h2">Үзсэн адуу</div>
-    <table class="pr-tbl pr-wide"><tr><th>#</th><th>Дугаар</th><th>Огноо</th><th>Зүс</th><th>ИАБД</th><th>Эзэн</th><th>Анамнез</th><th>Онош</th><th>Үйлчилгээ</th><th>Эм</th><th>Эмч</th><th>Дүн</th></tr>
-      ${ex.map((e, i) => `<tr><td>${i + 1}</td><td>${escHTML(e.examNum || '')}</td><td>${escHTML(e.date || '')}</td><td>${escHTML(e.horse || '')}</td><td>${escHTML(rpIabdOf(e))}</td><td>${escHTML(e.owner || '')}</td><td>${escHTML(e.anamnesis || '')}</td><td>${escHTML(e.diagnosis || '')}</td><td>${escHTML((e.services || []).map(x => x.name).join(', '))}</td><td>${escHTML((e.meds || []).map(x => x.name || x).join(', '))}</td><td>${escHTML(e.docName || '')}${e.assistDocName ? ' / ' + escHTML(e.assistDocName) : ''}</td><td style="text-align:right">${fmt(e.amount || 0)}</td></tr>`).join('')}
+    <table class="pr-tbl pr-wide"><tr><th>#</th><th>Дугаар</th><th>Огноо</th><th>Аймаг / сум</th><th>Зүс</th><th>Эзэн</th><th>Анамнез</th><th>Онош</th><th>Үйлчилгээ</th><th>Эм</th><th>Эмч</th><th>Дүн</th></tr>
+      ${ex.map((e, i) => `<tr><td>${i + 1}</td><td>${escHTML(e.examNum || '')}</td><td>${escHTML(e.date || '')}</td><td>${escHTML([e.province, e.soum].filter(Boolean).join(' / '))}</td><td>${escHTML(e.horse || '')}</td><td>${escHTML(e.owner || '')}</td><td>${escHTML(e.anamnesis || '')}</td><td>${escHTML(e.diagnosis || '')}</td><td>${escHTML((e.services || []).map(x => x.name).join(', '))}</td><td>${escHTML((e.meds || []).map(x => x.name || x).join(', '))}</td><td>${escHTML(e.docName || '')}${e.assistDocName ? ' / ' + escHTML(e.assistDocName) : ''}</td><td style="text-align:right">${fmt(e.amount || 0)}</td></tr>`).join('')}
       <tr><td colspan="11"><b>Нийт</b></td><td style="text-align:right"><b>${fmt(s.amount)}</b></td></tr></table>
     <div class="pr-h2">Үйлчилгээний нэгтгэл</div>
     ${rpMiniTablePrint(svcStats, 'Үйлчилгээ', false)}
-    <div class="pr-sign"><div>Үндсэн эмч: ${escHTML(t.docName || '')} ____________</div><div>Шивсэн: ${escHTML((STATE.user && STATE.user.name) || '')} ____________</div><div>Удирдах эмч: ____________</div></div>
+    <div class="pr-sign"><div>Ахлах эмч: ${escHTML(t.docName || '')} ____________</div><div>Шивсэн: ${escHTML((STATE.user && STATE.user.name) || '')} ____________</div><div>Удирдах эмч: ____________</div></div>
   </div>`;
   writeLog('Явцын тайлан хэвлэв', t.id, tripLabel(t), s.n + ' үзлэг');
   setTimeout(() => window.print(), 100);
@@ -7680,8 +7687,8 @@ function printTripReport() {
 function exportTripCSV() {
   const t = tripById(STATE.selectedTrip); if (!t) return;
   const ex = tripExams(t.id).slice().sort((a, b) => (a.examNum || '') < (b.examNum || '') ? -1 : 1);
-  const rows = [['Явц', 'Огноо', 'Дугаар', 'Зүс', 'ИАБД', 'Эзэн', 'Утас', 'Анамнез', 'Шинж тэмдэг', 'Онош', 'Үйлчилгээ', 'Эм', 'Темп', 'Зүрх', 'Амьсгал', 'Жин', 'Эмч', 'Хамтрагч', 'Дүн', 'Тэмдэглэл']];
-  ex.forEach(e => rows.push([tripLabel(t), e.date || '', e.examNum || '', e.horse || '', rpIabdOf(e), e.owner || '', e.phone || '', e.anamnesis || '', (e.symptoms || []).join(', '), e.diagnosis || '', (e.services || []).map(x => x.name + ' (' + (x.price || 0) + ')').join('; '), (e.meds || []).map(x => (x.name || x) + (x.note ? ' — ' + x.note : '')).join('; '), e.temp || '', e.pulse || '', e.resp || '', e.wt || '', e.docName || '', e.assistDocName || '', e.amount || 0, e.note || '']));
+  const rows = [['Явц', 'Огноо', 'Дугаар', 'Аймаг', 'Сум', 'Зүс', 'Эзэн', 'Утас', 'Анамнез', 'Шинж тэмдэг', 'Онош', 'Үйлчилгээ', 'Эм', 'Темп', 'Зүрх', 'Амьсгал', 'Жин', 'Эмч', 'Хамтрагч', 'Дүн', 'Тэмдэглэл']];
+  ex.forEach(e => rows.push([tripLabel(t), e.date || '', e.examNum || '', e.province || '', e.soum || '', e.horse || '', e.owner || '', e.phone || '', e.anamnesis || '', (e.symptoms || []).join(', '), e.diagnosis || '', (e.services || []).map(x => x.name + ' (' + (x.price || 0) + ')').join('; '), (e.meds || []).map(x => (x.name || x) + (x.note ? ' — ' + x.note : '')).join('; '), e.temp || '', e.pulse || '', e.resp || '', e.wt || '', e.docName || '', e.assistDocName || '', e.amount || 0, e.note || '']));
   downloadCSV(rows, 'төлөвлөгөөт_үзлэг_' + (t.date || '') + '_' + (t.location || '').replace(/[\\/:*?"<>|]+/g, ' ') + '.csv');
 }
 
