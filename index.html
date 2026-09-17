@@ -29,9 +29,9 @@
      ⚠️ Доорх firebaseConfig-ийг ӨӨРИЙН project-ийн утгаар СОЛИНО.
         Firebase Console → Project settings → Your apps → Web app
      ============================================================ -->
-<script type="module" src="firebase.js?v=20260917a"></script>
+<script type="module" src="firebase.js?v=20260917b"></script>
 
-<link rel="stylesheet" href="style.css?v=20260917">
+<link rel="stylesheet" href="style.css?v=20260917a">
 </head>
 <body>
 
@@ -1090,6 +1090,14 @@
             <div id="ex-summary" style="margin-top:6px"></div>
             <div class="muted" style="font-size:11px;margin-top:8px">⚠️ Экспортод нууц үгийн hash, мөнгөн дүн харах код орохгүй. Үзлэгийн зурагнууд Firebase Storage-д үлдэх бөгөөд экспортод зөвхөн тэдгээрийн холбоос (URL) орно.</div>
           </div>
+          <div class="card" id="storage-diag-card">
+            <div class="ch">🖼️ Зураг байршуулах оношилгоо <span class="muted" style="font-weight:600;text-transform:none">— Storage холболт шалгах</span></div>
+            <div style="background:var(--gold-soft,#f6efdc);padding:8px 12px;border-radius:8px;font-size:12px;margin-bottom:10px;line-height:1.55">
+              «Зураг илгээж чадсангүй» алдаа гарвал энд дарна. Нэвтрэлт, bucket, үзлэгийн зураг (<code>exam-images/</code>), шинжилгээний хариу (<code>lab-results/</code>) гурвыг тусад нь шалгаж, <b>яг юу буруу байгааг</b> хэлнэ. Туршилтын жижиг зураг илгээгээд шууд устгана.
+            </div>
+            <button class="btn btn-sm btn-p" onclick="runStorageDiag()">🔍 Шалгах</button>
+            <div id="sd-out" style="margin-top:10px"></div>
+          </div>
           <div class="card">
             <div class="ch">💾 Өгөгдөл <span class="muted" style="font-weight:600;text-transform:none">— хялбар нөөц</span></div>
             <div class="row">
@@ -1514,7 +1522,7 @@
 
 <div id="print-area"></div>
 
-<script src="app.js?v=20260917g"></script>
+<script src="app.js?v=20260917h"></script>
 <script src="lab.js?v=20260917"></script>
 
 <!-- PWA: service worker бүртгэх, автомат шинэчлэлт, суулгах товч -->

@@ -126,6 +126,18 @@ input, select, textarea {
   transition: background 0.4s, box-shadow 0.4s;
 }
 .sync-dot.live { background: #27ae60; box-shadow: 0 0 8px #27ae60; }
+/* Storage оношилгооны хүснэгт */
+.sd-tb { width: 100%; border-collapse: collapse; font-size: 12.5px; margin-bottom: 10px; }
+.sd-tb td { padding: 6px 10px; border-bottom: 1px solid var(--line, #e6e6e6); }
+.sd-tb td:first-child { color: #666; width: 45%; }
+.sd-ok  { color: #1e8449; font-weight: 700; }
+.sd-bad { color: #c0392b; font-weight: 700; }
+.sd-verdict {
+  background: #fff6f3; border-left: 4px solid #e67e22;
+  padding: 10px 12px; border-radius: 6px; font-size: 12.5px; line-height: 1.6;
+}
+.sd-verdict code { background: rgba(0,0,0,0.07); padding: 1px 5px; border-radius: 4px; }
+
 /* Холболтын бодит төлөв (анивчихаас тусдаа) */
 .sync-dot.ok  { background: #27ae60; }
 .sync-dot.off { background: #e67e22; box-shadow: 0 0 8px rgba(230,126,34,0.7); }

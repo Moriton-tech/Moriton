@@ -126,6 +126,22 @@ window.__fbDeleteImageByUrl = async (url) => {
   } catch (e) {}
 };
 
+// ── Оношилгоонд зориулсан мэдээлэл ─────────────────────────────
+// Storage алдаа гарахад «нэвтрэлт байна уу, аль bucket руу бичиж
+// байна вэ» гэдгийг мэдэхгүй бол шалтгааныг таах болно.
+window.__fbAuthInfo = () => ({
+  ready:     !!window.__fbReady,
+  uid:       auth.currentUser ? auth.currentUser.uid : null,
+  anonymous: auth.currentUser ? !!auth.currentUser.isAnonymous : null,
+  bucket:    firebaseConfig.storageBucket || '',
+  projectId: firebaseConfig.projectId || ''
+});
+
+// Тодорхой замаар устгах (оношилгооны туршилтын файлыг цэвэрлэхэд)
+window.__fbDeletePath = async (path) => {
+  await deleteObject(storageRef(storage, path));
+};
+
 // ── Device ID — echo guard ─────────────────────────────────────
 window.__fbDeviceId = Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 

@@ -1438,6 +1438,100 @@ function storageErrMsg(err) {
   return msg || 'тодорхойгүй алдаа';
 }
 
+// ── 🔍 Storage оношилгоо ─────────────────────────────────────
+// «Зураг илгээж чадсангүй» гэсэн ганц мессежээс шалтгааныг мэдэх
+// боломжгүй: нэвтрэлт унасан уу, дүрэм хаасан уу, өөр bucket уу?
+// Энэ нь гурвыг тусад нь шалгаж, ЯГ юу хийхийг хэлнэ.
+const SD_PATHS = [
+  { key: 'exam-images', label: 'Үзлэгийн зураг', where: 'app.js' },
+  { key: 'lab-results', label: 'Шинжилгээний хариу', where: 'lab.js' }
+];
+
+function sdTinyJpeg() {
+  const c = document.createElement('canvas');
+  c.width = c.height = 8;
+  const x = c.getContext('2d');
+  x.fillStyle = '#c8a24a'; x.fillRect(0, 0, 8, 8);
+  return c.toDataURL('image/jpeg', 0.5);
+}
+
+async function runStorageDiag() {
+  const out = $('#sd-out'); if (!out) return;
+  out.innerHTML = '<div class="muted">Шалгаж байна…</div>';
+
+  const rows = [];
+  const info = (typeof window.__fbAuthInfo === 'function') ? window.__fbAuthInfo() : null;
+
+  if (!info) {
+    out.innerHTML = '<div class="sd-bad">⛔ firebase.js ачаалагдаагүй байна. Хуудсыг Ctrl+F5-ээр бүрэн шинэчилнэ үү ' +
+      '(эсвэл firebase.js файл GitHub-д ороогүй байж магадгүй).</div>';
+    return;
+  }
+
+  rows.push(['Төсөл (project)', info.projectId || '—', !!info.projectId]);
+  rows.push(['Storage bucket', info.bucket || '—', !!info.bucket]);
+  rows.push(['Firebase бэлэн', info.ready ? 'тийм' : 'ҮГҮЙ', !!info.ready]);
+  rows.push(['Нэвтрэлт (uid)', info.uid ? (info.uid.slice(0, 10) + '… ' + (info.anonymous ? '(anonymous)' : '')) : 'НЭВТРЭЭГҮЙ', !!info.uid]);
+
+  let dataUrl = '';
+  try { dataUrl = sdTinyJpeg(); } catch (e) {}
+
+  const results = [];
+  if (info.uid && dataUrl && typeof window.__fbUploadImage === 'function') {
+    for (const p of SD_PATHS) {
+      const path = p.key + '/_diag/' + uid() + '.jpg';
+      try {
+        await window.__fbUploadImage(path, dataUrl);
+        results.push({ p, ok: true, code: '' });
+        try { if (window.__fbDeletePath) await window.__fbDeletePath(path); } catch (e) {}
+      } catch (err) {
+        results.push({ p, ok: false, code: (err && (err.code || err.message)) || 'алдаа', err });
+      }
+    }
+  }
+  results.forEach(r => rows.push([
+    r.p.label + ' (' + r.p.key + '/)',
+    r.ok ? '✅ Зөвшөөрөгдсөн' : '⛔ ' + r.code,
+    r.ok
+  ]));
+
+  // ── Дүгнэлт ──
+  let verdict = '';
+  const okN = results.filter(r => r.ok).length;
+  if (!info.uid) {
+    verdict = '<b>Шалтгаан: нэвтрэлт үүсээгүй байна.</b><br>' +
+      'Firebase Anonymous Auth ажиллаагүй тул Storage бүх хүсэлтийг татгалзана — зам, дүрэм хамаагүй.<br>' +
+      '<b>Хийх:</b> Firebase Console → Build → <b>Authentication</b> → Sign-in method → <b>Anonymous</b> → Enable. ' +
+      'Аль хэдийн асаалттай бол Authentication → Settings → <b>Authorized domains</b> дотор аппын домэйн ' +
+      '(<code>' + escHTML(location.hostname) + '</code>) байгаа эсэхийг шалгана.';
+  } else if (okN === results.length && results.length) {
+    verdict = '<b>✅ Storage бүрэн ажиллаж байна</b> — хоёр зам хоёулаа зөвшөөрөгдлөө. ' +
+      'Хэрэв зураг оруулахад алдаа гарсаар байвал файлын хэмжээ/төрөл эсвэл сүлжээний асуудал байж магадгүй.';
+  } else if (okN === 0) {
+    verdict = '<b>Шалтгаан: Storage-ийн дүрэм бүх замыг хааж байна.</b><br>' +
+      '<b>Хийх:</b> Firebase Console → Build → <b>Storage</b> → <b>Rules</b>. ' +
+      'Дээд талд bucket сонгох жагсаалт байвал <code>' + escHTML(info.bucket) + '</code>-ийг сонгосон эсэхээ шалгаад ' +
+      'репо дахь <code>storage.rules</code> файлын агуулгыг бүтнээр буулгаж <b>Publish</b> дарна.';
+  } else {
+    const bad = results.filter(r => !r.ok).map(r => r.p.key + '/').join(', ');
+    verdict = '<b>Шалтгаан: дүрэмд <code>' + escHTML(bad) + '</code> зам нэмэгдээгүй байна.</b><br>' +
+      'Нэвтрэлт болон bucket зөв — зөвхөн энэ зам хаалттай.<br>' +
+      '<b>Хийх:</b> Firebase Console → Build → <b>Storage</b> → <b>Rules</b> → ' +
+      'репо дахь <code>storage.rules</code>-ийн агуулгыг бүтнээр буулгаад <b>Publish</b>. ' +
+      'Аль хэдийн хийсэн бол: (1) зөв <b>төсөл</b> мөн эсэх, (2) Rules хуудсан дээр дээд талд ' +
+      '<b>өөр bucket</b> сонгогдоогүй эсэх (<code>' + escHTML(info.bucket) + '</code> байх ёстой), ' +
+      '(3) Publish дарсны дараа ногоон баталгаа гарсан эсэхийг шалгана.';
+  }
+
+  out.innerHTML =
+    '<table class="sd-tb">' + rows.map(r =>
+      '<tr><td>' + escHTML(r[0]) + '</td><td class="' + (r[2] ? 'sd-ok' : 'sd-bad') + '">' + escHTML(r[1]) + '</td></tr>'
+    ).join('') + '</table>' +
+    '<div class="sd-verdict">' + verdict + '</div>';
+
+  results.filter(r => !r.ok).forEach(r => console.error('[Storage diag] ' + r.p.key, r.err));
+}
+
 // ── 🔌 Холболтын төлөв ба гар аргаар шинэчлэх ────────────────
 // Firestore-ийн snapshot бүр «сервэрээс ирсэн үү, кэшнээс үү» гэдгээ
 // хэлдэг. Үүгээр л жинхэнэ холболтыг мэдэж болно — өмнөх ногоон цэг
