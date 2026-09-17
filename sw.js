@@ -12,26 +12,29 @@
       Ингэснээр хуучин кэш устаж, бүх хэрэглэгч шинэ хувилбар авна.
    ============================================================ */
 
-const APP_VERSION = '2026-09-17-4';
+const APP_VERSION = '2026-09-17-6';
 
 const SHELL_CACHE = 'moriton-shell-' + APP_VERSION;
+/* Статик хөрөнгийн кэш — хувилбартай УЯЛДААГҮЙ.
+   Учир нь app.js?v=20260917d гэх мэт URL өөрөө хувилбараа агуулдаг:
+   файл өөрчлөгдвөл ?v= солигдож шинэ түлхүүр болно, өөрчлөгдөөгүй бол
+   хуучин түлхүүр хүчинтэй хэвээр. Хэрэв энэ кэшийг хувилбар бүрд
+   устгавал ӨӨРЧЛӨГДӨӨГҮЙ style.css (336KB), икон (492KB) дахин татагдана. */
+const ASSET_CACHE = 'moriton-assets-v1';
+const ASSET_MAX   = 40; // хуучин хувилбарын үлдэгдэл хуримтлагдахаас сэргийлнэ
 const CDN_CACHE   = 'moriton-cdn-v1';
 
-/* Апп ажиллахад шаардлагатай өөрийн файлууд */
+/* Урьдчилан татах ЗӨВХӨН хамгийн бага бүрхүүл.
+   ⚠️ app.js / style.css / lab.js-ийг энд БҮҮ нэм: index.html тэднийг
+   «app.js?v=...» гэж хувилбарын дугаартай дууддаг тул энд дугааргүйгээр
+   татвал ЯГ ИЖИЛ файлыг ХОЁР УДАА татна (хувилбар солих бүрд ~1MB илүү).
+   Тэдгээрийг хуудас өөрөө дуудахад cacheFirst нь зөв URL-аар кэшилнэ.
+   512px икон мөн адил — зөвхөн суулгах үед л хэрэгтэй тул шаардлагаар татна. */
 const SHELL = [
   './',
   './index.html',
-  './style.css',
-  './app.js',
-  './lab.js',
-  './firebase.js',
-  './pwa.js',
   './manifest.json',
   './icons/icon-192.png',
-  './icons/icon-512.png',
-  './icons/icon-192-maskable.png',
-  './icons/icon-512-maskable.png',
-  './icons/apple-touch-icon.png',
   './icons/favicon.ico'
 ];
 
@@ -90,6 +93,12 @@ self.addEventListener('activate', (event) => {
           .filter((k) => k.startsWith('moriton-shell-') && k !== SHELL_CACHE)
           .map((k) => caches.delete(k))
       );
+      // APP_VERSION солигдсон тул кодын кэшийг цэвэрлэнэ.
+      // ⚠️ Яагаад: index.html-ийн ?v= дугаарыг солихоо мартвал хуучин
+      // app.js мөнхөд кэшэнд наалдаж, олж ядам алдаа үүсгэнэ. Зураг,
+      // фонт зэрэг хөрөнгө хэвээр үлдэнэ (эдгээр ховор өөрчлөгддөг).
+      await purgeCodeAssets();
+      await pruneAssetCache();
       if (self.registration.navigationPreload) {
         try { await self.registration.navigationPreload.enable(); } catch (e) {}
       }
@@ -111,8 +120,24 @@ self.addEventListener('fetch', (event) => {
   // Firebase live traffic — хөндөхгүй өнгөрөөнө
   if (isLiveHost(url.hostname)) return;
 
-  // Өөрийн файлууд → сүлжээг эхлээд (үргэлж шинэ), тасарвал кэшнээс
+  // ── Өөрийн файлууд ──────────────────────────────────────────
   if (url.origin === self.location.origin) {
+    // Навигац (хуудас нээх) → сүлжээг эхлээд, гэхдээ 3 секунд хүлээгээд
+    // хариу ирэхгүй бол кэшнээс өгнө. Утсан дээр удаан сүлжээтэй үед
+    // апп «нээгдэхгүй» удаан зогсдог байсныг арилгана.
+    if (req.mode === 'navigate') {
+      event.respondWith(networkFirst(req, event, 3000));
+      return;
+    }
+    // Статик хөрөнгө (js / css / icon / manifest) → КЭШЭЭС ШУУД.
+    // index.html нь app.js?v=... гэж хувилбарын дугаартай дууддаг тул
+    // хувилбар солигдмогц URL өөрчлөгдөж, кэшнээс олдохгүй → шинээр татна.
+    // Ингэснээр хуучин хувилбар «наалдаж» үлдэхгүй, харин ижил хувилбарыг
+    // дахин дахин 1MB татахаа болино.
+    if (isStaticAsset(url.pathname)) {
+      event.respondWith(cacheFirst(req, event));
+      return;
+    }
     event.respondWith(networkFirst(req, event));
     return;
   }
@@ -123,18 +148,108 @@ self.addEventListener('fetch', (event) => {
   }
 });
 
+/* ── SW-ийг ажил дуустал унтраахгүй байлгах ─────────────────── */
+function keepAlive(event, promise) {
+  try { if (event && event.waitUntil) event.waitUntil(promise); } catch (e) {}
+  return promise;
+}
+
+/* ── Статик хөрөнгө мөн эсэх ────────────────────────────────── */
+function isStaticAsset(pathname) {
+  return /\.(js|css|png|jpg|jpeg|svg|ico|woff2?|ttf|webmanifest)$/i.test(pathname) ||
+         pathname.endsWith('/manifest.json');
+}
+
+/* ── Стратеги: cache-first (статик хөрөнгө) ─────────────────── */
+// Кэшэнд байвал СҮЛЖЭЭ ХҮЛЭЭХГҮЙ шууд өгнө. Ард нь чимээгүй шинэчилнэ.
+async function purgeCodeAssets() {
+  try {
+    const cache = await caches.open(ASSET_CACHE);
+    const keys = await cache.keys();
+    await Promise.all(
+      keys
+        .filter((r) => /\.(js|css)$/i.test(new URL(r.url).pathname))
+        .map((r) => cache.delete(r))
+    );
+  } catch (e) {}
+}
+
+async function pruneAssetCache() {
+  try {
+    const cache = await caches.open(ASSET_CACHE);
+    const keys = await cache.keys();
+    if (keys.length <= ASSET_MAX) return;
+    // Хамгийн эртний бичлэгүүдийг хасна (keys нь оруулсан дарааллаар ирдэг)
+    await Promise.all(keys.slice(0, keys.length - ASSET_MAX).map((k) => cache.delete(k)));
+  } catch (e) {}
+}
+
+async function cacheFirst(req, event) {
+  const cache = await caches.open(ASSET_CACHE);
+  const hit = await cache.match(req); // ?v= хүртэл яг таарах ёстой
+  if (hit) {
+    // 🔑 URL дотор хувилбарын дугаар (?v=...) байвал тухайн хаягийн агуулга
+    // ХЭЗЭЭ Ч өөрчлөгдөхгүй — код солигдвол index.html ?v=-ээ сольж
+    // ӨӨР хаяг руу заана. Тиймээс ард нь дахин шалгах нь утгагүй бөгөөд
+    // утсан дээр нээх бүрд ~1MB дата дэмий иддэг. Огт татахгүй.
+    if (/[?&]v=/.test(new URL(req.url).search)) return hit;
+    // Хувилбаргүй хаяг (ж: икон) — кэшээс шууд өгөөд ард нь чимээгүй шинэчилнэ.
+    // ⚠️ waitUntil ЗААВАЛ — эс бөгөөс браузер бичиж дуусахаас нь өмнө
+    // service worker-ийг унтраах тул кэш ХООСОН үлддэг.
+    keepAlive(event, fetch(req).then(res => {
+      if (res && res.ok && res.type === 'basic') return cache.put(req, res.clone());
+    }).catch(() => {}));
+    return hit;
+  }
+  try {
+    const res = await fetch(req);
+    if (res && res.ok && res.type === 'basic') {
+      keepAlive(event, cache.put(req, res.clone()).catch(() => {}));
+    }
+    return res;
+  } catch (err) {
+    // Сүлжээгүй: хувилбарын дугаарыг үл тооцон хайж үзнэ
+    const loose = await cache.match(req, { ignoreSearch: true });
+    if (loose) return loose;
+    throw err;
+  }
+}
+
 /* ── Стратеги: network-first ────────────────────────────────── */
-async function networkFirst(req, event) {
+// timeoutMs өгвөл тэр хугацаанд хариу ирэхгүй бол кэшнээс өгнө.
+async function networkFirst(req, event, timeoutMs) {
   const cache = await caches.open(SHELL_CACHE);
   try {
     let res = null;
     if (event && event.preloadResponse) {
       res = await event.preloadResponse;
     }
-    if (!res) res = await fetch(req);
+    if (!res) {
+      const netP = fetch(req);
+      if (timeoutMs) {
+        const cached = await cache.match(req, { ignoreSearch: true });
+        if (cached) {
+          // Сүлжээ удаан бол кэшийг өгөөд, татаж дуусмагц кэшээ шинэчилнэ
+          res = await Promise.race([
+            netP,
+            new Promise(resolve => setTimeout(() => resolve(null), timeoutMs))
+          ]);
+          if (!res) {
+            keepAlive(event, netP.then(r => {
+              if (r && r.ok && r.type === 'basic') return cache.put(req, r.clone());
+            }).catch(() => {}));
+            return cached;
+          }
+        } else {
+          res = await netP;
+        }
+      } else {
+        res = await netP;
+      }
+    }
 
     if (res && res.ok && res.type === 'basic') {
-      cache.put(req, res.clone()).catch(() => {});
+      keepAlive(event, cache.put(req, res.clone()).catch(() => {}));
     }
     return res;
   } catch (err) {

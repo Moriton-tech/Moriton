@@ -1,6 +1,7 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/11.0.2/firebase-app.js";
 import {
-  getFirestore, doc, collection, onSnapshot, setDoc, getDoc, deleteDoc, getDocs, query, orderBy, limit
+  getFirestore, initializeFirestore, persistentLocalCache, persistentMultipleTabManager,
+  doc, collection, onSnapshot, setDoc, getDoc, deleteDoc, getDocs, query, orderBy, limit
 } from "https://www.gstatic.com/firebasejs/11.0.2/firebase-firestore.js";
 import {
   getStorage, ref as storageRef, uploadString, getDownloadURL, deleteObject
@@ -20,7 +21,23 @@ const firebaseConfig = {
 };
 
 const fbApp = initializeApp(firebaseConfig);
-const db    = getFirestore(fbApp);
+// ── 💾 Firestore дискэн кэш (IndexedDB) ───────────────────────
+// Кэшгүй үед хуудас нээх бүрд БҮХ document дахин татагддаг байсан —
+// утсан дээр, удаан сүлжээнд энэ нь хэдэн арван секунд авдаг.
+// persistentLocalCache-тай бол: эхний удаа л бүтнээр татна, дараа нь
+// зөвхөн ӨӨРЧЛӨГДСӨН document сүлжээгээр ирнэ (delta sync).
+// Олон таб зэрэг нээвэл persistentMultipleTabManager зохицуулна.
+let db;
+try {
+  db = initializeFirestore(fbApp, {
+    localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() }),
+    experimentalAutoDetectLongPolling: true // мобайл/прокси сүлжээнд стрим тасрахаас хамгаална
+  });
+  console.info('[FB] Дискэн кэш идэвхтэй (delta sync)');
+} catch (e) {
+  console.warn('[FB] Дискэн кэш эхлүүлж чадсангүй, санах ойн кэш ашиглана:', e && e.message);
+  db = getFirestore(fbApp);
+}
 const storage = getStorage(fbApp);
 const auth  = getAuth(fbApp);
 
@@ -53,10 +70,15 @@ window.__fbColQuery = async (colName) => {
 // Анхны snapshot ХООСОН байсан ч заавал callback дуудна — эс бөгөөс
 // локал кэштэй тулгах (reconcile) боломжгүй болж, компьютер бүр
 // өөр өөр жагсаалт харуулдаг.
-window.__fbColListen = (colName, callback, onError) => {
-  const colRef = collection(db, colName);
-  let firstSnap = true;
-  return onSnapshot(colRef, (snap) => {
+window.__fbColListen = (colName, callback, onError, opts) => {
+  // opts.orderField + opts.limitN өгвөл зөвхөн сүүлийн N бичлэгийг сонсоно
+  // (лог мэтийн хязгааргүй өсдөг collection-д сүлжээний ачааллыг багасгана)
+  let ref = collection(db, colName);
+  if (opts && opts.orderField && opts.limitN) {
+    ref = query(ref, orderBy(opts.orderField, 'desc'), limit(opts.limitN));
+  }
+  let firstSnap = true, firstServerPending = true;
+  return onSnapshot(ref, { includeMetadataChanges: true }, (snap) => {
     const changes = snap.docChanges().map(change => ({
       type: change.type,       // 'added' | 'modified' | 'removed'
       docId: change.doc.id,
@@ -65,7 +87,21 @@ window.__fbColListen = (colName, callback, onError) => {
     const allIds = snap.docs.map(d => d.id);
     const isFirst = firstSnap;
     firstSnap = false;
-    if (changes.length > 0 || isFirst) callback(changes, allIds, isFirst);
+    // ⚠️ fromCache: энэ snapshot дискэн кэшнээс ирсэн үү (сервэрээс биш).
+    // Кэшнээс ирсэн жагсаалтыг сервэрийн үнэн жагсаалт гэж үзэж болохгүй.
+    const fromCache = !!(snap.metadata && snap.metadata.fromCache);
+    // Холболтын бодит төлөв: fromCache=false гэдэг нь сервэртэй ЯГ ОДОО
+    // холбоотой гэсэн үг. Метадата солигдох бүрд дуудагдана (шүүлтээс өмнө).
+    try { if (window.__fbNoteConn) window.__fbNoteConn(fromCache); } catch (e) {}
+    // Сервэрээс ИРСЭН АНХНЫ snapshot — локал кэшийг сервэртэй тулгах цорын
+    // ганц зөв мөч. Кэштэй үед эхний snapshot кэшнээс ирдэг бөгөөд агуулга нь
+    // ижил бол дараагийн сервэрийн snapshot-д changes ХООСОН байна. Тиймээс
+    // зөвхөн changes-ээр шалгавал тулгах алхам хэзээ ч ажиллахгүй өнгөрнө.
+    const isFirstServer = !fromCache && firstServerPending;
+    if (!fromCache) firstServerPending = false;
+    if (changes.length > 0 || isFirst || isFirstServer) {
+      callback(changes, allIds, isFirst, fromCache, isFirstServer);
+    }
   }, onError || (() => {}));
 };
 

@@ -126,6 +126,24 @@ input, select, textarea {
   transition: background 0.4s, box-shadow 0.4s;
 }
 .sync-dot.live { background: #27ae60; box-shadow: 0 0 8px #27ae60; }
+/* Холболтын бодит төлөв (анивчихаас тусдаа) */
+.sync-dot.ok  { background: #27ae60; }
+.sync-dot.off { background: #e67e22; box-shadow: 0 0 8px rgba(230,126,34,0.7); }
+
+/* «Шинэ мэдээлэл ирлээ» товч — маягт бөглөж байхад дэлгэцийг
+   өөрөө дахин зурвал бичсэн зүйл арилах тул хэрэглэгч өөрөө дардаг */
+.rfr-chip {
+  position: fixed; left: 50%; bottom: 84px; transform: translate(-50%, 16px);
+  background: #2c3e50; color: #fff; border-radius: 999px;
+  padding: 9px 18px; font-size: 13px; font-weight: 700;
+  box-shadow: 0 6px 20px rgba(0,0,0,0.28);
+  cursor: pointer; z-index: 4900;
+  opacity: 0; pointer-events: none;
+  transition: opacity 0.25s, transform 0.25s;
+}
+.rfr-chip.show { opacity: 1; transform: translate(-50%, 0); pointer-events: auto; }
+.rfr-chip:hover { background: #1f2d3a; }
+@media (max-width: 720px) { .rfr-chip { bottom: 96px; font-size: 12px; padding: 8px 14px; } }
 .hdr-stats {
   display: flex;
   gap: 0;

@@ -1400,11 +1400,17 @@ function nav(p, opts) {
  * Skip re-render entirely on pages where user is actively editing,
  * because re-rendering would clobber unsaved input.
  */
+// Маягт бөглөж байх үед шинэчлэхийг хойшлуулсан эсэх
+let __refreshPending = false;
+
 function softRefresh() {
   const p = STATE.activePage;
-  // Skip pages with active in-progress forms — re-rendering would wipe inputs
+  // Маягт бөглөж байгаа хуудсыг дахин зурвал бичсэн зүйл арилна.
+  // ⚠️ Гэхдээ дуугүй алгасвал «шинэ дата ирэхгүй байна» гэж ойлгогдоно —
+  // тиймээс тэмдэглээд хэрэглэгчид товчоор мэдэгдэнэ.
   const editPages = new Set(['register', 'exam', 'planned']);
-  if (editPages.has(p)) return;
+  if (editPages.has(p)) { __refreshPending = true; renderRefreshChip(); return; }
+  __refreshPending = false; renderRefreshChip();
   // Save current scroll
   const main = $('#main');
   const scroll = main ? main.scrollTop : 0;
@@ -1412,6 +1418,69 @@ function softRefresh() {
   nav(p, { silent: true });
   if (main) main.scrollTop = scroll;
 }
+
+// ── 🔌 Холболтын төлөв ба гар аргаар шинэчлэх ────────────────
+// Firestore-ийн snapshot бүр «сервэрээс ирсэн үү, кэшнээс үү» гэдгээ
+// хэлдэг. Үүгээр л жинхэнэ холболтыг мэдэж болно — өмнөх ногоон цэг
+// зөвхөн бичилт болоход анивчдаг байсан тул холбогдсон эсэхийг
+// харуулдаггүй байв.
+let __fbConnected = null;   // null = хараахан мэдэгдэхгүй
+let __fbLastServerMs = 0;
+
+window.__fbNoteConn = function (fromCache) {
+  const wasConnected = __fbConnected;
+  __fbConnected = !fromCache;
+  if (__fbConnected) __fbLastServerMs = nowMs();
+  if (wasConnected !== __fbConnected) paintConnDot();
+};
+
+function paintConnDot() {
+  const d = $('#sync-dot'); if (!d) return;
+  d.classList.toggle('off', __fbConnected === false);
+  d.classList.toggle('ok', __fbConnected === true);
+  if (__fbConnected === false) {
+    d.title = 'Сервэртэй холбогдоогүй — хадгалсан зүйл энэ төхөөрөмж дээр\nхүлээгдэж байна, холбогдмогц автоматаар илгээгдэнэ';
+  } else if (__fbConnected === true) {
+    d.title = 'Сервэртэй холбоотой · шинэ мэдээлэл шууд ирнэ' +
+      (__fbLastServerMs ? '\nСүүлд: ' + new Date(__fbLastServerMs).toLocaleTimeString('mn-MN') : '');
+  } else {
+    d.title = 'Холбогдож байна…';
+  }
+}
+
+// Маягттай хуудсан дээр «шинэ мэдээлэл ирлээ» товч
+function renderRefreshChip() {
+  const c = $('#refresh-chip'); if (!c) return;
+  c.classList.toggle('show', !!__refreshPending);
+}
+
+// Гар аргаар шинэчлэх — одоогийн хуудсыг дахин зурна
+function forceRefresh(silent) {
+  const p = STATE.activePage;
+  const editPages = new Set(['register', 'exam', 'planned']);
+  if (editPages.has(p) && !silent) {
+    if (!confirm('Хуудсыг шинэчлэх үү?\n\nОдоо бөглөж байгаа маягтын бичсэн зүйл арилна.')) return;
+  }
+  __refreshPending = false; renderRefreshChip();
+  const main = $('#main'); const sc = main ? main.scrollTop : 0;
+  nav(p, { silent: true });
+  if (main) main.scrollTop = sc;
+  if (!silent) {
+    toast(__fbConnected === false
+      ? '⚠️ Шинэчиллээ — гэхдээ сервэртэй холбогдоогүй байна'
+      : '✅ Шинэчиллээ', __fbConnected === false ? 'err' : 'ok');
+  }
+}
+
+// 📱 Утсан дээр аппыг ар талаас буцаан нээхэд дэлгэц хуучин датаг
+// харуулсаар үлддэг байсан — буцаж ирэхэд дуугүй дахин зурна.
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden || !STATE.user) return;
+  const editPages = new Set(['register', 'exam', 'planned']);
+  if (editPages.has(STATE.activePage)) { renderRefreshChip(); return; }
+  forceRefresh(true);
+});
+window.addEventListener('online', () => { if (STATE.user) setTimeout(() => forceRefresh(true), 1200); });
 
 let __navSetupDone = false;
 function setupNav() {
@@ -1427,6 +1496,8 @@ function setupNav() {
     $('#drawer').classList.remove('show');
     $('#drawer-bd').classList.remove('show');
   });
+  const sd = $('#sync-dot');
+  if (sd) { sd.style.cursor = 'pointer'; sd.addEventListener('click', () => forceRefresh()); }
   $('#ni-sync').addEventListener('click', openServicePrices);
   if ($('#ni-sync2')) $('#ni-sync2').addEventListener('click', openServicePrices);
 }
@@ -9180,6 +9251,8 @@ function initApp() {
   loadAll();
   updateBadges();
   renderDashboard();
+  paintConnDot();
+  renderRefreshChip();
 
   document.addEventListener('mousemove', bumpActivity, { passive: true });
   document.addEventListener('touchstart', bumpActivity, { passive: true });
@@ -9783,6 +9856,15 @@ const FB_COLLECTIONS = [
   'staff', 'doctors', 'users', 'logs', 'deletedExams', 'labs', 'trips'
 ];
 
+// 📉 Хязгааргүй өсдөг collection-уудыг бүтнээр нь татахгүй — зөвхөн сүүлийн N.
+// Лог хэдэн арван мянга болоход хуудас нээх бүрд бүгдийг татаж, утсан дээр
+// эхлэх хугацааг эрс уртасгадаг байсан. Админы харагч ямар ч тохиолдолд
+// сүүлийн 200-г л харуулдаг.
+const FB_COL_LIMITS = {
+  logs:         { orderField: 'log_ms',    limitN: 400 },
+  deletedExams: { orderField: 'deletedAt', limitN: 200 }
+};
+
 function fbStartListening() {
   if (!window.__fbReady || !window.__fbColListen) return;
   _fbMarkInitialLoadDone(); // анхны ачаалал дуусах хүртэл render хийхгүй
@@ -9815,7 +9897,7 @@ function fbStartListening() {
   FB_COLLECTIONS.forEach(colName => {
     if (__fbUnsubs[colName]) return;
     let _firstSnap = false; // энэ collection-ийн эхний snapshot ирсэн эсэх
-    __fbUnsubs[colName] = window.__fbColListen(colName, (changes, allIds, isFirst) => {
+    __fbUnsubs[colName] = window.__fbColListen(colName, (changes, allIds, isFirst, fromCache, isFirstServer) => {
       // Эхний snapshot тэмдэглэх
       if (!_firstSnap) {
         _firstSnap = true;
@@ -9831,8 +9913,11 @@ function fbStartListening() {
       });
       // Анхны snapshot дээр локал кэшийг сервэртэй тулгана —
       // өөр компьютер дээр устгагдсан stale бичлэгүүдийг хасна
-      if (isFirst && colName === 'waiting') _fbReconcileWaiting(allIds);
-    }, (err) => console.error('[FB] onSnapshot алдаа (' + colName + '):', err));
+      // ⚠️ Тулгах алхмыг ЗӨВХӨН сервэрээс ирсэн анхны snapshot дээр хийнэ.
+      // Дискэн кэшийн allIds нь сервэрийн үнэн жагсаалт БИШ — үүгээр тулгавал
+      // өөр компьютер дээр нэмсэн бичлэгийг «устсан» гэж үзэж алга болгоно.
+      if (isFirstServer && colName === 'waiting') _fbReconcileWaiting(allIds);
+    }, (err) => console.error('[FB] onSnapshot алдаа (' + colName + '):', err), FB_COL_LIMITS[colName]);
   });
 }
 
