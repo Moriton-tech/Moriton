@@ -1065,6 +1065,18 @@ function escHTML(s) {
 
 // ----- TOAST -----
 let toastTimer;
+// 🛡 Гүйцэтгэлийн алдааг чимээгүй өнгөрөөхгүй — хэрэглэгчид товч мессежээр харуулна
+let __lastErrToastMs = 0;
+function _showJsError(msg) {
+  try {
+    const m = String(msg || '').replace(/^Uncaught\s*/i, '').slice(0, 160);
+    if (!m || /ResizeObserver|Script error\.?$/i.test(m)) return;
+    const now = Date.now(); if (now - __lastErrToastMs < 3000) return; __lastErrToastMs = now;
+    if (typeof toast === 'function' && $('#toast')) toast('⚠️ Програмын алдаа: ' + m, 'err');
+  } catch (_) {}
+}
+window.addEventListener('error', ev => { console.error('[JS]', ev.message, ev.filename, ev.lineno); _showJsError(ev.message); });
+window.addEventListener('unhandledrejection', ev => { const r = ev.reason; const m = (r && (r.message || r.code)) || String(r); console.error('[JS promise]', m); if (!/permission|unavailable|network|offline/i.test(m)) _showJsError(m); });
 function toast(msg, type) {
   const t = $('#toast');
   t.className = ''; void t.offsetWidth;
@@ -6832,7 +6844,6 @@ const EXPORT_FIELDS = {
     ['@route',      'Маршрут',        'route',            'Явсан аймгууд', "Route (provinces visited)"],
     ['@team',       'Баг (эмч нар)',  'team',             'Явцын эмч нар', "Veterinarians on the trip"],
     ['docName',     'Ахлах эмч',      'lead_doctor',      'Багийн ахлах эмч', "Lead veterinarian"],
-    ['owner',       'Эзэн (анхдагч)', 'default_owner',    'Анхдагч эзэмшигч', "Default owner for horses on this trip"],
     ['@n',          'Үзлэгийн тоо',   'exam_count',       'Явцад шивсэн үзлэг', "Exams recorded on this trip"],
     ['@amount',     'Нийт дүн',       'total_amount',     '₮', "Total invoiced amount (MNT)"],
     ['@statusMn',   'Төлөв',          'status',           'Нээлттэй / Хаагдсан', "Open / Closed"],
@@ -7310,7 +7321,6 @@ function renderExportSummary() {
 // Ингэснээр Санхүү, Түүх, KPI, Тайлан, Урамшуулал, Экспорт бүгд
 // нэг л exams жагсаалтаас уншиж, «Төлөвлөгөөт» гэж ялгаж харуулна.
 // ============================================================
-const PLANNED_DEFAULT_OWNER = 'Морьтон адуу үржүүлэг';
 function isPlanned(e) { return !!(e && e.kind === 'planned'); }
 function kindBadge(e, small) {
   return isPlanned(e) ? '<span class="badge b-p" style="font-size:' + (small ? '9px' : '10px') + ';margin-left:4px" title="Төлөвлөгөөт үзлэг">ТҮ</span>' : '';
@@ -7354,7 +7364,6 @@ function renderPlanned() {
   ['pl-t-doc1'].forEach(id => { const el = $('#' + id); if (el && !el.options.length) el.innerHTML = docOpts(''); });
   ['pl-t-doc2', 'pl-t-doc3'].forEach(id => { const el = $('#' + id); if (el && !el.options.length) el.innerHTML = docOpts('', true); });
   if ($('#pl-t-date') && !$('#pl-t-date').value) $('#pl-t-date').value = todayStr();
-  if ($('#pl-t-owner') && !$('#pl-t-owner').value) $('#pl-t-owner').value = PLANNED_DEFAULT_OWNER;
 
   // Явцын жагсаалт (шинэ → хуучин)
   const trips = STATE.trips.slice().sort((a, b) => (b.date || '') < (a.date || '') ? -1 : (b.date || '') > (a.date || '') ? 1 : (b.ms || 0) - (a.ms || 0));
@@ -7373,6 +7382,9 @@ function renderPlanned() {
 function selectTrip(id) { STATE.selectedTrip = id; renderPlanned(); }
 
 function saveTrip() {
+  try { return _saveTrip(); } catch (e) { console.error('[saveTrip]', e); toast('⚠️ Хадгалахад алдаа: ' + (e && e.message || e), 'err'); }
+}
+function _saveTrip() {
   const v = id => (($('#' + id) || {}).value || '').trim();
   const date = v('pl-t-date'), route = v('pl-t-route');
   if (!date) { toast('Огноо оруулна уу', 'err'); return; }
@@ -7382,7 +7394,7 @@ function saveTrip() {
   if (!docs.length) { toast('Багийн эмч сонгоно уу', 'err'); return; }
   const t = { id: uid(), date, endDate: v('pl-t-end') || date, route, location: route, province: '', soum: '',
     docIds: docs.map(d => d.id), docId: docs[0].id, docName: docs[0].name, assistDocId: docs[1] ? docs[1].id : '', assistName: docs[1] ? docs[1].name : '',
-    owner: v('pl-t-owner') || PLANNED_DEFAULT_OWNER, note: v('pl-t-note'), status: 'open',
+    note: v('pl-t-note'), status: 'open',
     createdBy: (STATE.user && STATE.user.name) || '', ms: nowMs() };
   if (!Array.isArray(STATE.trips)) STATE.trips = [];
   STATE.trips.push(t); STATE.selectedTrip = t.id;
@@ -7442,6 +7454,7 @@ function renderTripDetail() {
   const lastEx = ex[0] || {};
   const stickyProv = (PL_STICKY.tripId === t.id && PL_STICKY.province) || lastEx.province || '';
   const stickySoum = (PL_STICKY.tripId === t.id && PL_STICKY.soum !== undefined) ? PL_STICKY.soum : (lastEx.soum || '');
+  const stickyOwner = (PL_STICKY.tripId === t.id && PL_STICKY.owner !== undefined) ? PL_STICKY.owner : (lastEx.owner || '');
   const byProv = {}; ex.forEach(e => { const k = e.province || '—'; byProv[k] = (byProv[k] || 0) + 1; });
   host.innerHTML = `
     <div class="card">
@@ -7466,7 +7479,6 @@ function renderTripDetail() {
         <div class="fld"><label>Эмч 1 (ахлах)</label><select class="inp" onchange="editTripField('doc0',this.value)">${docOpts(ids3[0])}</select></div>
         <div class="fld"><label>Эмч 2</label><select class="inp" onchange="editTripField('doc1',this.value)">${docOpts(ids3[1], true)}</select></div>
         <div class="fld"><label>Эмч 3</label><select class="inp" onchange="editTripField('doc2',this.value)">${docOpts(ids3[2], true)}</select></div>
-        <div class="fld"><label>Эзэн (анхдагч)</label><input class="inp" value="${escHTML(t.owner || '')}" onchange="editTripField('owner',this.value)"></div>
       </div>
     </div>
 
@@ -7488,7 +7500,7 @@ function renderTripDetail() {
       <div class="fg r4" style="margin-top:8px">
         <div class="fld"><label>Зүс (нэр) *</label><input class="inp" id="pl-e-horse" placeholder="ж: Хээр" list="pl-horse-dl" autocomplete="off"><datalist id="pl-horse-dl"></datalist></div>
         <div class="fld"><label>Нас</label><input class="inp" id="pl-e-age" placeholder="ж: 5"></div>
-        <div class="fld"><label>Эзэн</label><input class="inp" id="pl-e-owner" value="${escHTML(t.owner || PLANNED_DEFAULT_OWNER)}"></div>
+        <div class="fld"><label>Эзэн</label><input class="inp" id="pl-e-owner" value="${escHTML(stickyOwner)}" placeholder="сонголттой"></div>
         <div class="fld"><label>Утас</label><input class="inp" id="pl-e-phone"></div>
       </div>
       <div class="fg r2" style="margin-top:8px">
@@ -7588,7 +7600,7 @@ function renderPlSvcs() {
   updatePlTotal();
 }
 function updatePlTotal() { if (PL_DRAFT.manualTotal) return; const t = PL_DRAFT.services.reduce((a, b) => a + (parseFloat(b.price) || 0), 0); if ($('#pl-e-total')) $('#pl-e-total').value = t; if ($('#pl-e-total-mode')) $('#pl-e-total-mode').textContent = '(авто)'; }
-function addPlMed(name) { name = (name || '').trim(); if (!name) return; if (!PL_DRAFT.meds.find(x => x.name === name)) PL_DRAFT.meds.push({ name, note: '' }); renderPlMeds(); }
+function addPlMed(name) { name = String(name == null ? '' : name).trim(); if (!name) return; if (!PL_DRAFT.meds.find(x => x.name === name)) PL_DRAFT.meds.push({ name, note: '' }); renderPlMeds(); }
 function renderPlMeds() {
   const w = $('#pl-med-chips'); if (!w) return;
   w.innerHTML = PL_DRAFT.meds.length ? PL_DRAFT.meds.map((m, i) => `<div style="display:flex;align-items:center;gap:6px;background:var(--input);border-radius:8px;padding:5px 8px;margin-bottom:4px"><span style="font-size:12px;font-weight:700;min-width:110px">${escHTML(m.name)}</span><input class="inp" data-i="${i}" value="${escHTML(m.note || '')}" placeholder="тун, заавар" style="flex:1;padding:4px 8px;font-size:12px"><button class="btn btn-r btn-xs" data-rm="${i}">✕</button></div>`).join('') : '<div class="muted" style="font-size:12px">Эм сонгоогүй</div>';
@@ -7604,6 +7616,9 @@ function clearPlannedForm() {
 
 // ── Хадгалах: адуу (upsert) + үзлэг + санхүү + эмчийн статистик + шинжилгээ ──
 function savePlannedExam() {
+  try { return _savePlannedExam(); } catch (e) { console.error('[savePlannedExam]', e); toast('⚠️ Хадгалахад алдаа: ' + (e && e.message || e), 'err'); }
+}
+function _savePlannedExam() {
   const t = tripById(STATE.selectedTrip); if (!t) { toast('Явц сонгоно уу', 'err'); return; }
   const v = id => (($('#' + id) || {}).value || '').trim();
   const horseName = v('pl-e-horse'), diag = v('pl-e-diag'), examNum = v('pl-e-num');
@@ -7613,7 +7628,7 @@ function savePlannedExam() {
   const dup = findExamNumDuplicate(examNum);
   if (dup) { toast('⚠️ ' + examNum + ' дугаар аль хэдийн байна (' + (dup.rec.horse || '') + ')', 'err'); $('#pl-e-num').focus(); return; }
   if (!PL_DRAFT.services.length && !confirm('Үйлчилгээ сонгоогүй байна. Үйлчилгээгүйгээр хадгалах уу?')) return;
-  const owner = v('pl-e-owner') || t.owner || PLANNED_DEFAULT_OWNER, phone = v('pl-e-phone');
+  const owner = v('pl-e-owner'), phone = v('pl-e-phone');
   const province = v('pl-e-prov'), soum = v('pl-e-soum');
   if (!province) { toast('Аймаг сонгоно уу', 'err'); $('#pl-e-prov').focus(); return; }
   const date = v('pl-e-date') || t.date, time = v('pl-e-time');
@@ -7622,7 +7637,9 @@ function savePlannedExam() {
   if (!doc) { toast('Эмч сонгоно уу', 'err'); return; }
 
   // Адуу: зүс + эзэн + аймгаар олно (ИАБД хээрийн үзлэгт байхгүй); байхгүй бол шинээр бүртгэнэ
-  let horse = (STATE.horses || []).find(h => (h.name || '').trim().toLowerCase() === horseName.toLowerCase() && (h.owner || '').trim().toLowerCase() === owner.toLowerCase() && (!h.province || h.province === province));
+  // Зарим адууны нэр/эзэн тоо хэлбэрээр хадгалагдсан байж болно (ж: 12) — String()-ээр хамгаална
+  const _s = x => (x == null ? '' : String(x)).trim().toLowerCase();
+  let horse = (STATE.horses || []).find(h => h && _s(h.name) === horseName.toLowerCase() && _s(h.owner) === owner.toLowerCase() && (!h.province || h.province === province));
   if (!horse) {
     horse = { id: uid(), name: horseName, owner, phone, iabd: '', age: v('pl-e-age'), breed: '', mark: '', province, soum, date, extra: 'Төлөвлөгөөт үзлэг: ' + tripLabel(t), createdAt: nowMs(), ms: nowMs(), kind: 'planned' };
     STATE.horses.push(horse); fbSaveRecord('horses', horse);
@@ -7651,7 +7668,7 @@ function savePlannedExam() {
   updateBadges();
   toast('✅ ' + horseName + ' (' + examNum + ') хадгалагдлаа' + (labN ? ' · 🧪 ' + labN + ' шинжилгээ' : ''), 'ok');
   // Аймаг/сум/эмч/огноог дараагийн маягтад хэвээр үлдээнэ, адууны талбаруудыг цэвэрлэнэ
-  PL_STICKY = { tripId: t.id, province, soum, docId: doc.id, asstId: asst ? asst.id : '' };
+  PL_STICKY = { tripId: t.id, province, soum, owner, docId: doc.id, asstId: asst ? asst.id : '' };
   const keepDate = date;
   renderPlanned();
   if ($('#pl-e-date')) $('#pl-e-date').value = keepDate;
