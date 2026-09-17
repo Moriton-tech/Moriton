@@ -250,7 +250,9 @@ async function addLabResultImages(labId, fileList) {
         });
         ok++;
       } catch (upErr) {
-        toast('⛔ Storage-д илгээж чадсангүй: ' + (upErr.message || 'алдаа'), 'err');
+        toast('⛔ Хариу илгээж чадсангүй: ' +
+          (typeof storageErrMsg === 'function' ? storageErrMsg(upErr) : (upErr.message || 'алдаа')), 'err');
+        console.error('[Storage] lab-results бичих алдаа:', path, upErr);
       }
     } catch (err) {
       toast(err.message || 'Зураг боловсруулж чадсангүй', 'err');

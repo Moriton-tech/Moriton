@@ -1419,6 +1419,25 @@ function softRefresh() {
   if (main) main.scrollTop = scroll;
 }
 
+// ── 🖼 Storage-ийн алдааг хүн ойлгохоор тайлбарлах ───────────
+// Firebase-ийн эх мессеж англи, техникийн хэллэгтэй тул эмч нар юу
+// болсныг ойлгодоггүй. Хамгийн түгээмэл шалтгаан нь Storage-ийн
+// хамгаалалтын дүрэмд тухайн зам нэмэгдээгүй байх явдал.
+function storageErrMsg(err) {
+  const code = (err && (err.code || '')) + '';
+  const msg  = (err && (err.message || '')) + '';
+  if (/unauthorized|permission/i.test(code + msg)) {
+    return 'Storage-ийн зөвшөөрөл алга. Админ: Firebase Console → Storage → ' +
+           'Rules хэсэгт энэ зам нэмэгдээгүй байна (storage.rules файлыг харна уу).';
+  }
+  // ⚠️ Дараалал чухал: storage/retry-limit-exceeded дотор «exceeded» байдаг тул
+  //    сүлжээний шалгалтыг багтаамжийнхаас ӨМНӨ хийнэ.
+  if (/retry|network|timeout|unreachable|offline/i.test(code + msg)) return 'Сүлжээ тасарлаа. Холболтоо шалгаад дахин оролдоно уу.';
+  if (/quota/i.test(code + msg)) return 'Storage-ийн багтаамж дүүрсэн байна. Админд мэдэгдэнэ үү.';
+  if (/canceled/i.test(code + msg)) return 'Илгээх үйлдэл цуцлагдлаа.';
+  return msg || 'тодорхойгүй алдаа';
+}
+
 // ── 🔌 Холболтын төлөв ба гар аргаар шинэчлэх ────────────────
 // Firestore-ийн snapshot бүр «сервэрээс ирсэн үү, кэшнээс үү» гэдгээ
 // хэлдэг. Үүгээр л жинхэнэ холболтыг мэдэж болно — өмнөх ногоон цэг
@@ -2102,7 +2121,8 @@ function openExamDetail(eid) {
             successCount++;
           } catch (upErr) {
             // base64 fallback ХОРИОТОЙ — Firestore/localStorage-г дүүргэнэ
-            toast('⛔ Зураг Storage-д илгээж чадсангүй: ' + (upErr.message || 'алдаа') + '. Дахин оролдоно уу.', 'err');
+            toast('⛔ Зураг илгээж чадсангүй: ' + storageErrMsg(upErr), 'err');
+            console.error('[Storage] exam-images бичих алдаа:', path, upErr);
           }
         } catch (err) {
           toast(err.message || 'Зураг боловсруулж чадсангүй', 'err');
@@ -2784,7 +2804,8 @@ async function addExamImages(fileList) {
         e.images.push({ id: imgId, url: url, path: path, ms: nowMs() });
         successCount++;
       } catch (upErr) {
-        toast('⛔ Зураг Storage-д илгээж чадсангүй: ' + (upErr.message || 'алдаа') + '. Дахин оролдоно уу.', 'err');
+        toast('⛔ Зураг илгээж чадсангүй: ' + storageErrMsg(upErr), 'err');
+        console.error('[Storage] exam-images бичих алдаа:', path, upErr);
       }
     } catch (err) {
       toast(err.message || 'Зураг боловсруулж чадсангүй', 'err');
