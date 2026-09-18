@@ -113,11 +113,53 @@ window.__fbDocListen = (docRef, callback, onError) => {
 // ── onSnapshot backward compat ─────────────────────────────────
 window.__fbOnSnapshot = onSnapshot;
 
+// ── 🔑 Нэвтрэлт/токен баталгаажуулах ──────────────────────────
+// Anonymous хэрэглэгчийн ID токен 1 цагийн хугацаатай. Сүлжээ тасарсан
+// үед SDK-ийн автомат шинэчлэлт (securetoken.googleapis.com) унаж,
+// хуудсыг дахин ачаалах хүртэл ХУУЧИН токенээр хүсэлт явуулсаар байдаг.
+// Storage тэр токеныг хүлээж авахгүй — 403 (storage/unauthorized).
+// Тиймээс зураг илгээхийн ӨМНӨ токеныг шалгана, шаардвал сэргээнэ.
+window.__fbEnsureAuth = async (forceRefresh) => {
+  if (!auth.currentUser) {
+    await signInAnonymously(auth);          // нэвтрэлт унасан бол дахин үүсгэнэ
+  }
+  if (!auth.currentUser) throw new Error('Нэвтрэлт үүсгэж чадсангүй');
+  await auth.currentUser.getIdToken(!!forceRefresh); // forceRefresh=true → шинэ токен
+  return auth.currentUser.uid;
+};
+
+// Токены эрүүл мэндийг шалгах (оношилгоонд)
+window.__fbTokenCheck = async () => {
+  try {
+    if (!auth.currentUser) return { ok: false, reason: 'нэвтрэлт байхгүй' };
+    const res = await auth.currentUser.getIdTokenResult(true); // албадан шинэчилнэ
+    return { ok: true, expires: res.expirationTime || '' };
+  } catch (e) {
+    return { ok: false, reason: (e && (e.code || e.message)) || 'алдаа' };
+  }
+};
+
 // ── Firebase Storage ───────────────────────────────────────────
 window.__fbUploadImage = async (path, dataUrl) => {
-  const r = storageRef(storage, path);
-  await uploadString(r, dataUrl, "data_url");
-  return await getDownloadURL(r);
+  const put = async () => {
+    const r = storageRef(storage, path);
+    await uploadString(r, dataUrl, "data_url");
+    return await getDownloadURL(r);
+  };
+  try {
+    await window.__fbEnsureAuth(false);
+    return await put();
+  } catch (err) {
+    const code = (err && (err.code || err.message)) + '';
+    // 403 гарвал токен хуучирсан байж магадгүй — НЭГ УДАА шинэ токеноор дахин оролдоно.
+    // (Дүрэм үнэхээр хаасан бол хоёр дахь оролдлого мөн уналаа гэж алдаа буцаана.)
+    if (/unauthorized|permission|403/i.test(code)) {
+      console.warn('[FB] Storage 403 — токен шинэчилж дахин оролдож байна…');
+      await window.__fbEnsureAuth(true);
+      return await put();
+    }
+    throw err;
+  }
 };
 window.__fbDeleteImageByUrl = async (url) => {
   try {
@@ -134,7 +176,8 @@ window.__fbAuthInfo = () => ({
   uid:       auth.currentUser ? auth.currentUser.uid : null,
   anonymous: auth.currentUser ? !!auth.currentUser.isAnonymous : null,
   bucket:    firebaseConfig.storageBucket || '',
-  projectId: firebaseConfig.projectId || ''
+  projectId: firebaseConfig.projectId || '',
+  online:    (typeof navigator !== 'undefined') ? navigator.onLine : true
 });
 
 // Тодорхой замаар устгах (оношилгооны туршилтын файлыг цэвэрлэхэд)

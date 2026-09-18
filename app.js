@@ -1471,7 +1471,23 @@ async function runStorageDiag() {
   rows.push(['Төсөл (project)', info.projectId || '—', !!info.projectId]);
   rows.push(['Storage bucket', info.bucket || '—', !!info.bucket]);
   rows.push(['Firebase бэлэн', info.ready ? 'тийм' : 'ҮГҮЙ', !!info.ready]);
+  rows.push(['Интернэт (браузер)', info.online === false ? 'ТАСАРСАН' : 'холбоотой', info.online !== false]);
   rows.push(['Нэвтрэлт (uid)', info.uid ? (info.uid.slice(0, 10) + '… ' + (info.anonymous ? '(anonymous)' : '')) : 'НЭВТРЭЭГҮЙ', !!info.uid]);
+
+  // 🔑 Токены шалгалт — Storage 403-ийн хамгийн далд шалтгаан.
+  // Токен хуучирсан бол дүрэм ямар ч зөв байсан 403 гарна.
+  let tok = { ok: false, reason: 'шалгаагүй' };
+  if (typeof window.__fbTokenCheck === 'function') {
+    try { tok = await window.__fbTokenCheck(); } catch (e) { tok = { ok: false, reason: (e && e.message) || 'алдаа' }; }
+  }
+  let tokTxt;
+  if (tok.ok) {
+    tokTxt = 'хүчинтэй';
+    if (tok.expires) tokTxt += ' (дуусах: ' + new Date(tok.expires).toLocaleTimeString('mn-MN') + ')';
+  } else {
+    tokTxt = 'ШИНЭЧЛЭГДЭХГҮЙ БАЙНА — ' + (tok.reason || '');
+  }
+  rows.push(['Нэвтрэлтийн токен', tokTxt, !!tok.ok]);
 
   let dataUrl = '';
   try { dataUrl = sdTinyJpeg(); } catch (e) {}
@@ -1498,7 +1514,15 @@ async function runStorageDiag() {
   // ── Дүгнэлт ──
   let verdict = '';
   const okN = results.filter(r => r.ok).length;
-  if (!info.uid) {
+  if (info.uid && !tok.ok) {
+    verdict = '<b>Шалтгаан: нэвтрэлтийн токен шинэчлэгдэхгүй байна.</b><br>' +
+      'Anonymous хэрэглэгчийн токен 1 цаг тутам шинэчлэгддэг. Сүлжээ тасарсан үед ' +
+      'тэр шинэчлэлт (<code>securetoken.googleapis.com</code>) унаж, хуучин токеноор хүсэлт явсаар байдаг — ' +
+      'Storage үүнийг хүлээж авахгүй тул <b>дүрэм зөв байсан ч 403 гарна</b>.<br>' +
+      '<b>Хийх:</b> (1) Интернэтээ тогтвортой болгоод хуудсыг <b>Ctrl+F5</b>-ээр бүрэн шинэчилнэ. ' +
+      '(2) Дахин шалгана — токен «хүчинтэй» болсон эсэхийг хараарай. ' +
+      '(3) Дараа нь зураг оруулж үзнэ.';
+  } else if (!info.uid) {
     verdict = '<b>Шалтгаан: нэвтрэлт үүсээгүй байна.</b><br>' +
       'Firebase Anonymous Auth ажиллаагүй тул Storage бүх хүсэлтийг татгалзана — зам, дүрэм хамаагүй.<br>' +
       '<b>Хийх:</b> Firebase Console → Build → <b>Authentication</b> → Sign-in method → <b>Anonymous</b> → Enable. ' +
@@ -1508,7 +1532,7 @@ async function runStorageDiag() {
     verdict = '<b>✅ Storage бүрэн ажиллаж байна</b> — хоёр зам хоёулаа зөвшөөрөгдлөө. ' +
       'Хэрэв зураг оруулахад алдаа гарсаар байвал файлын хэмжээ/төрөл эсвэл сүлжээний асуудал байж магадгүй.';
   } else if (okN === 0) {
-    verdict = '<b>Шалтгаан: Storage-ийн дүрэм бүх замыг хааж байна.</b><br>' +
+    verdict = '<b>Шалтгаан: Storage-ийн дүрэм бүх замыг хааж байна</b> (токен хүчинтэй мөртлөө хоёр зам хоёулаа хаалттай).<br>' +
       '<b>Хийх:</b> Firebase Console → Build → <b>Storage</b> → <b>Rules</b>. ' +
       'Дээд талд bucket сонгох жагсаалт байвал <code>' + escHTML(info.bucket) + '</code>-ийг сонгосон эсэхээ шалгаад ' +
       'репо дахь <code>storage.rules</code> файлын агуулгыг бүтнээр буулгаж <b>Publish</b> дарна.';
