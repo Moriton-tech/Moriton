@@ -8644,6 +8644,7 @@ function openEditHorse(id) {
   const h = STATE.horses.find(x => x.id === id);
   if (!h) return;
   STATE._editHorse = h;
+  STATE._editHorseId = String(h.id); // заалт салсан ч id-аар нь дахин олно
   const m = document.getElementById('edit-horse-modal');
   if (!m) return;
   document.getElementById('eh-name').value = h.name || '';
@@ -8661,7 +8662,8 @@ function openEditHorse(id) {
 }
 
 function saveEditHorse() {
-  const h = STATE._editHorse;
+  // Заалт салсан байж болзошгүй тул ЭХЛЭЭД id-аар нь амьд бичлэгийг олно
+  const h = (STATE.horses || []).find(x => String(x.id) === String(STATE._editHorseId)) || STATE._editHorse;
   if (!h) return;
   if (!canEditData()) { toast('⛔ Засах эрхгүй', 'err'); return; }
   const before = { ...h };
@@ -8725,6 +8727,7 @@ function openEditExam(id) {
   const e = STATE.exams.find(x => x.id === id);
   if (!e) return;
   STATE._editExam = e;
+  STATE._editExamId = String(e.id); // заалт салсан ч id-аар нь дахин олно
   const m = document.getElementById('edit-exam-modal');
   if (!m) return;
   document.getElementById('ee-examnum').value = e.examNum || '';
@@ -8854,7 +8857,8 @@ function ee_syncAmountFromSvcs() {
 }
 
 function saveEditExam() {
-  const e = STATE._editExam;
+  // Заалт салсан байж болзошгүй тул ЭХЛЭЭД id-аар нь амьд бичлэгийг олно
+  const e = (STATE.exams || []).find(x => String(x.id) === String(STATE._editExamId)) || STATE._editExam;
   if (!e) return;
   if (!canEditData()) { toast('⛔ Засах эрхгүй', 'err'); return; }
 
@@ -9866,7 +9870,14 @@ function fbApplyRecord(colName, docData) {
         });
         // 🛡 ИАБД хамгаалалт: remote дээр хоосон ч локалд байвал хадгална
         if (colName === 'horses' && !r.iabd && lc.iabd) r.iabd = lc.iabd;
-        STATE[colName][idx] = r;
+        // ⚠️ ОБЪЕКТЫГ СОЛИХГҮЙ — байгаа объект дээр нь шинэчилнэ.
+        // Өмнө нь `STATE[colName][idx] = r` гэж СОЛЬДОГ байсан. Гэтэл засварын
+        // цонх (морь/үзлэг засах) хуучин объектыг заалтаар барьдаг тул цонх
+        // нээлттэй байхад snapshot ирвэл заалт САЛЖ, хэрэглэгчийн бичсэн
+        // өөрчлөлт «✅ Хадгалагдлаа» гэж харагдсаар атлаа замхардаг байсан.
+        // Object.assign нь объектын хаягийг хадгалдаг тул заалт хүчинтэй үлдэнэ.
+        Object.keys(lc).forEach(k => { if (!(k in r)) delete lc[k]; });
+        Object.assign(lc, r);
       }
     }
     _scheduleLsSave(colName);

@@ -4,44 +4,29 @@ rules_version = '2';
 //  Морьтон Адууны Төв — Firebase Storage хамгаалалтын дүрэм
 // ------------------------------------------------------------
 //  Апп зөвхөн ХОЁР зам руу зураг байршуулдаг:
-//    exam-images/{үзлэгийн id}/{зургийн id}.jpg   — үзлэгийн зураг
-//    lab-results/{шинжилгээний id}/{зургийн id}.jpg — шинжилгээний хариу
+//    exam-images/{үзлэгийн id}/{зургийн id}.jpg   — үзлэгийн зураг (app.js)
+//    lab-results/{шинжилгээний id}/{зургийн id}.jpg — шинжилгээний хариу (lab.js)
 //
-//  ⚠️ lab-results/ зам дүрэмд байхгүй байсан тул шинжилгээний хариу
-//     оруулахад "storage/unauthorized" алдаа гардаг байсан (2026-09-17).
-//     Шинэ зам нэмэх бүрдээ ЭНД бас нэмнэ.
+//  ⚠️ Энэ файлыг Firebase Console → Build → Storage → Rules хэсэгт
+//     БҮТНЭЭР нь буулгаад Publish дарна. (Firestore Database → Rules
+//     БИШ — тэнд буулгавал зураг дээр огт нөлөөлөхгүй.)
 //
-//  Нэвтрэлт: апп Firebase Anonymous Auth ашигладаг тул request.auth
-//  нь бүртгэлтэй хэрэглэгч биш, зүгээр л "аппаар дамжсан" гэсэн утга.
-//  Аппын жинхэнэ нэвтрэлт (эмчийн нэр/нууц үг) Firestore дотор шалгагддаг.
+//  Санаатайгаар ЭНГИЙН бичсэн: туслах функц, файлын төрлийн шалгалт
+//  байхгүй. Урьд нь contentType шалгадаг хувилбар байсан бөгөөд тэр нь
+//  зарим тохиолдолд хүсэлтийг санамсаргүй хаах эрсдэлтэй байсан.
 // ============================================================
 
 service firebase.storage {
   match /b/{bucket}/o {
 
-    function signedIn() {
-      return request.auth != null;
-    }
-
-    // Зөвхөн зураг, 10MB хүртэл (апп нь байршуулахын өмнө жижигрүүлдэг)
-    function isImage() {
-      return request.resource != null
-          && request.resource.contentType.matches('image/.*')
-          && request.resource.size < 10 * 1024 * 1024;
-    }
-
     // Үзлэгийн зураг
     match /exam-images/{examId}/{fileName} {
-      allow read:           if signedIn();
-      allow create, update: if signedIn() && isImage();
-      allow delete:         if signedIn();
+      allow read, write: if request.auth != null;
     }
 
-    // Шинжилгээний хариу (lab.js)
+    // Шинжилгээний хариу
     match /lab-results/{labId}/{fileName} {
-      allow read:           if signedIn();
-      allow create, update: if signedIn() && isImage();
-      allow delete:         if signedIn();
+      allow read, write: if request.auth != null;
     }
 
     // Бусад бүх зам — хаалттай
