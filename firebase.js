@@ -1,6 +1,7 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/11.0.2/firebase-app.js";
 import {
   getFirestore, initializeFirestore, persistentLocalCache, persistentMultipleTabManager,
+  terminate, clearIndexedDbPersistence,
   doc, collection, onSnapshot, setDoc, getDoc, deleteDoc, getDocs, query, orderBy, limit
 } from "https://www.gstatic.com/firebasejs/11.0.2/firebase-firestore.js";
 import {
@@ -183,6 +184,34 @@ window.__fbAuthInfo = () => ({
 // Тодорхой замаар устгах (оношилгооны туршилтын файлыг цэвэрлэхэд)
 window.__fbDeletePath = async (path) => {
   await deleteObject(storageRef(storage, path));
+};
+
+// ── Дискэн кэш ҮНЭХЭЭР ажиллаж байгаа эсэх ────────────────────
+// initializeFirestore алдаа өгөхгүй ч IndexedDB боломжгүй бол SDK
+// чимээгүй санах ойн кэш рүү буудаг. Тиймээс IndexedDB дотор Firestore-ийн
+// сан үүссэн эсэхээр шалгана.
+window.__fbPersistenceCheck = async () => {
+  try {
+    if (!window.indexedDB) return { ok: false, detail: 'IndexedDB байхгүй' };
+    if (indexedDB.databases) {
+      const dbs = await indexedDB.databases();
+      const fs = dbs.filter(d => (d.name || '').startsWith('firestore/'));
+      if (fs.length) return { ok: true, detail: fs.map(d => d.name).join(', ') };
+      return { ok: false, detail: 'Firestore-ийн сан үүсээгүй' };
+    }
+    // Safari-ийн хуучин хувилбар: databases() байхгүй → нээж үзнэ
+    return await new Promise((res) => {
+      const rq = indexedDB.open('__mt_probe');
+      rq.onsuccess = () => { try { rq.result.close(); indexedDB.deleteDatabase('__mt_probe'); } catch (e) {} res({ ok: true, detail: 'IndexedDB нээгдэж байна (Firestore сан шалгах боломжгүй)' }); };
+      rq.onerror = () => res({ ok: false, detail: 'IndexedDB нээгдэхгүй' });
+    });
+  } catch (e) { return { ok: false, detail: e && e.message }; }
+};
+
+// ── Кэш цэвэрлэх (гацсан төхөөрөмжид) ─────────────────────────
+window.__fbResetCache = async () => {
+  try { await terminate(db); } catch (e) {}
+  try { await clearIndexedDbPersistence(db); } catch (e) { console.warn('[FB] кэш цэвэрлэх:', e && e.message); }
 };
 
 // ── Device ID — echo guard ─────────────────────────────────────

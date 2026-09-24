@@ -29,7 +29,7 @@
      ⚠️ Доорх firebaseConfig-ийг ӨӨРИЙН project-ийн утгаар СОЛИНО.
         Firebase Console → Project settings → Your apps → Web app
      ============================================================ -->
-<script type="module" src="firebase.js?v=20260918"></script>
+<script type="module" src="firebase.js?v=20260924"></script>
 
 <link rel="stylesheet" href="style.css?v=20260917a">
 </head>
@@ -1365,6 +1365,17 @@
 </div>
 
 <!-- 🔒 FINANCE PIN MODAL -->
+<div class="mod-bd" id="sync-status-modal">
+  <div class="mod" style="max-width:440px">
+    <div class="mod-t">📊 Синкийн төлөв</div>
+    <div id="ss-body" style="font-size:12.5px"></div>
+    <div class="mod-actions" style="flex-wrap:wrap;gap:6px">
+      <button class="btn btn-sm" onclick="closeModal('sync-status-modal')">Хаах</button>
+      <button class="btn btn-sm" onclick="resetLocalCache()" title="Энэ төхөөрөмжийн кэшийг цэвэрлээд сервэрээс бүгдийг дахин татна">🧹 Кэш цэвэрлэж дахин татах</button>
+      <button class="btn btn-p btn-sm" onclick="closeModal('sync-status-modal');forceRefresh()">🔄 Шинэчлэх</button>
+    </div>
+  </div>
+</div>
 <div class="mod-bd" id="fin-pin-modal">
   <div class="mod" style="max-width:360px">
     <div class="mod-t">🔑 Мөнгөн дүн харах код</div>
@@ -1522,7 +1533,7 @@
 
 <div id="print-area"></div>
 
-<script src="app.js?v=20260922"></script>
+<script src="app.js?v=20260924"></script>
 <script src="lab.js?v=20260917"></script>
 
 <!-- PWA: service worker бүртгэх, автомат шинэчлэлт, суулгах товч -->

@@ -883,8 +883,40 @@ function lsGet(k, def) {
     return v ? JSON.parse(v) : def;
   } catch(e) { return def; }
 }
+// ── localStorage: багтаамж дүүрэхийг ДУУГҮЙ өнгөрөөхгүй ──────────
+// iPhone Safari дээр localStorage ~5MB. Үзлэг олширмогц mt_exams
+// хадгалагдахаа больж, апп нээх бүрд үзлэг 0-ээс эхэлдэг байсан —
+// алдаа нь залгигдаж хэн ч мэддэггүй байв. Одоо: (1) алдааг тэмдэглэнэ,
+// (2) том жагсаалтыг ХАМГИЙН СҮҮЛИЙН бичлэгүүдээр багасгаж дахин оролдоно
+// (бүрэн хувь нь Firestore-ийн IndexedDB кэшээс ирнэ).
+const __lsStatus = { fails: {}, trimmed: {}, lastErr: '' };
+const LS_TRIMMABLE = new Set(['mt_exams', 'mt_fins', 'mt_horses', 'mt_inps', 'mt_labs', 'mt_logs', 'mt_deleted_exams', 'mt_waiting', 'mt_trips']);
+function _recMs(r) { return (r && (parseFloat(r.ms) || parseFloat(r._updatedAt) || parseFloat(r.createdAt) || parseFloat(r.log_ms) || parseFloat(r.deletedAt))) || 0; }
 function lsSet(k, v) {
-  try { localStorage.setItem(k, JSON.stringify(v)); } catch(e) {}
+  try {
+    localStorage.setItem(k, JSON.stringify(v));
+    delete __lsStatus.fails[k];
+    return true;
+  } catch (e) {
+    const msg = (e && (e.name + ': ' + e.message)) || 'алдаа';
+    __lsStatus.lastErr = msg;
+    if (!__lsStatus.fails[k]) console.warn('[LS] ' + k + ' хадгалж чадсангүй (' + msg + ') — багасгаж дахин оролдоно');
+    __lsStatus.fails[k] = msg;
+    // Багтаамж дүүрсэн бол сүүлийн N бичлэгийг л үлдээж дахин оролдоно
+    if (LS_TRIMMABLE.has(k) && Array.isArray(v) && v.length > 50) {
+      const sorted = v.slice().sort((a, b) => _recMs(b) - _recMs(a));
+      let n = Math.floor(sorted.length / 2);
+      while (n >= 50) {
+        try {
+          localStorage.setItem(k, JSON.stringify(sorted.slice(0, n)));
+          __lsStatus.trimmed[k] = { kept: n, total: v.length };
+          delete __lsStatus.fails[k];
+          return true;
+        } catch (e2) { n = Math.floor(n / 2); }
+      }
+    }
+    return false;
+  }
 }
 function loadAll() {
   STATE.horses = lsGet('mt_horses', []);
@@ -1609,6 +1641,56 @@ function forceRefresh(silent) {
   }
 }
 
+// ── 📊 Синкийн төлөвийн самбар (утсан дээр F12 байхгүй тул) ───────
+const SYNC_COL_LABELS = { horses: 'Адуу', exams: 'Үзлэг', fins: 'Санхүү', inps: 'Байрлан эмчлүүлэх', waiting: 'Хүлээлт', staff: 'Ажилтан', doctors: 'Эмч', users: 'Хэрэглэгч', logs: 'Лог', deletedExams: 'Устгасан үзлэг', labs: 'Шинжилгээ', trips: 'Явц' };
+function _fmtAgo(ms) { if (!ms) return '—'; const s = Math.round((Date.now() - ms) / 1000); return s < 60 ? s + ' сек' : s < 3600 ? Math.round(s / 60) + ' мин' : Math.round(s / 3600) + ' цаг'; }
+async function openSyncStatus() {
+  const m = $('#sync-status-modal'); if (!m) { forceRefresh(); return; }
+  m.classList.add('show');
+  const out = $('#ss-body'); if (!out) return;
+  out.innerHTML = '<div class="muted">Шалгаж байна…</div>';
+  const info = (typeof window.__fbAuthInfo === 'function') ? window.__fbAuthInfo() : {};
+  let persist = { ok: null, detail: 'шалгах боломжгүй' };
+  try { if (window.__fbPersistenceCheck) persist = await window.__fbPersistenceCheck(); } catch (e) { persist = { ok: false, detail: e.message }; }
+  // localStorage хэмжээ
+  let lsBytes = 0; try { for (let i = 0; i < localStorage.length; i++) { const k = localStorage.key(i); lsBytes += (k.length + (localStorage.getItem(k) || '').length) * 2; } } catch (e) {}
+  const lsFail = Object.keys(__lsStatus.fails); const lsTrim = Object.keys(__lsStatus.trimmed);
+  const rows = [];
+  const row = (l, v, ok) => rows.push('<tr><td>' + escHTML(l) + '</td><td class="' + (ok === false ? 'sd-bad' : ok === true ? 'sd-ok' : '') + '">' + v + '</td></tr>');
+  row('Сервэртэй холболт', __fbConnected === false ? 'ХОЛБОГДООГҮЙ' : __fbConnected ? 'холбоотой' : 'мэдэгдэхгүй', __fbConnected);
+  row('Интернэт', info.online === false ? 'ТАСАРСАН' : 'байна', info.online !== false);
+  row('Нэвтрэлт', info.uid ? 'байна' : 'БАЙХГҮЙ', !!info.uid);
+  row('Дискэн кэш (IndexedDB)', persist.ok === true ? 'ажиллаж байна' : persist.ok === false ? 'АЖИЛЛАХГҮЙ — ' + escHTML(persist.detail || '') : escHTML(persist.detail || ''), persist.ok);
+  row('localStorage', (lsBytes / 1024 / 1024).toFixed(1) + ' MB' + (lsFail.length ? ' · ДҮҮРСЭН: ' + escHTML(lsFail.join(', ')) : lsTrim.length ? ' · багасгасан: ' + escHTML(lsTrim.map(k => k.replace('mt_', '') + ' ' + __lsStatus.trimmed[k].kept + '/' + __lsStatus.trimmed[k].total).join(', ')) : ' · хэвийн'), lsFail.length ? false : true);
+  row('Апп хувилбар', escHTML((document.querySelector('script[src^="app.js"]') || {}).src ? (document.querySelector('script[src^="app.js"]').src.split('v=')[1] || '?') : '?'), null);
+  let colRows = '';
+  FB_COLLECTIONS.forEach(c => {
+    const st = __fbColStatus[c]; const n = Array.isArray(STATE[c]) ? STATE[c].length : (c === 'deletedExams' ? (STATE.deletedExams || []).length : '—');
+    const state = !st ? '<span class="sd-bad">хариу ирээгүй</span>' : st.serverAt ? '<span class="sd-ok">сервэр ' + _fmtAgo(st.serverAt) + '</span>' : st.cacheAt ? '<span style="color:#b9770e;font-weight:700">зөвхөн кэш</span>' : '—';
+    colRows += '<tr><td>' + escHTML(SYNC_COL_LABELS[c] || c) + '</td><td>' + n + (st && st.n !== undefined && st.n !== n ? ' <span class="muted">(сервэр: ' + st.n + ')</span>' : '') + '</td><td>' + state + '</td></tr>';
+  });
+  let verdict = '';
+  if (__fbConnected === false) verdict = 'Сервэртэй холбогдоогүй байна — дата зөвхөн энэ төхөөрөмж дээр байгаа хувиар харагдана. Интернэтээ шалгана уу.';
+  else if (lsFail.length) verdict = 'localStorage дүүрсэн тул зарим жагсаалт төхөөрөмж дээр хадгалагдахгүй байна. Дискэн кэш ажиллаж байвал асуудалгүй; ажиллахгүй бол «Кэш цэвэрлэж дахин татах» дарна уу.';
+  else if (persist.ok === false) verdict = 'Дискэн кэш ажиллахгүй тул апп нээх бүрд бүх датаг сүлжээгээр татна — удаан байх нь энэ. Хувийн (private) горим, эсвэл хөтчийн хязгаарлалт байж болзошгүй.';
+  else if (FB_COLLECTIONS.some(c => { const st = __fbColStatus[c]; return st && !st.serverAt; })) verdict = 'Зарим жагсаалт сервэрээс хараахан бүрэн ирээгүй байна (эхний удаа бүтнээр татаж байгаа байх). Аппыг хааж болохгүй, хэдэн минут хүлээнэ үү.';
+  else verdict = 'Бүх жагсаалт сервэртэй тулгагдсан. Дэлгэц хуучин харагдвал «Шинэчлэх» дарна уу.';
+  out.innerHTML = '<table class="sd-tb">' + rows.join('') + '</table>' +
+    '<table class="sd-tb" style="margin-top:8px"><tr><th style="text-align:left">Жагсаалт</th><th style="text-align:left">Тоо</th><th style="text-align:left">Төлөв</th></tr>' + colRows + '</table>' +
+    '<div class="sd-verdict">' + verdict + '</div>';
+}
+async function resetLocalCache() {
+  if (!confirm('Энэ төхөөрөмж дээрх кэшийг цэвэрлээд сервэрээс бүгдийг дахин татах уу?\n\nХадгалагдаагүй (хүлээгдэж буй) бичилт байвал алдагдаж болзошгүй. Интернэт сайтай үедээ хийнэ үү.')) return;
+  try {
+    const keep = { mt_user: localStorage.getItem('mt_user'), mt_users: localStorage.getItem('mt_users') };
+    if (window.__fbResetCache) await window.__fbResetCache();
+    Object.keys(localStorage).filter(k => k.startsWith('mt_')).forEach(k => localStorage.removeItem(k));
+    if (keep.mt_user) localStorage.setItem('mt_user', keep.mt_user);
+    if (keep.mt_users) localStorage.setItem('mt_users', keep.mt_users);
+  } catch (e) { console.error('[reset]', e); }
+  location.reload();
+}
+
 // 📱 Утсан дээр аппыг ар талаас буцаан нээхэд дэлгэц хуучин датаг
 // харуулсаар үлддэг байсан — буцаж ирэхэд дуугүй дахин зурна.
 document.addEventListener('visibilitychange', () => {
@@ -1634,7 +1716,7 @@ function setupNav() {
     $('#drawer-bd').classList.remove('show');
   });
   const sd = $('#sync-dot');
-  if (sd) { sd.style.cursor = 'pointer'; sd.addEventListener('click', () => forceRefresh()); }
+  if (sd) { sd.style.cursor = 'pointer'; sd.addEventListener('click', () => openSyncStatus()); }
   $('#ni-sync').addEventListener('click', openServicePrices);
   if ($('#ni-sync2')) $('#ni-sync2').addEventListener('click', openServicePrices);
 }
@@ -10005,6 +10087,7 @@ const FB_COLLECTIONS = [
   'horses', 'exams', 'fins', 'inps', 'waiting',
   'staff', 'doctors', 'users', 'logs', 'deletedExams', 'labs', 'trips'
 ];
+const __fbColStatus = {}; // colName → { cacheAt, serverAt, lastAt, n, changes }
 
 // 📉 Хязгааргүй өсдөг collection-уудыг бүтнээр нь татахгүй — зөвхөн сүүлийн N.
 // Лог хэдэн арван мянга болоход хуудас нээх бүрд бүгдийг татаж, утсан дээр
@@ -10048,6 +10131,11 @@ function fbStartListening() {
     if (__fbUnsubs[colName]) return;
     let _firstSnap = false; // энэ collection-ийн эхний snapshot ирсэн эсэх
     __fbUnsubs[colName] = window.__fbColListen(colName, (changes, allIds, isFirst, fromCache, isFirstServer) => {
+      // 📊 Синкийн төлөв (утсан дээрх оношилгооны самбарт)
+      const st = __fbColStatus[colName] || (__fbColStatus[colName] = { cacheAt: 0, serverAt: 0, lastAt: 0, n: 0, changes: 0 });
+      st.lastAt = Date.now(); st.n = allIds.length; st.changes += changes.length;
+      if (fromCache && !st.cacheAt) st.cacheAt = Date.now();
+      if (!fromCache) st.serverAt = Date.now();
       // Эхний snapshot тэмдэглэх
       if (!_firstSnap) {
         _firstSnap = true;
