@@ -12,7 +12,7 @@
       Ингэснээр хуучин кэш устаж, бүх хэрэглэгч шинэ хувилбар авна.
    ============================================================ */
 
-const APP_VERSION = '2026-09-24-1';
+const APP_VERSION = '2026-09-25-2';
 
 const SHELL_CACHE = 'moriton-shell-' + APP_VERSION;
 /* Статик хөрөнгийн кэш — хувилбартай УЯЛДААГҮЙ.
@@ -35,6 +35,7 @@ const SHELL = [
   './index.html',
   './manifest.json',
   './icons/icon-192.png',
+  './icons/logo-256.png',
   './icons/favicon.ico'
 ];
 

@@ -892,8 +892,20 @@ function lsGet(k, def) {
 const __lsStatus = { fails: {}, trimmed: {}, lastErr: '' };
 const LS_TRIMMABLE = new Set(['mt_exams', 'mt_fins', 'mt_horses', 'mt_inps', 'mt_labs', 'mt_logs', 'mt_deleted_exams', 'mt_waiting', 'mt_trips']);
 function _recMs(r) { return (r && (parseFloat(r.ms) || parseFloat(r._updatedAt) || parseFloat(r.createdAt) || parseFloat(r.log_ms) || parseFloat(r.deletedAt))) || 0; }
+// 📦 localStorage = зөвхөн «эхлэх хуулбар». Бүрэн сан нь Firestore-ийн
+// IndexedDB кэш (2026-09-17-5). Том жагсаалтыг бүтнээр нь хуулах нь
+// (1) 5MB-д багтахгүй, (2) өөрчлөлт бүрд 100+ms стрингжүүлэлт гол урсгалд,
+// (3) давхардал. Тиймээс хамгийн сүүлийн N бичлэгийг л хадгална — апп
+// нээгдэх мөчид самбар шууд гарахад хангалттай, үлдсэн нь кэшнээс 100–300ms-д ирнэ.
+const LS_CAPS = { mt_exams: 300, mt_fins: 300, mt_horses: 600, mt_inps: 300, mt_labs: 200, mt_logs: 100, mt_deleted_exams: 30, mt_trips: 100 };
+function _capForLs(k, v) {
+  const cap = LS_CAPS[k];
+  if (!cap || !Array.isArray(v) || v.length <= cap) return v;
+  return v.slice().sort((a, b) => _recMs(b) - _recMs(a)).slice(0, cap);
+}
 function lsSet(k, v) {
   try {
+    v = _capForLs(k, v);
     localStorage.setItem(k, JSON.stringify(v));
     delete __lsStatus.fails[k];
     return true;
@@ -962,6 +974,7 @@ function loadAll() {
   STATE.finPinHash = lsGet('mt_fin_pin_hash', '') || '';
   STATE.bonusCfg = lsGet('mt_bonus_cfg', null);
   STATE.examNumCfg = lsGet('mt_examnum_cfg', null);
+  STATE.inpLocations = lsGet('mt_inp_locations', null); // null = анхдагч жагсаалт
   STATE.user = lsGet('mt_user', null);
   STATE.syncURL = ''; // Apps Script sync устгагдсан — Firebase ашиглана
   if (STATE.doctors.length === 0) STATE.doctors = [...DEFAULT_DOCS];
@@ -975,7 +988,58 @@ function loadAll() {
     lsSet('mt_doctors', STATE.doctors);
   }
 }
+// ── 🗂 Адууны индекс — O(n²) хайлтыг арилгана ─────────────────
+// Түүх/Тайлан/Санхүү үзлэг бүрт STATE.horses.find(...) хийдэг байсан:
+// 2500 × 2500 = 6 сая харьцуулалт нэг зурахад. Map-аар O(1).
+// STATE.horses-ийн хаяг/урт/хувилбар өөрчлөгдөхөд автоматаар дахин үүснэ.
+let __horseIdx = { ref: null, n: -1, ver: -1, byId: null, byName: null };
+let __stateVer = 0; // өгөгдөл өөрчлөгдөх бүрд нэмэгдэнэ (индексийг хүчингүй болгоно)
+function _horseIdx() {
+  const arr = STATE.horses || [];
+  if (__horseIdx.ref !== arr || __horseIdx.n !== arr.length || __horseIdx.ver !== __stateVer) {
+    const byId = new Map(), byName = new Map();
+    for (const h of arr) { if (!h) continue; if (h.id != null) byId.set(String(h.id), h); if (h.name && !byName.has(h.name)) byName.set(h.name, h); }
+    __horseIdx = { ref: arr, n: arr.length, ver: __stateVer, byId, byName };
+  }
+  return __horseIdx;
+}
+function horseById(id) { return id == null ? undefined : _horseIdx().byId.get(String(id)); }
+// ── 🗂 Collection бүрийн id → бичлэг индекс ─────────────────────
+// fbApplyRecord бичлэг бүрт STATE[col].findIndex(...) хийдэг байсан →
+// эхний snapshot-д 7400 бичлэг ирэхэд квадрат (7400 × 2500). Map-аар O(1).
+// Хүчинтэй эсэх: массивын хаяг ба урт таарч байвал; эс бөгөөс дахин үүсгэнэ
+// (локал код массивыг шууд өөрчилсөн үед — нэг удаа O(n)).
+const __recIdx = {};
+function _recMap(col) {
+  const arr = STATE[col];
+  if (!Array.isArray(arr)) return null;
+  let ix = __recIdx[col];
+  if (!ix || ix.ref !== arr || ix.n !== arr.length) {
+    const m = new Map();
+    for (const r of arr) if (r && r.id != null) m.set(String(r.id), r);
+    ix = __recIdx[col] = { ref: arr, n: arr.length, map: m };
+  }
+  return ix;
+}
+function _recIdxPush(col, rec) { const arr = STATE[col]; const ix = _recMap(col); arr.push(rec); if (ix) { ix.map.set(String(rec.id), rec); ix.n = arr.length; } }
+function recById(col, id) { const ix = _recMap(col); return ix ? ix.map.get(String(id)) : undefined; }
+
+// Санхүү: examId → бичлэг (Түүх/Тайлан мөр бүрт 2400 бичлэг гүйлгэдэг байсан)
+let __finIdx = { ref: null, n: -1, ver: -1, byExam: null };
+function finByExamId(examId) {
+  const arr = STATE.fins || [];
+  if (__finIdx.ref !== arr || __finIdx.n !== arr.length || __finIdx.ver !== __stateVer) {
+    const byExam = new Map();
+    for (const f of arr) if (f && f.examId != null && !byExam.has(String(f.examId))) byExam.set(String(f.examId), f);
+    __finIdx = { ref: arr, n: arr.length, ver: __stateVer, byExam };
+  }
+  return examId == null ? undefined : __finIdx.byExam.get(String(examId));
+}
+// Үзлэг/санхүүгийн бичлэгт харгалзах адуу: эхлээд horseId, дараа нь нэрээр
+function horseOf(rec) { if (!rec) return undefined; return horseById(rec.horseId) || (rec.horse ? _horseIdx().byName.get(rec.horse) : undefined); }
+
 function saveAll() {
+  __stateVer++;
   lsSet('mt_horses', STATE.horses);
   _scheduleLsSave('waiting');
   lsSet('mt_exams', STATE.exams);
@@ -1664,16 +1728,17 @@ async function openSyncStatus() {
   row('localStorage', (lsBytes / 1024 / 1024).toFixed(1) + ' MB' + (lsFail.length ? ' · ДҮҮРСЭН: ' + escHTML(lsFail.join(', ')) : lsTrim.length ? ' · багасгасан: ' + escHTML(lsTrim.map(k => k.replace('mt_', '') + ' ' + __lsStatus.trimmed[k].kept + '/' + __lsStatus.trimmed[k].total).join(', ')) : ' · хэвийн'), lsFail.length ? false : true);
   row('Апп хувилбар', escHTML((document.querySelector('script[src^="app.js"]') || {}).src ? (document.querySelector('script[src^="app.js"]').src.split('v=')[1] || '?') : '?'), null);
   let colRows = '';
-  FB_COLLECTIONS.forEach(c => {
-    const st = __fbColStatus[c]; const n = Array.isArray(STATE[c]) ? STATE[c].length : (c === 'deletedExams' ? (STATE.deletedExams || []).length : '—');
+  FB_LISTENERS.forEach(L => {
+    const c = L.col, st = __fbColStatus[L.key]; const n = Array.isArray(STATE[c]) ? STATE[c].length : (c === 'deletedExams' ? (STATE.deletedExams || []).length : '—');
     const state = !st ? '<span class="sd-bad">хариу ирээгүй</span>' : st.serverAt ? '<span class="sd-ok">сервэр ' + _fmtAgo(st.serverAt) + '</span>' : st.cacheAt ? '<span style="color:#b9770e;font-weight:700">зөвхөн кэш</span>' : '—';
-    colRows += '<tr><td>' + escHTML(SYNC_COL_LABELS[c] || c) + '</td><td>' + n + (st && st.n !== undefined && st.n !== n ? ' <span class="muted">(сервэр: ' + st.n + ')</span>' : '') + '</td><td>' + state + '</td></tr>';
+    const scope = L.where ? ' <span class="muted">(' + (L.key === 'fins_open' ? 'төлөгдөөгүй' : LIVE_CUTOFF + '-с') + ')</span>' : L.limitN ? ' <span class="muted">(сүүлийн ' + L.limitN + ')</span>' : '';
+    colRows += '<tr><td>' + escHTML(L.label || SYNC_COL_LABELS[c] || c) + scope + '</td><td>' + n + (st && st.n !== undefined && st.n !== n && !L.where ? ' <span class="muted">(сервэр: ' + st.n + ')</span>' : '') + '</td><td>' + state + '</td></tr>';
   });
   let verdict = '';
   if (__fbConnected === false) verdict = 'Сервэртэй холбогдоогүй байна — дата зөвхөн энэ төхөөрөмж дээр байгаа хувиар харагдана. Интернэтээ шалгана уу.';
   else if (lsFail.length) verdict = 'localStorage дүүрсэн тул зарим жагсаалт төхөөрөмж дээр хадгалагдахгүй байна. Дискэн кэш ажиллаж байвал асуудалгүй; ажиллахгүй бол «Кэш цэвэрлэж дахин татах» дарна уу.';
   else if (persist.ok === false) verdict = 'Дискэн кэш ажиллахгүй тул апп нээх бүрд бүх датаг сүлжээгээр татна — удаан байх нь энэ. Хувийн (private) горим, эсвэл хөтчийн хязгаарлалт байж болзошгүй.';
-  else if (FB_COLLECTIONS.some(c => { const st = __fbColStatus[c]; return st && !st.serverAt; })) verdict = 'Зарим жагсаалт сервэрээс хараахан бүрэн ирээгүй байна (эхний удаа бүтнээр татаж байгаа байх). Аппыг хааж болохгүй, хэдэн минут хүлээнэ үү.';
+  else if (FB_LISTENERS.some(L => { const st = __fbColStatus[L.key]; return st && !st.serverAt; })) verdict = 'Зарим жагсаалт сервэрээс хараахан бүрэн ирээгүй байна (эхний удаа бүтнээр татаж байгаа байх). Аппыг хааж болохгүй, хэдэн минут хүлээнэ үү.';
   else verdict = 'Бүх жагсаалт сервэртэй тулгагдсан. Дэлгэц хуучин харагдвал «Шинэчлэх» дарна уу.';
   out.innerHTML = '<table class="sd-tb">' + rows.join('') + '</table>' +
     '<table class="sd-tb" style="margin-top:8px"><tr><th style="text-align:left">Жагсаалт</th><th style="text-align:left">Тоо</th><th style="text-align:left">Төлөв</th></tr>' + colRows + '</table>' +
@@ -1740,9 +1805,10 @@ function updateBadges() {
     if (typeof getDueAmount === 'function') return getDueAmount(x) > 0;
     return !x.paid;
   }).length;
+  const _today = todayStr();
   const todayExams = STATE.exams.filter(x => {
     const d = typeof x.date === 'string' ? x.date.slice(0,10) : '';
-    return d === todayStr();
+    return d === _today;
   }).length;
   const total = STATE.horses.length;
 
@@ -2168,7 +2234,7 @@ function openExamDetail(eid) {
   const e = STATE.exams.find(x => String(x.id) === String(eid));
   if (!e) { toast('Үзлэг олдсонгүй', 'err'); return; }
   // Find linked finance record
-  const fin = STATE.fins.find(f => String(f.examId) === String(e.id));
+  const fin = finByExamId(e.id);
   const dateOf = (v) => {
     if (!v) return '—';
     if (typeof v === 'string') return v.slice(0,10);
@@ -2539,6 +2605,28 @@ function saveExamNumCfgFromForm() {
 
 // Үзлэгийн хуудасны дугаар давхардаж байгаа эсэхийг шалгана.
 // excludeId өгвөл тухайн бичлэгийг (засварлаж байгаа үед) алгасна.
+// 🪟 Цонхтой сонсогчтой болсон тул хуучин үзлэг STATE-д байхгүй — давхардлыг
+// сервэрээс ч шалгана (3 сек-ээс удвал алгасна: офлайн үед блоклохгүй).
+// examNum нь мөр учир яг тэр мөр ба 6 оронтой тэглэсэн хувилбарыг хайна.
+async function findExamNumDuplicateRemote(examNum, excludeId) {
+  if (!window.__fbQuery || !window.__fbReady) return null;
+  const t = String(examNum).trim(); if (!t) return null;
+  const num = (t.match(/\d+/) || [])[0];
+  const variants = [...new Set([t, num || '', num ? String(parseInt(num, 10)) : '', num ? String(parseInt(num, 10)).padStart(6, '0') : ''].filter(Boolean))];
+  const timeout = new Promise(r => setTimeout(() => r(null), 3000));
+  const q = (async () => {
+    for (const v of variants) {
+      try {
+        const res = await window.__fbQuery('exams', [['examNum', '==', v]], { limitN: 2 });
+        const hit = res.docs.find(d => d && String(d.id) !== String(excludeId || ''));
+        if (hit) return { source: 'үзлэг (сервэр)', rec: hit };
+      } catch (e) { return null; }
+    }
+    return null;
+  })();
+  return Promise.race([q, timeout]);
+}
+
 function findExamNumDuplicate(examNum, excludeId) {
   const target = String(examNum).trim();
   if (!target) return null;
@@ -2566,7 +2654,7 @@ function clearReg() {
   autoFillExamNum();
 }
 
-function submitReg() {
+async function submitReg() {
   const name = $('#r-name').value.trim();
   const owner = $('#r-owner').value.trim();
   const phone = $('#r-phone').value.trim();
@@ -2576,7 +2664,7 @@ function submitReg() {
     toast('Үзлэгийн хуудасны дугаар оруулна уу', 'err');
     return;
   }
-  const dup = findExamNumDuplicate(examNum);
+  const dup = findExamNumDuplicate(examNum) || await findExamNumDuplicateRemote(examNum);
   if (dup) {
     const who = dup.rec.horse || dup.rec.name || '';
     toast('⚠️ ' + examNum + ' дугаар аль хэдийн ашиглагдсан байна' + (who ? ' (' + who + ')' : ''), 'err');
@@ -3128,8 +3216,8 @@ function finishExam() {
     symptoms: e.symptoms2,
     anamnesis: e.symptoms || '',
     temp: e.temp, pulse: e.pulse, resp: e.resp, wt: e.wt,
-    province: e.province || (STATE.horses.find(h=>h.id===e.horseId)||{}).province || '',
-    soum: e.soum || (STATE.horses.find(h=>h.id===e.horseId)||{}).soum || '',
+    province: e.province || (horseById(e.horseId)||{}).province || '',
+    soum: e.soum || (horseById(e.horseId)||{}).soum || '',
     images: Array.isArray(e.images) ? e.images : [],
     amount: total,
     regMs: parseFloat(e.regMs) || null,        // адуу бүртгэсэн агшин
@@ -3210,7 +3298,9 @@ function moveToInpatient() {
     examId: exam.id,
     horse: e.horse, owner: e.owner, phone: e.phone,
     diagnosis: e.diagnosis,
+    docId: e.docId || '',
     docName: exam.docName,
+    location: '',
     admittedMs: nowMs(),
     admittedDate: todayStr(),
     initialAmount: total,
@@ -3282,12 +3372,155 @@ function inpGoPage(n) {
   if (list && list.scrollIntoView) list.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
+// ── 📍 Байрлал ба эмч ────────────────────────────────────────────
+const INP_LOC_DEFAULT = ['Зүчээ 1', 'Зүчээ 2', 'Зүчээ 3', 'Зүчээ 4', 'Зүчээ 5',
+  'Нарлагаа 1', 'Нарлагаа 2', 'Нарлагаа 3', 'Нарлагаа 4', 'Нарлагаа 5',
+  'Нарлагаа 6', 'Нарлагаа 7', 'Нарлагаа 8', 'Нарлагаа 9', 'Нарлагаа 10'];
+function inpLocations() { return (Array.isArray(STATE.inpLocations) && STATE.inpLocations.length) ? STATE.inpLocations : INP_LOC_DEFAULT; }
+// Эмчлэгч эмч: docId-аар, байхгүй бол нэрээр (хуучин бичлэг)
+function inpDoctorOf(i) {
+  if (!i) return null;
+  const ds = STATE.doctors || [];
+  return (i.docId && ds.find(d => String(d.id) === String(i.docId))) || (i.docName && ds.find(d => d.name === i.docName)) || null;
+}
+// Нэвтэрсэн хэрэглэгч эмч мөн бол түүний doctor бичлэг
+function currentUserDoctor() {
+  const u = STATE.user; if (!u) return null;
+  return (STATE.doctors || []).find(d => d.name === u.name) || null;
+}
+let INP_VIEW = 'cards'; // 'cards' | 'loc' | 'doc'
+function setInpView(v) { INP_VIEW = v; INP_PAGE = 1; renderInpatient(); }
+function setInpField(field, value) {
+  const i = STATE.inps.find(x => String(x.id) === String(STATE.selectedI)); if (!i) return;
+  if (!canEditData()) { toast('⛔ Засах эрхгүй', 'err'); return; }
+  const before = { docName: i.docName, location: i.location };
+  if (field === 'docId') {
+    const d = (STATE.doctors || []).find(x => String(x.id) === String(value));
+    i.docId = d ? d.id : ''; i.docName = d ? d.name : (i.docName || '');
+  } else if (field === 'location') i.location = value || '';
+  i.ms = nowMs();
+  saveAll(); fbSaveRecord('inps', i);
+  writeLog('Байрлан эмчлүүлэх мэдээлэл засав', i.id, i.horse,
+    field === 'docId' ? 'Эмч: «' + (before.docName || '') + '» → «' + (i.docName || '') + '»' : 'Байрлал: «' + (before.location || '') + '» → «' + (i.location || '') + '»');
+  renderInpatient();
+  toast('✅ Хадгалагдлаа', 'ok');
+}
+function renderInpLocCfg() {
+  const ta = $('#inp-loc-list'); if (!ta) return;
+  ta.value = inpLocations().join('\n');
+  const st = $('#inp-loc-status'); if (st) st.textContent = Array.isArray(STATE.inpLocations) ? 'Өөрчилсөн жагсаалт' : 'Анхдагч жагсаалт';
+}
+function saveInpLocationsFromForm() {
+  if (!canManageUsers || !canManageUsers()) { toast('⛔ Зөвхөн админ', 'err'); return; }
+  const ta = $('#inp-loc-list'); if (!ta) return;
+  const list = [...new Set(ta.value.split('\n').map(x => x.trim()).filter(Boolean))];
+  if (!list.length) { toast('Дор хаяж нэг байрлал оруулна уу', 'err'); return; }
+  STATE.inpLocations = list; lsSet('mt_inp_locations', list);
+  fbSaveClinicConfig(); renderInpLocCfg();
+  writeLog('Байрлалын жагсаалт өөрчилсөн', '', '', list.length + ' байрлал');
+  toast('✅ ' + list.length + ' байрлал хадгалагдлаа', 'ok');
+}
+function resetInpLocations() {
+  if (!canManageUsers || !canManageUsers()) { toast('⛔ Зөвхөн админ', 'err'); return; }
+  STATE.inpLocations = null; try { localStorage.removeItem('mt_inp_locations'); } catch (e) {}
+  fbSaveClinicConfig(); renderInpLocCfg(); toast('↺ Анхдагч жагсаалт', 'ok');
+}
+function _inpFilterState() {
+  const v = id => (($('#' + id) || {}).value || '');
+  return { doc: v('inp-f-doc'), loc: v('inp-f-loc'), q: v('inp-f-q').toLowerCase().trim(), sort: v('inp-f-sort') || 'days_desc' };
+}
+function _inpFillFilters(active) {
+  const docSel = $('#inp-f-doc'), locSel = $('#inp-f-loc');
+  if (docSel && !docSel.__filled) {
+    docSel.__filled = true;
+    const me = currentUserDoctor();
+    docSel.innerHTML = '<option value="">Бүх эмч</option>' + (me ? '<option value="me">👤 Миний адуунууд</option>' : '') +
+      (STATE.doctors || []).map(d => `<option value="${escHTML(d.id)}">${escHTML(d.name)}</option>`).join('') + '<option value="__none">Эмч заагаагүй</option>';
+  }
+  if (locSel && !locSel.__filled) {
+    locSel.__filled = true;
+    locSel.innerHTML = '<option value="">Бүх байрлал</option>' + inpLocations().map(l => `<option>${escHTML(l)}</option>`).join('') + '<option value="__none">Байрлал заагаагүй</option>';
+  }
+}
+function _inpApplyFilter(active, F) {
+  let list = active;
+  if (F.doc) {
+    if (F.doc === 'me') { const me = currentUserDoctor(); list = me ? list.filter(i => { const d = inpDoctorOf(i); return d && String(d.id) === String(me.id); }) : []; }
+    else if (F.doc === '__none') list = list.filter(i => !inpDoctorOf(i));
+    else list = list.filter(i => { const d = inpDoctorOf(i); return d && String(d.id) === String(F.doc); });
+  }
+  if (F.loc) list = F.loc === '__none' ? list.filter(i => !i.location) : list.filter(i => i.location === F.loc);
+  if (F.q) list = list.filter(i => ((i.horse || '') + ' ' + (i.owner || '') + ' ' + (i.phone || '') + ' ' + (i.diagnosis || '') + ' ' + (i.location || '')).toLowerCase().includes(F.q));
+  const dueOf = i => Math.max(0, getInpFullTotal(i) - getInpPrepaidTotal(i));
+  const locIx = l => { const k = inpLocations().indexOf(l || ''); return k < 0 ? 999 : k; };
+  const sorters = {
+    days_desc: (a, b) => (a.admittedMs || 0) - (b.admittedMs || 0),
+    days_asc:  (a, b) => (b.admittedMs || 0) - (a.admittedMs || 0),
+    due_desc:  (a, b) => dueOf(b) - dueOf(a),
+    name:      (a, b) => String(a.horse || '').localeCompare(String(b.horse || '')),
+    loc:       (a, b) => locIx(a.location) - locIx(b.location) || (a.admittedMs || 0) - (b.admittedMs || 0)
+  };
+  return list.slice().sort(sorters[F.sort] || sorters.days_desc);
+}
+function _inpCardHTML(i) {
+  const days = inpatientDays(i.admittedMs);
+  const due = Math.max(0, getInpFullTotal(i) - getInpPrepaidTotal(i));
+  const dClass = days > 40 ? 'inpc-days-long' : days > 20 ? 'inpc-days-warn' : '';
+  const d = inpDoctorOf(i);
+  return `
+    <div class="inpc ${due > 0 ? 'inpc-due' : ''}" data-id="${i.id}">
+      <div class="inpc-top">
+        <div class="inpc-av">🐴</div>
+        <div class="inpc-names">
+          <div class="inpc-horse">${escHTML(i.horse)}</div>
+          <div class="inpc-owner">Эзэн: <b>${escHTML(i.owner)}</b></div>
+        </div>
+        <div class="inpc-days ${dClass}">${days} хоног</div>
+      </div>
+      <div class="inpc-tags">
+        <span class="inpc-tag ${d ? '' : 'inpc-tag-none'}">👨‍⚕️ ${escHTML(d ? d.name : (i.docName || 'Эмч заагаагүй'))}</span>
+        <span class="inpc-tag ${i.location ? 'inpc-tag-loc' : 'inpc-tag-none'}">📍 ${escHTML(i.location || 'Байрлал заагаагүй')}</span>
+      </div>
+      <div class="inpc-diag">${escHTML(i.diagnosis || '—')}</div>
+      <div class="inpc-foot">
+        <span class="inpc-adm">${escHTML(i.admittedDate || '')}</span>
+        <span class="inpc-pay ${due > 0 ? 'inpc-pay-due' : 'inpc-pay-ok'}">${due > 0 ? fmt(due) + ' дутуу' : 'Төлбөр бүрэн'}</span>
+      </div>
+    </div>`;
+}
+function _inpGroupHTML(title, items, extra) {
+  return `<div class="inp-group" style="grid-column:1/-1">
+    <div class="inp-group-h"><span>${title}</span><span class="muted">${items.length ? items.length + ' адуу' : (extra || '— чөлөөтэй —')}</span></div>
+    ${items.length ? '<div class="inp-group-grid">' + items.map(_inpCardHTML).join('') + '</div>' : ''}
+  </div>`;
+}
+
 function renderInpatient() {
   ensureInpCardStyles();
   ensureInpDrawer();
   const active = STATE.inps.filter(i => !i.discharged);
   $('#inp-sub').textContent = active.length + ' адуу хэвтэж байна';
   const list = $('#inp-list');
+  _inpFillFilters(active);
+  const F = _inpFilterState();
+  $$('.inp-view-btn').forEach(b => b.classList.toggle('on', b.dataset.view === INP_VIEW));
+
+  // 📊 Тойм мөр
+  const sum = $('#inp-summary');
+  if (sum) {
+    const dueN = active.filter(i => getInpFullTotal(i) - getInpPrepaidTotal(i) > 0).length;
+    const dueSum = active.reduce((a, i) => a + Math.max(0, getInpFullTotal(i) - getInpPrepaidTotal(i)), 0);
+    const locs = inpLocations(); const used = new Set(active.map(i => i.location).filter(Boolean));
+    const byDoc = {}; active.forEach(i => { const d = inpDoctorOf(i); const k = d ? d.name : 'Эмч заагаагүй'; byDoc[k] = (byDoc[k] || 0) + 1; });
+    const longN = active.filter(i => inpatientDays(i.admittedMs) > 20).length;
+    sum.innerHTML = `
+      <div class="inp-sum-card"><div class="inp-sum-n">${active.length}</div><div class="inp-sum-l">хэвтэж байна</div></div>
+      <div class="inp-sum-card"><div class="inp-sum-n">${used.size}<span class="muted">/${locs.length}</span></div><div class="inp-sum-l">байрлал ашиглалт</div></div>
+      <div class="inp-sum-card ${dueN ? 'inp-sum-warn' : ''}"><div class="inp-sum-n">${dueN}</div><div class="inp-sum-l">дутуу төлбөртэй · ${fmtCompact ? fmtCompact(dueSum) : fmt(dueSum)}</div></div>
+      <div class="inp-sum-card ${longN ? 'inp-sum-warn' : ''}"><div class="inp-sum-n">${longN}</div><div class="inp-sum-l">20+ хоног</div></div>
+      <div class="inp-sum-card inp-sum-wide"><div class="inp-sum-l">Эмчээр: ${Object.entries(byDoc).sort((a, b) => b[1] - a[1]).map(([k, n]) => escHTML(k) + ' <b>' + n + '</b>').join(' · ') || '—'}</div></div>`;
+  }
+
   // Жагсаалтын хайрцгийг карт-grid болгоно (index.html засалгүйгээр)
   list.style.display = 'grid';
   list.style.gridTemplateColumns = 'repeat(auto-fill, minmax(240px, 1fr))';
@@ -3298,51 +3531,37 @@ function renderInpatient() {
     closeInpDrawer();
     return;
   }
+  const filtered = _inpApplyFilter(active, F);
+  const filteredNote = filtered.length !== active.length ? `<div class="muted" style="grid-column:1/-1;font-size:11.5px">Шүүлтээр ${filtered.length} / ${active.length} адуу</div>` : '';
 
-  // ===== Хуудаслалт =====
-  const totalPages = Math.max(1, Math.ceil(active.length / INP_PER_PAGE));
-  if (INP_PAGE > totalPages) INP_PAGE = totalPages;
-  if (INP_PAGE < 1) INP_PAGE = 1;
-  const pageItems = active.slice((INP_PAGE - 1) * INP_PER_PAGE, INP_PAGE * INP_PER_PAGE);
-
-  let pagerHTML = '';
-  if (totalPages > 1) {
-    const nums = [];
-    for (let n = 1; n <= totalPages; n++) {
-      nums.push(`<button type="button" class="inpc-pg ${n === INP_PAGE ? 'on' : ''}" onclick="inpGoPage(${n})">${n}</button>`);
-    }
-    pagerHTML = `
-      <div class="inpc-pager" style="grid-column:1/-1">
-        <button type="button" class="inpc-pg" ${INP_PAGE <= 1 ? 'disabled' : ''} onclick="inpGoPage(${INP_PAGE - 1})">‹</button>
-        ${nums.join('')}
+  if (INP_VIEW === 'loc') {
+    const locs = inpLocations(); const byLoc = {}; filtered.forEach(i => { const k = i.location && locs.includes(i.location) ? i.location : '__none'; (byLoc[k] = byLoc[k] || []).push(i); });
+    const extraLocs = [...new Set(filtered.map(i => i.location).filter(l => l && !locs.includes(l)))];
+    list.innerHTML = filteredNote + locs.map(l => _inpGroupHTML('📍 ' + escHTML(l), byLoc[l] || [])).join('') +
+      extraLocs.map(l => _inpGroupHTML('📍 ' + escHTML(l) + ' <span class="muted">(жагсаалтад байхгүй)</span>', filtered.filter(i => i.location === l))).join('') +
+      ((byLoc.__none || []).length ? _inpGroupHTML('❔ Байрлал заагаагүй', byLoc.__none) : '');
+  } else if (INP_VIEW === 'doc') {
+    const byDoc = {}; filtered.forEach(i => { const d = inpDoctorOf(i); const k = d ? d.name : '__none'; (byDoc[k] = byDoc[k] || []).push(i); });
+    const names = Object.keys(byDoc).filter(k => k !== '__none').sort((a, b) => byDoc[b].length - byDoc[a].length);
+    list.innerHTML = filteredNote + names.map(n => _inpGroupHTML('👨‍⚕️ ' + escHTML(n), byDoc[n])).join('') +
+      ((byDoc.__none || []).length ? _inpGroupHTML('❔ Эмч заагаагүй', byDoc.__none) : '') + (!names.length && !(byDoc.__none || []).length ? '<div class="empty" style="grid-column:1/-1">Шүүлтэд тохирох адуу алга</div>' : '');
+  } else {
+    // ===== Карт + хуудаслалт =====
+    const totalPages = Math.max(1, Math.ceil(filtered.length / INP_PER_PAGE));
+    if (INP_PAGE > totalPages) INP_PAGE = totalPages;
+    if (INP_PAGE < 1) INP_PAGE = 1;
+    const pageItems = filtered.slice((INP_PAGE - 1) * INP_PER_PAGE, INP_PAGE * INP_PER_PAGE);
+    let pagerHTML = '';
+    if (totalPages > 1) {
+      const nums = [];
+      for (let n = 1; n <= totalPages; n++) nums.push(`<button type="button" class="inpc-pg ${n === INP_PAGE ? 'on' : ''}" onclick="inpGoPage(${n})">${n}</button>`);
+      pagerHTML = `<div class="inpc-pager" style="grid-column:1/-1">
+        <button type="button" class="inpc-pg" ${INP_PAGE <= 1 ? 'disabled' : ''} onclick="inpGoPage(${INP_PAGE - 1})">‹</button>${nums.join('')}
         <button type="button" class="inpc-pg" ${INP_PAGE >= totalPages ? 'disabled' : ''} onclick="inpGoPage(${INP_PAGE + 1})">›</button>
-        <span class="inpc-pg-info">${(INP_PAGE - 1) * INP_PER_PAGE + 1}–${Math.min(INP_PAGE * INP_PER_PAGE, active.length)} / ${active.length}</span>
-      </div>`;
+        <span class="inpc-pg-info">${(INP_PAGE - 1) * INP_PER_PAGE + 1}–${Math.min(INP_PAGE * INP_PER_PAGE, filtered.length)} / ${filtered.length}</span></div>`;
+    }
+    list.innerHTML = filteredNote + (pageItems.length ? pageItems.map(_inpCardHTML).join('') : '<div class="empty" style="grid-column:1/-1">Шүүлтэд тохирох адуу алга</div>') + pagerHTML;
   }
-
-  list.innerHTML = pageItems.map(i => {
-    const days = inpatientDays(i.admittedMs);
-    // Одоогийн гүйлгээ үлдэгдэл (үзлэг + эмчилгээ + хоног − урьдчилгаа) — ресепшнд сэрэмжлүүлэг
-    const due = Math.max(0, getInpFullTotal(i) - getInpPrepaidTotal(i));
-    const dClass = days > 40 ? 'inpc-days-long' : days > 20 ? 'inpc-days-warn' : '';
-    return `
-      <div class="inpc ${due > 0 ? 'inpc-due' : ''}" data-id="${i.id}">
-        <div class="inpc-top">
-          <div class="inpc-av">🐴</div>
-          <div class="inpc-names">
-            <div class="inpc-horse">${escHTML(i.horse)}</div>
-            <div class="inpc-owner">Эзэн: <b>${escHTML(i.owner)}</b></div>
-          </div>
-          <div class="inpc-days ${dClass}">${days} хоног</div>
-        </div>
-        <div class="inpc-diag">${escHTML(i.diagnosis || '—')}</div>
-        <div class="inpc-foot">
-          <span class="inpc-adm">${escHTML(i.admittedDate || '')}</span>
-          <span class="inpc-pay ${due > 0 ? 'inpc-pay-due' : 'inpc-pay-ok'}">${due > 0 ? fmt(due) + ' дутуу' : 'Төлбөр бүрэн'}</span>
-        </div>
-      </div>
-    `;
-  }).join('') + pagerHTML;
 
   // Карт дарахад drawer нээж дэлгэрэнгүйг харуулна
   list.querySelectorAll('.inpc').forEach(el => el.onclick = () => {
@@ -3355,15 +3574,12 @@ function renderInpatient() {
   if (STATE.selectedI != null) STATE.selectedI = String(STATE.selectedI);
   const selStillActive = STATE.selectedI && active.find(x => String(x.id) === STATE.selectedI);
   if (!selStillActive) {
-    // Гарсан/устгагдсан бол drawer-ийг хаана
     closeInpDrawer();
   } else {
     list.querySelectorAll('.inpc').forEach(x => x.classList.toggle('sel', x.dataset.id === STATE.selectedI));
-    // Drawer нээлттэй байвал агуулгыг нь шинэчилнэ (нээхгүй)
     if (isInpDrawerOpen()) renderIDetail();
   }
 }
-
 // ============================================================
 // INPATIENT — drawer (дэлгэрэнгүйг баруун талаас гулсуулж нээх)
 // ============================================================
@@ -3453,6 +3669,24 @@ function ensureInpCardStyles() {
   .inpc-pay{font-weight:800;padding:2px 7px;border-radius:6px;font-size:10.5px;white-space:nowrap}
   .inpc-pay-ok{background:var(--green-soft,#e6f6ee);color:var(--green,#2f9e6f)}
   .inpc-pay-due{background:var(--red-soft,#fbeae8);color:var(--red,#c0483f)}
+  .inpc-tags{display:flex;gap:5px;flex-wrap:wrap}
+  .inpc-tag{font-size:10.5px;font-weight:700;padding:2px 7px;border-radius:6px;background:var(--input,#faf9fc);
+    border:1px solid var(--border,#e9e6f0);color:var(--muted,#5b5468);white-space:nowrap;max-width:100%;overflow:hidden;text-overflow:ellipsis}
+  .inpc-tag-loc{background:var(--gold-soft,#f6efdc);color:#7a5a12;border-color:#e6d5a8}
+  .inpc-tag-none{opacity:.6;font-style:italic}
+  .inp-view-btn.on{background:var(--navy,#0b2b3d);color:#fff;border-color:var(--navy,#0b2b3d)}
+  .inp-summary{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px}
+  .inp-sum-card{flex:1;min-width:110px;background:var(--input,#faf9fc);border:1px solid var(--border,#e9e6f0);border-radius:10px;padding:8px 10px}
+  .inp-sum-wide{flex:3;min-width:220px}
+  .inp-sum-n{font-size:20px;font-weight:900;line-height:1.1}
+  .inp-sum-n .muted{font-size:12px;font-weight:700}
+  .inp-sum-l{font-size:11px;color:var(--muted,#8a8398);margin-top:2px;line-height:1.4}
+  .inp-sum-warn{border-color:#e6b8b3;background:var(--red-soft,#fbeae8)}
+  .inp-group{margin-bottom:6px}
+  .inp-group-h{display:flex;justify-content:space-between;align-items:center;font-weight:800;font-size:13px;
+    padding:6px 10px;background:var(--gold-soft,#f6efdc);border-radius:8px;margin-bottom:8px}
+  .inp-group-h .muted{font-weight:600;font-size:11.5px}
+  .inp-group-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px}
   .inpc-pager{display:flex;align-items:center;justify-content:center;gap:6px;flex-wrap:wrap;padding:14px 0 4px}
   .inpc-pg{min-width:34px;height:34px;padding:0 10px;border:1px solid var(--border,#e9e6f0);
     background:var(--card,#fff);color:var(--muted,#5b5468);border-radius:9px;font-size:13px;font-weight:700;
@@ -3564,12 +3798,18 @@ function renderIDetail() {
 }
 
 function renderInpInfoTab(i) {
+  const d = inpDoctorOf(i);
+  const docOpts = '<option value="">— заагаагүй —</option>' + (STATE.doctors || []).map(x => `<option value="${escHTML(x.id)}" ${d && String(d.id) === String(x.id) ? 'selected' : ''}>${escHTML(x.name)}</option>`).join('');
+  const locs = inpLocations().slice(); if (i.location && !locs.includes(i.location)) locs.push(i.location);
+  const locOpts = '<option value="">— заагаагүй —</option>' + locs.map(l => `<option ${l === i.location ? 'selected' : ''}>${escHTML(l)}</option>`).join('');
   $('#inp-info-body').innerHTML = `
     <div class="fg r2">
       <div class="fld"><label>Эзэн</label><div class="bold">${escHTML(i.owner)}</div></div>
       <div class="fld"><label>Утас</label><div class="bold">${escHTML(i.phone)}</div></div>
-      <div class="fld"><label>Эмчлэгч эмч</label><div class="bold">${escHTML(i.docName)}</div></div>
+      <div class="fld"><label>Эмчлэгч эмч</label><select class="inp" onchange="setInpField('docId', this.value)">${docOpts}</select></div>
+      <div class="fld"><label>📍 Байрлал</label><select class="inp" onchange="setInpField('location', this.value)">${locOpts}</select></div>
       <div class="fld"><label>Орсон огноо</label><div class="bold">${escHTML(i.admittedDate)}</div></div>
+      <div class="fld"><label>Хоног</label><div class="bold">${inpatientDays(i.admittedMs)}</div></div>
     </div>
     <div class="fld" style="margin-top:8px"><label>Анхны онош</label>
       <div style="background:var(--input);padding:10px;border-radius:8px;font-size:13px">${escHTML(i.diagnosis)}</div>
@@ -4477,6 +4717,186 @@ function _finPagCtl(anchorEl, tab, totalPages, total) {
     <button class="btn btn-sm" onclick="finSetPage('${tab}',${Math.min(totalPages - 1, cur + 1)})" ${cur >= totalPages - 1 ? 'disabled' : ''}>Дараах →</button>`;
 }
 
+// ── 🔎 Санхүүгийн шүүлт ───────────────────────────────────────────
+// Бичлэгийн эх сурвалж: клиник үзлэг / байрлан эмчилгээ / төлөвлөгөөт
+function finSourceOf(f) {
+  if (isPlanned(f)) return 'planned';
+  if (/^Байрлан эмчилгээ/.test(String(f.services || ''))) return 'inpatient';
+  const ex = f.examId ? recById('exams', f.examId) : null;
+  if (ex && ex.inpatient) return 'inpatient';
+  return 'clinic';
+}
+function finDateOf(f) { return isFullyPaid(f) ? (f.paidDate || f.date || '') : (f.date || ''); }
+function _finFilter() {
+  const v = id => (($('#' + id) || {}).value || '').trim();
+  return { from: v('f-from'), to: v('f-to'), doc: v('f-doc'), kind: v('f-kind') || 'all', method: v('f-method'), q: v('f-q').toLowerCase() };
+}
+function finFilterOk(f, F) {
+  if (F.kind && F.kind !== 'all' && finSourceOf(f) !== F.kind) return false;
+  if (F.doc && String(f.docName || '') !== F.doc) return false;
+  const d = finDateOf(f);
+  if (F.from && d && d < F.from) return false;
+  if (F.to && d && d > F.to) return false;
+  if (F.method) {
+    const ms = new Set(getPayments(f).map(p => p.method).filter(Boolean)); if (f.method) ms.add(f.method);
+    if (!ms.has(F.method)) return false;
+  }
+  if (F.q && !((f.horse || '') + ' ' + (f.owner || '') + ' ' + (f.phone || '') + ' ' + (f.examNum || '') + ' ' + (f.services || '')).toLowerCase().includes(F.q)) return false;
+  return true;
+}
+function _finFillDocFilter() {
+  const sel = $('#f-doc'); if (!sel || sel.__filled) return; sel.__filled = true;
+  const names = [...new Set([...(STATE.doctors || []).map(d => d.name), ...(STATE.fins || []).map(f => f.docName)].filter(Boolean))].sort();
+  sel.innerHTML = '<option value="">Бүх эмч</option>' + names.map(n => `<option>${escHTML(n)}</option>`).join('');
+}
+function onFinFilterChange() {
+  const F = _finFilter();
+  // Хуучин хугацаа сонгосон бол цонхноос гадуурх санхүүг татаад дахин зурна
+  if (F.from && F.from < LIVE_CUTOFF) ensureRange(F.from, F.to || LIVE_CUTOFF, ['fins', 'exams']).then(ok => { if (ok && STATE.activePage === 'finance') renderFinance(); });
+  Object.keys(__finPages).forEach(k => __finPages[k] = 0); renderFinance();
+}
+function resetFinFilter() {
+  ['f-from', 'f-to', 'f-doc', 'f-method', 'f-q'].forEach(id => { const el = $('#' + id); if (el) el.value = ''; });
+  const k = $('#f-kind'); if (k) k.value = 'all';
+  onFinFilterChange();
+}
+function _finFilterInfo(F, n, total) {
+  const parts = [];
+  if (F.from || F.to) parts.push((F.from || '…') + ' → ' + (F.to || '…'));
+  if (F.doc) parts.push('Эмч: ' + F.doc);
+  if (F.kind && F.kind !== 'all') parts.push({ clinic: 'Клиник', inpatient: 'Байрлан эмчилгээ', planned: 'Төлөвлөгөөт' }[F.kind] || F.kind);
+  if (F.method) parts.push('Хэлбэр: ' + F.method);
+  if (F.q) parts.push('«' + F.q + '»');
+  const el = $('#f-filter-info'); if (el) el.textContent = parts.length ? 'Шүүлт: ' + parts.join(' · ') + ' — ' + n + ' / ' + total + ' бичлэг' : 'Шүүлтгүй — ' + total + ' бичлэг';
+}
+
+// ── 📒 Эмчилгээний авлага — эзнээр нэгтгэсэн тайлан ────────────
+// Дүнтэй (due > 0) бүх нэхэмжлэхийг эзнээр нэгтгэж, насжилтаар ангилна.
+// Хэвтэж буй адуудын хуримтлагдсан (хараахан нэхэмжлээгүй) төлбөрийг тусад нь.
+let __ledgerOpen = new Set();
+function _ageDays(dateStr) { if (!dateStr) return 0; const t = new Date(dateStr + 'T12:00:00').getTime(); return Math.max(0, Math.floor((Date.now() - t) / 86400000)); }
+function _ageClass(d) { return d <= 30 ? 'a0' : d <= 60 ? 'a1' : d <= 90 ? 'a2' : 'a3'; }
+function buildFinLedger(fins) {
+  const open = fins.filter(f => getDueAmount(f) > 0);
+  const groups = {};
+  open.forEach(f => {
+    const key = String(f.owner || '—').trim().toLowerCase() || '—';
+    const g = groups[key] || (groups[key] = { owner: f.owner || '—', phone: f.phone || '', n: 0, amount: 0, paid: 0, due: 0, oldest: '', maxAge: 0, recs: [], buckets: [0, 0, 0, 0] });
+    if (!g.phone && f.phone) g.phone = f.phone;
+    const due = getDueAmount(f), paid = getPaidAmount(f), age = _ageDays(f.date);
+    g.n++; g.amount += parseFloat(f.amount) || 0; g.paid += paid; g.due += due;
+    if (!g.oldest || (f.date && f.date < g.oldest)) g.oldest = f.date || g.oldest;
+    if (age > g.maxAge) g.maxAge = age;
+    g.buckets[age <= 30 ? 0 : age <= 60 ? 1 : age <= 90 ? 2 : 3] += due;
+    g.recs.push(f);
+  });
+  const rows = Object.values(groups).sort((a, b) => b.due - a.due);
+  rows.forEach(g => g.recs.sort((a, b) => (a.date || '') < (b.date || '') ? -1 : 1));
+  const tot = rows.reduce((a, g) => ({ n: a.n + g.n, amount: a.amount + g.amount, paid: a.paid + g.paid, due: a.due + g.due, b: a.b.map((x, k) => x + g.buckets[k]) }), { n: 0, amount: 0, paid: 0, due: 0, b: [0, 0, 0, 0] });
+  // Хэвтэж буй адуудын хуримтлагдсан төлбөр
+  const inpRows = (STATE.inps || []).filter(i => !i.discharged).map(i => {
+    const full = getInpFullTotal(i), pre = getInpPrepaidTotal(i); const d = inpDoctorOf(i);
+    return { i, days: inpatientDays(i.admittedMs), full, pre, due: Math.max(0, full - pre), doc: d ? d.name : (i.docName || ''), loc: i.location || '' };
+  }).filter(r => r.due > 0).sort((a, b) => b.due - a.due);
+  const inpDue = inpRows.reduce((a, r) => a + r.due, 0);
+  return { rows, tot, inpRows, inpDue };
+}
+function toggleLedgerOwner(key) { if (__ledgerOpen.has(key)) __ledgerOpen.delete(key); else __ledgerOpen.add(key); renderFinance(); }
+function renderFinLedger(finsK) {
+  const host = $('#fin-ledger-body'); if (!host) return;
+  const L = buildFinLedger(finsK);
+  const bucketHTML = (b) => ['0–30', '31–60', '61–90', '90+'].map((l, k) => `<div class="ledger-kpi"><div class="n">${fmt(b[k])}</div><div class="l"><span class="ledger-age a${k}">${l} хоног</span></div></div>`).join('');
+  if (!L.rows.length && !L.inpRows.length) { host.innerHTML = '<div class="empty"><div class="empty-em">📒</div>Авлага алга — бүх нэхэмжлэх төлөгдсөн</div>'; return; }
+  const srcLbl = { clinic: 'Клиник', inpatient: 'Байрлан', planned: 'ТҮ' };
+  host.innerHTML = `
+    <div class="ledger-kpis">
+      <div class="ledger-kpi"><div class="n" style="color:var(--red)">${fmt(L.tot.due)}</div><div class="l">Нийт авлага · ${L.rows.length} эзэн · ${L.tot.n} нэхэмжлэх</div></div>
+      ${bucketHTML(L.tot.b)}
+      ${L.inpRows.length ? `<div class="ledger-kpi" style="border-color:#e6d5a8;background:var(--gold-soft,#f6efdc)"><div class="n">${fmt(L.inpDue)}</div><div class="l">🏥 Хэвтэж буй ${L.inpRows.length} адууны хуримтлагдсан (нэхэмжлээгүй)</div></div>` : ''}
+    </div>
+    <div class="tbl-wrap" style="overflow-x:auto">
+    <table class="ledger-tb">
+      <thead><tr><th style="width:22px"></th><th>Эзэн</th><th>Утас</th><th class="num">Нэхэмжлэх</th><th class="num">Нийт дүн</th><th class="num">Төлсөн</th><th class="num">Үлдэгдэл</th><th>Хамгийн хуучин</th><th>Насжилт</th></tr></thead>
+      <tbody>
+        ${L.rows.map(g => {
+          const key = String(g.owner).trim().toLowerCase();
+          const open = __ledgerOpen.has(key);
+          const subs = open ? g.recs.map(f => { const due = getDueAmount(f), age = _ageDays(f.date); return `
+            <tr class="sub"><td></td>
+              <td colspan="2">${f.examNum ? '<span class="badge b-o" style="font-size:10px">' + escHTML(f.examNum) + '</span> ' : ''}${escHTML(f.horse || '')} <span class="muted">· ${escHTML(f.date || '')} · ${srcLbl[finSourceOf(f)] || ''}${f.docName ? ' · ' + escHTML(f.docName) : ''}</span></td>
+              <td class="num muted">${escHTML((f.services || '').slice(0, 40))}</td>
+              <td class="num">${fmt(f.amount)}</td><td class="num">${fmt(getPaidAmount(f))}</td><td class="num" style="color:var(--red);font-weight:800">${fmt(due)}</td>
+              <td><span class="ledger-age ${_ageClass(age)}">${age} хоног</span></td>
+              <td><button class="btn btn-xs btn-g" onclick="event.stopPropagation();markPaid('${escHTML(f.id)}')">💰 Төлбөр</button> <button class="btn btn-xs" onclick="event.stopPropagation();printInvoice('${escHTML(f.id)}')">🖨</button></td>
+            </tr>`; }).join('') : '';
+          return `<tr class="own" onclick="toggleLedgerOwner('${escHTML(key).replace(/'/g, '&#39;')}')">
+            <td>${open ? '▾' : '▸'}</td><td><b>${escHTML(g.owner)}</b></td><td>${escHTML(g.phone)}</td>
+            <td class="num">${g.n}</td><td class="num">${fmt(g.amount)}</td><td class="num">${fmt(g.paid)}</td>
+            <td class="num" style="color:var(--red);font-weight:800">${fmt(g.due)}</td><td>${escHTML(g.oldest)}</td>
+            <td><span class="ledger-age ${_ageClass(g.maxAge)}">${g.maxAge} хоног</span></td>
+          </tr>${subs}`;
+        }).join('')}
+        <tr><td></td><td colspan="2"><b>НИЙТ</b></td><td class="num"><b>${L.tot.n}</b></td><td class="num"><b>${fmt(L.tot.amount)}</b></td><td class="num"><b>${fmt(L.tot.paid)}</b></td><td class="num" style="color:var(--red)"><b>${fmt(L.tot.due)}</b></td><td colspan="2"></td></tr>
+      </tbody>
+    </table></div>
+    ${L.inpRows.length ? `
+    <div class="ch" style="margin-top:16px">🏥 Хэвтэж буй адуудын хуримтлагдсан төлбөр <span class="muted" style="font-weight:600;text-transform:none">— гарахад нэхэмжлэгдэнэ</span></div>
+    <div class="tbl-wrap" style="overflow-x:auto"><table class="ledger-tb">
+      <thead><tr><th>Адуу</th><th>Эзэн</th><th>Утас</th><th>Эмч</th><th>Байрлал</th><th class="num">Хоног</th><th class="num">Хуримтлагдсан</th><th class="num">Урьдчилгаа</th><th class="num">Үлдэгдэл</th></tr></thead>
+      <tbody>${L.inpRows.map(r => `<tr><td><b>${escHTML(r.i.horse)}</b></td><td>${escHTML(r.i.owner)}</td><td>${escHTML(r.i.phone || '')}</td><td>${escHTML(r.doc)}</td><td>${escHTML(r.loc)}</td><td class="num">${r.days}</td><td class="num">${fmt(r.full)}</td><td class="num">${fmt(r.pre)}</td><td class="num" style="color:var(--red);font-weight:800">${fmt(r.due)}</td></tr>`).join('')}
+      <tr><td colspan="8"><b>НИЙТ</b></td><td class="num" style="color:var(--red)"><b>${fmt(L.inpDue)}</b></td></tr></tbody>
+    </table></div>` : ''}`;
+}
+function _ledgerFins() { const F = _finFilter(); return (STATE.fins || []).filter(f => finFilterOk(f, F)); }
+function printFinLedger() {
+  const L = buildFinLedger(_ledgerFins()); const F = _finFilter();
+  const srcLbl = { clinic: 'Клиник', inpatient: 'Байрлан', planned: 'ТҮ' };
+  const filt = [F.from || F.to ? (F.from || '…') + ' → ' + (F.to || '…') : '', F.doc ? 'Эмч: ' + F.doc : '', F.kind !== 'all' ? ({ clinic: 'Клиник', inpatient: 'Байрлан эмчилгээ', planned: 'Төлөвлөгөөт' }[F.kind]) : ''].filter(Boolean).join(' · ');
+  $('#print-area').innerHTML = `
+<style>
+  @page { size: A4 portrait; margin: 10mm; }
+  #print-area .lg { width: 190mm; font-family: 'Times New Roman', serif; font-size: 8.5pt; color: #000; }
+  #print-area .lg h1 { font-size: 12pt; text-align: center; margin: 0; text-transform: uppercase; }
+  #print-area .lg h2 { font-size: 10pt; text-align: center; margin: 1mm 0 3mm; font-weight: 700; }
+  #print-area .lg table { width: 100%; border-collapse: collapse; margin-bottom: 4mm; }
+  #print-area .lg th, #print-area .lg td { border: 0.5pt solid #000; padding: 1.3mm 1.6mm; vertical-align: top; }
+  #print-area .lg th { background: #e9e9e9; font-size: 7.8pt; }
+  #print-area .lg thead { display: table-header-group; }
+  #print-area .lg tr { page-break-inside: avoid; }
+  #print-area .lg td.n { text-align: right; white-space: nowrap; }
+  #print-area .lg tr.own td { background: #f4f4f4; font-weight: 700; }
+  #print-area .lg tr.sub td { font-size: 8pt; }
+  #print-area .lg .sig { display: flex; justify-content: space-between; gap: 8mm; margin-top: 8mm; page-break-inside: avoid; }
+  #print-area .lg .sig div { flex: 1; border-top: 0.5pt solid #000; padding-top: 1.5mm; text-align: center; font-size: 8.5pt; }
+</style>
+<div class="lg">
+  <h1>Морьтон үндэсний адууны эмнэлэг</h1>
+  <h2>ЭМЧИЛГЭЭНИЙ АВЛАГЫН ТАЙЛАН — ${escHTML(todayStr())}${filt ? ' · ' + escHTML(filt) : ''}</h2>
+  <table><tr><th>Нийт авлага</th><th>0–30 хоног</th><th>31–60</th><th>61–90</th><th>90+</th><th>Эзэн</th><th>Нэхэмжлэх</th></tr>
+  <tr><td class="n"><b>${fmt(L.tot.due)}</b></td><td class="n">${fmt(L.tot.b[0])}</td><td class="n">${fmt(L.tot.b[1])}</td><td class="n">${fmt(L.tot.b[2])}</td><td class="n">${fmt(L.tot.b[3])}</td><td class="n">${L.rows.length}</td><td class="n">${L.tot.n}</td></tr></table>
+  <table>
+    <thead><tr><th style="width:6mm">№</th><th>Эзэн / бичлэг</th><th style="width:22mm">Утас · огноо</th><th style="width:24mm">Эмч · төрөл</th><th style="width:20mm">Нийт дүн</th><th style="width:20mm">Төлсөн</th><th style="width:20mm">Үлдэгдэл</th><th style="width:14mm">Хоног</th></tr></thead>
+    <tbody>${L.rows.map((g, k) => `<tr class="own"><td class="n">${k + 1}</td><td>${escHTML(g.owner)} <span style="font-weight:400">(${g.n})</span></td><td>${escHTML(g.phone)}</td><td></td><td class="n">${fmt(g.amount)}</td><td class="n">${fmt(g.paid)}</td><td class="n">${fmt(g.due)}</td><td class="n">${g.maxAge}</td></tr>` +
+      g.recs.map(f => `<tr class="sub"><td></td><td style="padding-left:5mm">${escHTML(f.horse || '')}${f.examNum ? ' · №' + escHTML(f.examNum) : ''}${f.services ? ' · ' + escHTML(String(f.services).slice(0, 45)) : ''}</td><td>${escHTML(f.date || '')}</td><td>${escHTML(f.docName || '')} · ${srcLbl[finSourceOf(f)] || ''}</td><td class="n">${fmt(f.amount)}</td><td class="n">${fmt(getPaidAmount(f))}</td><td class="n">${fmt(getDueAmount(f))}</td><td class="n">${_ageDays(f.date)}</td></tr>`).join('')).join('')}
+    <tr class="own"><td></td><td colspan="3">НИЙТ</td><td class="n">${fmt(L.tot.amount)}</td><td class="n">${fmt(L.tot.paid)}</td><td class="n">${fmt(L.tot.due)}</td><td></td></tr></tbody>
+  </table>
+  ${L.inpRows.length ? `<h2 style="text-align:left">Хэвтэж буй адуудын хуримтлагдсан төлбөр (нэхэмжлээгүй)</h2>
+  <table><thead><tr><th>Адуу</th><th>Эзэн</th><th>Утас</th><th>Эмч</th><th>Байрлал</th><th>Хоног</th><th>Хуримтлагдсан</th><th>Урьдчилгаа</th><th>Үлдэгдэл</th></tr></thead>
+  <tbody>${L.inpRows.map(r => `<tr><td>${escHTML(r.i.horse)}</td><td>${escHTML(r.i.owner)}</td><td>${escHTML(r.i.phone || '')}</td><td>${escHTML(r.doc)}</td><td>${escHTML(r.loc)}</td><td class="n">${r.days}</td><td class="n">${fmt(r.full)}</td><td class="n">${fmt(r.pre)}</td><td class="n">${fmt(r.due)}</td></tr>`).join('')}
+  <tr class="own"><td colspan="8">НИЙТ</td><td class="n">${fmt(L.inpDue)}</td></tr></tbody></table>` : ''}
+  <div class="sig"><div>Нягтлан бодогч</div><div>Санхүүгийн менежер</div><div>Гүйцэтгэх захирал</div></div>
+</div>`;
+  setTimeout(() => window.print(), 150);
+}
+function exportFinLedgerCSV() {
+  const L = buildFinLedger(_ledgerFins());
+  const srcLbl = { clinic: 'Клиник', inpatient: 'Байрлан', planned: 'ТҮ' };
+  const rows = [['Эзэн', 'Утас', 'Адуу', 'Дугаар', 'Огноо', 'Эмч', 'Төрөл', 'Үйлчилгээ', 'Нийт дүн', 'Төлсөн', 'Үлдэгдэл', 'Хоног']];
+  L.rows.forEach(g => g.recs.forEach(f => rows.push([g.owner, g.phone, f.horse || '', f.examNum || '', f.date || '', f.docName || '', srcLbl[finSourceOf(f)] || '', f.services || '', parseFloat(f.amount) || 0, getPaidAmount(f), getDueAmount(f), _ageDays(f.date)])));
+  L.inpRows.forEach(r => rows.push([r.i.owner, r.i.phone || '', r.i.horse, '', r.i.admittedDate || '', r.doc, 'Хэвтэж буй (нэхэмжлээгүй)', r.loc, r.full, r.pre, r.due, r.days]));
+  downloadCSV(rows, 'avlaga_' + todayStr() + '.csv');
+}
+
 function renderFinance() {
   // tabs
   $$('.tab[data-ftab]').forEach(t => t.onclick = () => {
@@ -4488,9 +4908,14 @@ function renderFinance() {
   $$('.tab[data-ftab]').forEach(x => x.classList.toggle('active', x.dataset.ftab === STATE.activeFTab));
   $$('.ftab').forEach(x => x.classList.toggle('hidden', x.dataset.ftab !== STATE.activeFTab));
 
-  // Categorize finance records
-  const _fk = kindFilterVal('f-kind');
-  const finsK = STATE.fins.filter(f => examKindOk(f, _fk));
+  // Categorize finance records — шүүлтийн мөрийг хэрэглэнэ
+  _finFillDocFilter();
+  const F = _finFilter();
+  const finsK = STATE.fins.filter(f => finFilterOk(f, F));
+  _finFilterInfo(F, finsK.length, STATE.fins.length);
+  const ledgerN = finsK.filter(f => getDueAmount(f) > 0).length;
+  if ($('#ft-l')) $('#ft-l').textContent = ledgerN;
+  if (STATE.activeFTab === 'ledger') renderFinLedger(finsK);
   const pending = finsK.filter(f => !isFullyPaid(f) && !isReceivable(f)).sort((a,b) => recTime(b) - recTime(a));
   const receivables = finsK.filter(f => isReceivable(f)).sort((a,b) => recTime(b) - recTime(a));
   const paid = finsK.filter(f => isFullyPaid(f)).sort((a,b) => (b.paidMs||recTime(b)) - (a.paidMs||recTime(a)));
@@ -4574,6 +4999,7 @@ function renderFinance() {
 
   // paid table
   if (STATE.activeFTab === 'paid') {
+    const fh = $('#f-hint'); if (fh) fh.innerHTML = __allHistoryLoaded ? '' : '<div class="muted" style="font-size:11.5px;margin-bottom:8px">⏳ Сүүлийн ' + LIVE_WINDOW_DAYS + ' хоногийн төлбөр харагдаж байна. <a href="#" onclick="loadAllHistory().then(function(){renderFinance();});return false;">Бүх түүхийг ачаалах</a></div>';
     const tb = $('#fin-paid-tb');
     const pgd = _finSlice(paid, 'paid');
     const paidAnchor = tb.closest('.tbl-wrap') || tb.closest('table');
@@ -4582,7 +5008,7 @@ function renderFinance() {
       tb.innerHTML = '<tr><td colspan="10" style="text-align:center;padding:20px;color:var(--muted)">Бүртгэл алга</td></tr>';
     } else {
       tb.innerHTML = pgd.page.map((f,i) => {
-        const h = STATE.horses.find(x => String(x.id) === String(f.horseId) || x.name === f.horse);
+        const h = horseOf(f);
         const iabd = (h && h.iabd) ? h.iabd : '';
         return `
         <tr>
@@ -5003,8 +5429,7 @@ function printInvoice(id) {
 
   // Province (Аймаг) and Soum — fallback chain: exam → waiting → horse → fin
   const w = STATE.waiting.find(x => ex && String(x.id) === String(ex.waitId));
-  const horse = STATE.horses.find(h => ex && (String(h.id) === String(ex.horseId) || h.name === ex.horse))
-             || STATE.horses.find(h => h.name === f.horse);
+  const horse = (ex && horseOf(ex)) || horseOf(f);
   const province = (ex && ex.province) || (w && w.province) || (horse && horse.province) || (f.province) || '';
   const soum     = (ex && ex.soum)     || (w && w.soum)     || (horse && horse.soum)     || (f.soum)     || '';
   const iabd     = (horse && horse.iabd) || ''; // Ирсэн адууны бүртгэлийн дугаар
@@ -5306,6 +5731,124 @@ function printInvoice(id) {
 
 function printReceiptNow() {
   window.print();
+}
+
+// ── 📖 ЭМЧИЛГЭЭНИЙ ДЭВТЭР — эмнэлзүйн хуудас (мөнгөгүй) ─────────
+// Бодит цаасан дэвтэртэй адил: нүүрэн хэсэгт адууны карт, дараа нь өдөр
+// бүрийн мөр (T/P/R/жин, биеийн байдал, эмчилгээ-эм-тун, эмч, гарын үсэг),
+// гараар үргэлжлүүлэн бичих хоосон мөрүүд, гарах зөвлөмж, гарын үсгүүд.
+// Толгой мөр хуудас бүр дээр давтагдана. Мөнгөн дүн энд ОРОХГҮЙ —
+// төлбөрийн тооцоо «Төлбөрийн хуудас» дээр.
+const INP_BOOK_BLANK_ROWS = 8;
+function printInpBook(inpId) {
+  const i = STATE.inps.find(x => String(x.id) === String(inpId || STATE.selectedI));
+  if (!i) { toast('Байрлан эмчилгээний бичлэг олдсонгүй', 'err'); return; }
+  const ex = i.examId ? recById('exams', i.examId) : null;
+  const h = (ex && horseOf(ex)) || horseOf(i);
+  const an = ex ? examAnamnesis(ex) : { text: '', symptoms: [] };
+  const logs = Array.isArray(i.log) ? [...i.log].sort((a, b) => ((a.date || '') + (a.ms || 0)) > ((b.date || '') + (b.ms || 0)) ? 1 : -1) : [];
+  const days = inpatientDays(i.admittedMs, i.dischargedMs);
+  const admDate = i.admittedDate || (i.admittedMs ? localDateStr(new Date(i.admittedMs)) : '—');
+  const disDate = i.dischargedDate || (i.discharged ? '—' : '');
+  const doc = inpDoctorOf(i);
+  const dayNo = (dateStr) => { if (!i.admittedMs || !dateStr) return ''; const t = new Date(dateStr + 'T12:00:00').getTime(); const n = Math.floor((t - i.admittedMs) / 86400000) + 1; return n > 0 ? n : 1; };
+  const cell = (v) => v ? escHTML(String(v)) : '';
+  const rows = logs.map((l, k) => {
+    const treat = [
+      l.note ? escHTML(l.note) : '',
+      Array.isArray(l.services) && l.services.length ? '<i>' + l.services.map(x => escHTML(x.name || x)).join(', ') + '</i>' : '',
+      Array.isArray(l.meds) && l.meds.length ? '<b>Эм:</b> ' + l.meds.map(m => escHTML((m.name || m) + (m.note ? ' — ' + m.note : ''))).join('; ') : ''
+    ].filter(Boolean).join('<br>');
+    return `<tr>
+      <td class="c">${k + 1}</td>
+      <td class="c nw">${cell(l.date)}</td>
+      <td class="c">${dayNo(l.date)}</td>
+      <td class="c">${cell(l.temp)}</td><td class="c">${cell(l.pulse)}</td><td class="c">${cell(l.resp)}</td><td class="c">${cell(l.wt)}</td>
+      <td>${cell(l.diagnosis)}</td>
+      <td>${treat}</td>
+      <td class="c sm">${cell(l.docName)}</td>
+      <td></td>
+    </tr>`;
+  }).join('');
+  let blank = '';
+  for (let k = 0; k < INP_BOOK_BLANK_ROWS; k++) blank += `<tr class="blank"><td class="c">${logs.length + k + 1}</td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>`;
+  const di = i.dischargeInfo || {};
+  const homeMeds = Array.isArray(di.homeMeds) ? di.homeMeds : [];
+  const dischargeBlock = (i.discharged || di.homecare || homeMeds.length) ? `
+    <div class="sec">ГАРАХ ҮЕИЙН ЗӨВЛӨМЖ</div>
+    <table class="kv"><tr><td class="k">Гэрийн асаргаа</td><td>${cell(di.homecare) || '<span class="line"></span>'}</td></tr>
+    <tr><td class="k">Гэрт өгсөн эм</td><td>${homeMeds.length ? homeMeds.map(m => escHTML((m.name || '') + (m.note ? ' — ' + m.note : ''))).join('; ') : '<span class="line"></span>'}</td></tr>
+    <tr><td class="k">Дахин үзлэг</td><td>${cell(di.followUpDate) || '<span class="line"></span>'}</td></tr></table>` : `
+    <div class="sec">ГАРАХ ҮЕИЙН ЗӨВЛӨМЖ</div>
+    <table class="kv"><tr><td class="k">Гэрийн асаргаа</td><td><span class="line"></span></td></tr><tr><td class="k">Гэрт өгсөн эм</td><td><span class="line"></span></td></tr><tr><td class="k">Дахин үзлэг</td><td><span class="line"></span></td></tr></table>`;
+  const vit = ex ? [ex.temp ? 'T ' + ex.temp + '°C' : '', ex.pulse ? 'P ' + ex.pulse : '', ex.resp ? 'R ' + ex.resp : '', ex.wt ? 'W ' + ex.wt + ' кг' : ''].filter(Boolean).join(' · ') : '';
+  $('#print-area').innerHTML = `
+<style>
+  @page { size: A4 portrait; margin: 10mm 10mm 12mm; }
+  #print-area .book { width: 190mm; font-family: 'Times New Roman', serif; font-size: 9pt; color: #000; }
+  #print-area .book * { box-sizing: border-box; }
+  #print-area .bh { text-align: center; border-bottom: 1.5pt solid #000; padding-bottom: 2mm; margin-bottom: 3mm; }
+  #print-area .bh .t1 { font-size: 12.5pt; font-weight: 900; letter-spacing: .5px; text-transform: uppercase; }
+  #print-area .bh .t2 { font-size: 10.5pt; font-weight: 700; margin-top: 1mm; }
+  #print-area .kv { width: 100%; border-collapse: collapse; margin-bottom: 2.5mm; }
+  #print-area .kv td { border: 0.5pt solid #000; padding: 1.6mm 2mm; vertical-align: top; font-size: 9pt; }
+  #print-area .kv td.k { width: 30mm; background: #f2f2f2; font-weight: 700; font-size: 8.5pt; }
+  #print-area .kv.g4 td.k { width: 22mm; }
+  #print-area .line { display: inline-block; width: 100%; border-bottom: 0.4pt dotted #666; height: 4mm; }
+  #print-area .sec { font-weight: 900; font-size: 9.5pt; margin: 3mm 0 1.5mm; letter-spacing: .3px; }
+  #print-area table.log { width: 100%; border-collapse: collapse; page-break-inside: auto; }
+  #print-area table.log thead { display: table-header-group; }
+  #print-area table.log tr { page-break-inside: avoid; break-inside: avoid; }
+  #print-area table.log th { border: 0.6pt solid #000; background: #e9e9e9; font-size: 7.8pt; padding: 1.4mm 1mm; font-weight: 800; }
+  #print-area table.log td { border: 0.5pt solid #000; padding: 1.4mm 1.5mm; font-size: 8.5pt; vertical-align: top; line-height: 1.3; min-height: 9mm; height: 9mm; }
+  #print-area table.log td.c { text-align: center; }
+  #print-area table.log td.nw { white-space: nowrap; }
+  #print-area table.log td.sm { font-size: 7.5pt; }
+  #print-area table.log tr.blank td { height: 10mm; background: repeating-linear-gradient(transparent 0, transparent 4.6mm, #ddd 4.6mm, #ddd 4.8mm); }
+  #print-area .rep { font-size: 7.5pt; color: #333; text-align: left; background: #fff !important; border: 0 !important; padding: 0 0 1mm !important; }
+  #print-area .sig { display: flex; justify-content: space-between; gap: 6mm; margin-top: 8mm; page-break-inside: avoid; }
+  #print-area .sig div { flex: 1; border-top: 0.5pt solid #000; padding-top: 1.5mm; text-align: center; font-size: 8.5pt; }
+  #print-area .tail { page-break-inside: avoid; }
+  #print-area .ft { margin-top: 4mm; font-size: 7pt; color: #666; text-align: center; }
+</style>
+<div class="book">
+  <div class="bh">
+    <div class="t1">Морьтон үндэсний адууны эмнэлэг</div>
+    <div class="t2">БАЙРЛАН ЭМЧЛҮҮЛЭГЧИЙН ЭМЧИЛГЭЭНИЙ ДЭВТЭР</div>
+  </div>
+  <table class="kv g4">
+    <tr><td class="k">Адуу (зүс)</td><td><b>${cell(i.horse)}</b></td><td class="k">ИАБД</td><td>${cell(h && h.iabd) || '<span class="line"></span>'}</td></tr>
+    <tr><td class="k">Нас</td><td>${cell(h && h.age)}</td><td class="k">Аймаг / сум</td><td>${cell([h && h.province, h && h.soum].filter(Boolean).join(', '))}</td></tr>
+    <tr><td class="k">Эзэн</td><td>${cell(i.owner)}</td><td class="k">Утас</td><td>${cell(i.phone)}</td></tr>
+    <tr><td class="k">Хэвтсэн огноо</td><td>${cell(admDate)}</td><td class="k">Гарсан огноо</td><td>${cell(disDate) || '<span class="line"></span>'}</td></tr>
+    <tr><td class="k">Байрлал</td><td>${cell(i.location) || '<span class="line"></span>'}</td><td class="k">Нийт хоног</td><td>${days}</td></tr>
+    <tr><td class="k">Эмчлэгч эмч</td><td>${cell(doc ? doc.name : i.docName)}</td><td class="k">Үзлэгийн хуудас №</td><td>${cell((ex && ex.examNum) || i.examNum)}</td></tr>
+  </table>
+  <table class="kv">
+    <tr><td class="k">Анамнез</td><td>${cell(an.text)}${an.symptoms && an.symptoms.length ? (an.text ? '<br>' : '') + '<i>Шинж тэмдэг:</i> ' + escHTML(an.symptoms.join(', ')) : ''}${!an.text && !(an.symptoms || []).length ? '<span class="line"></span>' : ''}</td></tr>
+    <tr><td class="k">Хүлээн авах үеийн онош</td><td>${cell(i.diagnosis)}${vit ? '<br><span style="color:#444;font-size:8pt">' + escHTML(vit) + '</span>' : ''}</td></tr>
+    ${ex && Array.isArray(ex.services) && ex.services.length ? '<tr><td class="k">Анхны үзлэгт хийсэн</td><td>' + escHTML(ex.services.map(x => x.name).join(', ')) + '</td></tr>' : ''}
+    ${ex && Array.isArray(ex.meds) && ex.meds.length ? '<tr><td class="k">Анхны эм</td><td>' + escHTML(ex.meds.map(m => (m.name || m) + (m.note ? ' — ' + m.note : '')).join('; ')) + '</td></tr>' : ''}
+  </table>
+  <div class="sec">ӨДӨР ТУТМЫН ЭМЧИЛГЭЭНИЙ БҮРТГЭЛ</div>
+  <table class="log">
+    <thead>
+      <tr><th colspan="11" class="rep">Адуу: <b>${cell(i.horse)}</b> · Эзэн: ${cell(i.owner)} · Хэвтсэн: ${cell(admDate)} · Байрлал: ${cell(i.location) || '—'}</th></tr>
+      <tr>
+        <th style="width:6mm">№</th><th style="width:17mm">Огноо</th><th style="width:8mm">Хоног</th>
+        <th style="width:9mm">T °C</th><th style="width:8mm">P</th><th style="width:8mm">R</th><th style="width:9mm">Жин</th>
+        <th>Биеийн байдал, онош</th><th style="width:52mm">Эмчилгээ, эм, тун</th><th style="width:17mm">Эмч</th><th style="width:14mm">Гарын үсэг</th>
+      </tr>
+    </thead>
+    <tbody>${rows}${blank}</tbody>
+  </table>
+  <div class="tail">
+    ${dischargeBlock}
+    <div class="sig"><div>Эмчлэгч эмч: ${cell(doc ? doc.name : i.docName)}</div><div>Тасгийн ахлах эмч</div><div>Эзэн (хүлээн авсан)</div></div>
+    <div class="ft">Морьтон адууны төв · Хэвлэсэн: ${escHTML(todayStr())}${i.discharged ? '' : ' · Адуу хэвтэж байна'}</div>
+  </div>
+</div>`;
+  setTimeout(() => window.print(), 150);
 }
 
 function printInpatientCard(inpId) {
@@ -5621,6 +6164,7 @@ function renderKPI() {
   renderFinLockBars();
 
   const R = getKPIRange();
+  if (R && R.fromStr && R.fromStr < LIVE_CUTOFF) ensureRange(R.fromStr, R.toStr).then(ok => { if (ok && STATE.activePage === 'kpi') renderKPI(); });
   $('#k-period-info').textContent = '📅 ' + R.fromStr + ' → ' + R.toStr;
 
   // Хугацааны үзлэгүүд (date-г эхлэн харна, ms нь импортод буруу байж болно)
@@ -6114,7 +6658,7 @@ function rpPayStatus(e) {
 
 // Адууны ИАБД дугаар
 function rpIabdOf(e) {
-  const h = (STATE.horses || []).find(x => String(x.id) === String(e.horseId) || x.name === e.horse);
+  const h = horseOf(e);
   return h && h.iabd ? h.iabd : '';
 }
 
@@ -6384,6 +6928,7 @@ function rpSelectDoctor(id) {
 function genReport() {
   const period = getReportPeriod();
   if (!period) { toast('Хугацаа сонгоно уу', 'err'); return; }
+  if (period.from && period.from < LIVE_CUTOFF) ensureRange(period.from, period.to).then(ok => { if (ok && STATE.activePage === 'report') genReport(); });
   $('#rp-period-info').textContent = period.label;
   __finRerender = genReport;
   renderFinLockBars();
@@ -6869,6 +7414,7 @@ function bonusMonthLabel(ym) { const [y, m] = ym.split('-'); return y + ' оны
 function renderBonus() {
   const ymEl = $('#bn-month'); if (!ymEl) return;
   if (!ymEl.value) { const n = new Date(); n.setMonth(n.getMonth() - (n.getDate() < 5 ? 1 : 0)); ymEl.value = n.getFullYear() + '-' + String(n.getMonth() + 1).padStart(2, '0'); }
+  if (ymEl.value + '-01' < LIVE_CUTOFF) ensureRange(ymEl.value + '-01', ymEl.value + '-31').then(ok => { if (ok && STATE.activePage === 'finance') renderBonus(); });
   const provSel = $('#bn-prov');
   if (provSel && !provSel.__filled) {
     provSel.__filled = true;
@@ -7327,7 +7873,7 @@ async function fbFetchAllData(onProgress) {
       servicePrices: STATE.servicePrices || {}, customServices: STATE.customServices || [],
       removedServices: STATE.removedServices || [], staffSchedule: STATE.staffSchedule || {},
       labSvcOn: STATE.labSvcOn || [], labSvcOff: STATE.labSvcOff || [],
-      bonusCfg: STATE.bonusCfg || null, examNumCfg: STATE.examNumCfg || null
+      bonusCfg: STATE.bonusCfg || null, examNumCfg: STATE.examNumCfg || null, inpLocations: STATE.inpLocations || null
     };
     return out;
   }
@@ -7630,7 +8176,7 @@ function kindFilterHTML(id, extraStyle) {
 function kindFilterVal(id) { const el = $('#' + id); return (el && el.value) || 'all'; }
 function onKindFilterChange(id) {
   if (id === 'h-kind') { __histPage = 0; renderHistory(); }
-  else if (id === 'f-kind') renderFinance();
+  else if (id === 'f-kind') onFinFilterChange();
   else if (id === 'k-kind') renderKPI();
   else if (id === 'rp-kind') { if (__rpLast) genReport(); }
 }
@@ -7733,6 +8279,7 @@ function renderTripDetail() {
   const host = $('#pl-detail'); if (!host) return;
   const t = tripById(STATE.selectedTrip);
   if (!t) { host.innerHTML = '<div class="card"><div class="empty"><div class="empty-em">🗓️</div>Зүүн талаас явц сонгох эсвэл шинээр үүсгэнэ үү</div></div>'; return; }
+  if (t.date && t.date < LIVE_CUTOFF) ensureRange(t.date, t.endDate || t.date).then(ok => { if (ok && STATE.activePage === 'planned') renderPlanned(); });
   const s = tripStats(t);
   const ex = tripExams(t.id).slice().sort((a, b) => (b.ms || 0) - (a.ms || 0));
   const closed = t.status === 'closed';
@@ -7907,17 +8454,17 @@ function clearPlannedForm() {
 }
 
 // ── Хадгалах: адуу (upsert) + үзлэг + санхүү + эмчийн статистик + шинжилгээ ──
-function savePlannedExam() {
-  try { return _savePlannedExam(); } catch (e) { console.error('[savePlannedExam]', e); toast('⚠️ Хадгалахад алдаа: ' + (e && e.message || e), 'err'); }
+async function savePlannedExam() {
+  try { return await _savePlannedExam(); } catch (e) { console.error('[savePlannedExam]', e); toast('⚠️ Хадгалахад алдаа: ' + (e && e.message || e), 'err'); }
 }
-function _savePlannedExam() {
+async function _savePlannedExam() {
   const t = tripById(STATE.selectedTrip); if (!t) { toast('Явц сонгоно уу', 'err'); return; }
   const v = id => (($('#' + id) || {}).value || '').trim();
   const horseName = v('pl-e-horse'), diag = v('pl-e-diag'), examNum = v('pl-e-num');
   if (!horseName) { toast('Зүс (нэр) оруулна уу', 'err'); $('#pl-e-horse').focus(); return; }
   if (!diag) { toast('Онош оруулна уу', 'err'); $('#pl-e-diag').focus(); return; }
   if (!examNum) { toast('Үзлэгийн хуудасны дугаар оруулна уу (эсвэл «авто»)', 'err'); $('#pl-e-num').focus(); return; }
-  const dup = findExamNumDuplicate(examNum);
+  const dup = findExamNumDuplicate(examNum) || await findExamNumDuplicateRemote(examNum);
   if (dup) { toast('⚠️ ' + examNum + ' дугаар аль хэдийн байна (' + (dup.rec.horse || '') + ')', 'err'); $('#pl-e-num').focus(); return; }
   if (!PL_DRAFT.services.length && !confirm('Үйлчилгээ сонгоогүй байна. Үйлчилгээгүйгээр хадгалах уу?')) return;
   const owner = v('pl-e-owner'), phone = v('pl-e-phone');
@@ -8020,12 +8567,15 @@ function renderHistory() {
   const q = $('#h-q').value.toLowerCase().trim();
   const from = $('#h-from').value;
   const to = $('#h-to').value;
+  // 🪟 Цонхноос өмнөх огноо сонгосон бол тэр хугацааг нэг удаа татаад дахин зурна
+  if (from && from < LIVE_CUTOFF) ensureRange(from, to || LIVE_CUTOFF).then(ok => { if (ok && STATE.activePage === 'history') renderHistory(); });
+  const hintEl = $('#h-hint'); if (hintEl) hintEl.innerHTML = historyHint(from);
   const sortMode = ($('#h-sort') && $('#h-sort').value) || 'time_desc';
   let list = [...STATE.exams].filter(e => examKindOk(e, kindFilterVal('h-kind')));
   if (q) {
     // Морины ИАБД-г хайлтад оруулна (horses-оос horseId-аар олно)
     const iabdOf = (e) => {
-      const h = STATE.horses.find(x => String(x.id) === String(e.horseId) || x.name === e.horse);
+      const h = horseOf(e);
       return (h && h.iabd) ? h.iabd : '';
     };
     list = list.filter(e => { const an = examAnamnesis(e); return (e.horse+' '+e.owner+' '+e.phone+' '+e.diagnosis+' '+(e.examNum||'')+' '+iabdOf(e)+' '+an.text+' '+an.symptoms.join(' ')).toLowerCase().includes(q); });
@@ -8072,12 +8622,12 @@ function renderHistory() {
     tb.innerHTML = '<tr><td colspan="'+(seeFin?10:8)+'" style="text-align:center;padding:20px;color:var(--muted)">Бүртгэл алга</td></tr>';
   } else {
     tb.innerHTML = pageList.map((e, i) => {
-      const fin = STATE.fins.find(f => String(f.examId) === String(e.id));
+      const fin = finByExamId(e.id);
       const status = fin ? (fin.paid?'Төлсөн':'Хүлээгдэж буй') : '—';
       const cls = fin && fin.paid ? 'b-g' : 'b-o';
       const canEdit = STATE.user && (STATE.user.role === 'Ерөнхий эмч' || STATE.user.role === 'Ахлах эмч' || STATE.user.role === 'Админ');
       const rowNum = pageStart + i + 1;
-      const h = STATE.horses.find(x => String(x.id) === String(e.horseId) || x.name === e.horse);
+      const h = horseOf(e);
       const iabd = (h && h.iabd) ? h.iabd : '';
       const an = examAnamnesis(e);
       const anamLine = [an.text, an.symptoms.join(', ')].filter(Boolean).join(' · ');
@@ -8148,7 +8698,7 @@ function histSortBy(col) {
 function exportHistCSV() {
   const rows = [['#','Дугаар','Огноо','Адуу','Эзэн','Утас','Эмч','Анамнез','Шинж тэмдэг','Онош','Дүн','Статус']];
   STATE.exams.forEach((e,i) => {
-    const fin = STATE.fins.find(f => String(f.examId) === String(e.id));
+    const fin = finByExamId(e.id);
     const an = examAnamnesis(e);
     rows.push([i+1, e.examNum||'', e.date, e.horse, e.owner, e.phone, e.docName, an.text, an.symptoms.join(', '), e.diagnosis, e.amount, fin&&fin.paid?'Төлсөн':'Хүлээгдэж буй']);
   });
@@ -8162,6 +8712,7 @@ function renderAdmin() {
   try { renderFinPinStatus(); } catch(_) {}
   try { renderBonusCfg(); } catch(_) {}
   try { renderExamNumCfg(); } catch(_) {}
+  try { renderInpLocCfg(); } catch(_) {}
   try { renderExportSummary(); } catch(_) {}
   $('#a-url').value = STATE.syncURL;
   const list = $('#a-doc-list');
@@ -8723,7 +9274,7 @@ function renderLogViewer() {
 // EDIT HORSE
 // ============================================================
 function openEditHorse(id) {
-  const h = STATE.horses.find(x => x.id === id);
+  const h = horseById(id);
   if (!h) return;
   STATE._editHorse = h;
   STATE._editHorseId = String(h.id); // заалт салсан ч id-аар нь дахин олно
@@ -9570,16 +10121,41 @@ const __fbRemoteCount = {};
 // softRefresh debounce — 500ms: анхны ачаалалд олон document ирэхэд нэг удаа render хийнэ
 let __fbRefreshTimer = null;
 let __fbInitialLoadDone = false; // анхны snapshot дуусах хүртэл render хийхгүй
+// ── 🎯 Сонгомол дахин зурах ─────────────────────────────────────
+// Өмнө нь ямар ч жагсаалтад өөрчлөлт ирсэн (лог бичигдсэн ч) одоогийн
+// хуудсыг бүхэлд нь дахин зурдаг байсан. Одоо хуудас бүр аль жагсаалтаас
+// хамаардгийг мэдэж, хамаагүй өөрчлөлтийг алгасна.
+const PAGE_DEPS = {
+  dashboard: ['exams', 'fins', 'inps', 'waiting', 'doctors', 'staff', 'config', 'horses'],
+  register:  ['horses', 'config'],
+  waiting:   ['waiting', 'horses', 'config'],
+  exam:      ['waiting', 'exams', 'horses', 'doctors', 'config'],
+  inpatient: ['inps', 'horses', 'config'],
+  lab:       ['labs', 'exams', 'config'],
+  finance:   ['fins', 'exams', 'doctors', 'horses', 'inps', 'config'],
+  kpi:       ['exams', 'fins', 'doctors', 'inps', 'config'],
+  history:   ['exams', 'horses', 'fins', 'config'],
+  report:    ['exams', 'fins', 'inps', 'doctors', 'horses', 'config'],
+  planned:   ['trips', 'exams', 'horses', 'doctors', 'config'],
+  admin:     ['users', 'staff', 'logs', 'deletedExams', 'doctors', 'config']
+};
+const __dirtyCols = new Set();
+function _markDirty(col) { __dirtyCols.add(col); __stateVer++; }
 function _fbDebouncedRefresh() {
   if (!__fbInitialLoadDone) return; // анхны ачаалал дуусаагүй бол алгасна
   clearTimeout(__fbRefreshTimer);
   __fbRefreshTimer = setTimeout(() => {
-    if (STATE.user) softRefresh();
+    if (!STATE.user) { __dirtyCols.clear(); return; }
+    const deps = PAGE_DEPS[STATE.activePage];
+    const need = !deps || __dirtyCols.size === 0 || deps.some(c => __dirtyCols.has(c));
+    __dirtyCols.clear();
+    try { updateBadges(); } catch (e) {}
+    if (need) softRefresh();
   }, 500);
 }
 // Анхны ачаалал — collection бүрийн эхний snapshot ирмэгц тэмдэглэнэ
 // 3 секундын fixed delay биш, бодит snapshot тоолох аргыг ашиглана
-const FB_COLLECTIONS_COUNT = 12; // horses, exams, fins, inps, waiting, staff, doctors, users, logs, deletedExams, labs, trips
+const FB_COLLECTIONS_COUNT = 13; // FB_LISTENERS.length — 12 collection + fins_open
 let __fbSnapshotsDone = 0;
 function _fbMarkInitialLoadDone() {
   // Backup: хэрэв snapshot бүх collection дээр ирэхгүй бол 5 секундын дараа нэг удаа render
@@ -9701,6 +10277,7 @@ function fbSaveClinicConfig() {
     finPinHash:      STATE.finPinHash      || '',
     bonusCfg:        STATE.bonusCfg        || null,
     examNumCfg:      STATE.examNumCfg      || null,
+    inpLocations:    Array.isArray(STATE.inpLocations) ? STATE.inpLocations : null,
     _updatedAt: ms,
     _writer: window.__fbDeviceId || 'unknown'
   });
@@ -9784,6 +10361,7 @@ function flashSync() {
 // ── Firestore-ээс ирсэн document-г STATE-д нэгтгэх ───────────
 function fbApplyRecord(colName, docData) {
   if (!docData) return;
+  _markDirty(colName === 'clinic_config' ? 'config' : colName);
   __fbApplyingRemote = true;
   try {
     if (colName === 'clinic_config') {
@@ -9841,6 +10419,8 @@ function fbApplyRecord(colName, docData) {
       if (docData.bonusCfg && typeof docData.bonusCfg === 'object') { STATE.bonusCfg = docData.bonusCfg; lsSet('mt_bonus_cfg', STATE.bonusCfg); try { if (STATE.activePage === 'admin') renderBonusCfg(); } catch(_) {} }
       // 🔢 Үзлэгийн дугаарлалт
       if (docData.examNumCfg && typeof docData.examNumCfg === 'object') { STATE.examNumCfg = docData.examNumCfg; lsSet('mt_examnum_cfg', STATE.examNumCfg); try { if (STATE.activePage === 'admin') renderExamNumCfg(); } catch(_) {} }
+      // 📍 Байрлан эмчлүүлэх байрлалууд
+      if (Array.isArray(docData.inpLocations)) { STATE.inpLocations = docData.inpLocations.slice(); lsSet('mt_inp_locations', STATE.inpLocations); try { if (STATE.activePage === 'admin') renderInpLocCfg(); } catch(_) {} }
       // Шилжилтийн үе: нэгтгэсэн үр дүнг сервэрт нэг удаа буцаан бичиж
       // бүх төхөөрөмжийн тохиргоог нийлүүлнэ (дараа нь _localMs тэглэгдэхгүй).
       if (!_localMs && _localCount > 0) { try { fbSaveClinicConfig(); } catch(e){} }
@@ -9935,11 +10515,10 @@ function fbApplyRecord(colName, docData) {
     // Устгасан бол алгасна
     if (STATE.deletedIds instanceof Set && STATE.deletedIds.has(String(r.id))) return;
     if (!STATE[colName]) STATE[colName] = [];
-    const idx = STATE[colName].findIndex(x => String(x.id) === String(r.id));
-    if (idx < 0) {
-      STATE[colName].push(r);
+    const lc = recById(colName, r.id);
+    if (!lc) {
+      _recIdxPush(colName, r);
     } else {
-      const lc = STATE[colName][idx];
       // ⏱ ms байхгүй хуучин бичлэгт _updatedAt / createdAt-аар нөхөж харьцуулна —
       // эс бөгөөс 0 >= 0 болж хуучин хуулбар шинийг дардаг (ИАБД устдаг байсан шалтгаан)
       const remoteMs = parseFloat(r.ms)  || parseFloat(r._updatedAt)  || parseFloat(r.createdAt)  || 0;
@@ -9970,13 +10549,20 @@ function fbApplyRecord(colName, docData) {
     clearTimeout(__fbApplyingTimer);
     __fbApplyingTimer = setTimeout(() => { __fbApplyingRemote = false; }, 200);
   }
-  updateBadges();
+  _scheduleBadges();
   _fbDebouncedRefresh();
-  try { flashSync(); } catch(e){}
+  _flashSyncThrottled();
 }
+
+// updateBadges нь бүх санг гүйлгэдэг тул бичлэг бүрд биш, багцаар нэг удаа
+let __badgeTimer = null;
+function _scheduleBadges() { if (__badgeTimer) return; __badgeTimer = setTimeout(() => { __badgeTimer = null; try { updateBadges(); } catch (e) {} }, 120); }
+let __flashLast = 0;
+function _flashSyncThrottled() { const n = Date.now(); if (n - __flashLast < 400) return; __flashLast = n; try { flashSync(); } catch (e) {} }
 
 // ── Устгагдсан document-г STATE-аас хасах ────────────────────
 function fbRemoveRecord(colName, docId) {
+  _markDirty(colName);
   __fbApplyingRemote = true;
   try {
     if (colName === 'waiting') {
@@ -9998,7 +10584,7 @@ function fbRemoveRecord(colName, docId) {
     clearTimeout(__fbApplyingTimer);
     __fbApplyingTimer = setTimeout(() => { __fbApplyingRemote = false; }, 200);
   }
-  updateBadges();
+  _scheduleBadges();
   _fbDebouncedRefresh();
 }
 
@@ -10089,14 +10675,95 @@ const FB_COLLECTIONS = [
 ];
 const __fbColStatus = {}; // colName → { cacheAt, serverAt, lastAt, n, changes }
 
-// 📉 Хязгааргүй өсдөг collection-уудыг бүтнээр нь татахгүй — зөвхөн сүүлийн N.
-// Лог хэдэн арван мянга болоход хуудас нээх бүрд бүгдийг татаж, утсан дээр
-// эхлэх хугацааг эрс уртасгадаг байсан. Админы харагч ямар ч тохиолдолд
-// сүүлийн 200-г л харуулдаг.
-const FB_COL_LIMITS = {
-  logs:         { orderField: 'log_ms',    limitN: 400 },
-  deletedExams: { orderField: 'deletedAt', limitN: 200 }
-};
+// ── 🪟 ЦОНХТОЙ СОНСОГЧ ─────────────────────────────────────────
+// Өмнө нь төхөөрөмж бүр БҮХ үзлэг, БҮХ санхүүг бодит цагаар сонсдог байв —
+// 2500+ бичлэг санах ойд, өөрчлөлт бүрд бүгдийг хадгалж, дахин зурна.
+// Одоо бодит цагаар зөвхөн:
+//   • үзлэг: сүүлийн LIVE_WINDOW_DAYS хоног (date >= LIVE_CUTOFF)
+//   • санхүү: сүүлийн LIVE_WINDOW_DAYS хоног + БҮРЭН ТӨЛӨГДӨӨГҮЙ бүгд (paid != true)
+//   • лог, устгасан үзлэг: сүүлийн N
+//   • бусад (адуу, хүлээлт, байрлан эмчлүүлэх, шинжилгээ, эмч, ажилтан, явц): бүтнээр
+// Хуучин хугацааг Түүх/KPI/Тайлан/Урамшуулал дээр сонгоход ensureRange()
+// хэрэгтэй хэсгийг л нэг удаа татна (харна уу: «Хугацааны хэсэгчилсэн ачаалалт»).
+const LIVE_WINDOW_DAYS = 120;
+const LIVE_CUTOFF = (() => { const d = new Date(); d.setDate(d.getDate() - LIVE_WINDOW_DAYS); return localDateStr(d); })();
+const FB_LISTENERS = [
+  { key: 'horses',       col: 'horses' },
+  { key: 'exams',        col: 'exams',        where: [['date', '>=', LIVE_CUTOFF]], windowed: true },
+  { key: 'fins',         col: 'fins',         where: [['date', '>=', LIVE_CUTOFF]], windowed: true },
+  { key: 'fins_open',    col: 'fins',         where: [['paid', '!=', true]],        windowed: true, label: 'Санхүү (төлөгдөөгүй)' },
+  { key: 'inps',         col: 'inps' },
+  { key: 'waiting',      col: 'waiting' },
+  { key: 'staff',        col: 'staff' },
+  { key: 'doctors',      col: 'doctors' },
+  { key: 'users',        col: 'users' },
+  { key: 'logs',         col: 'logs',         orderField: 'log_ms',    limitN: 400, windowed: true },
+  { key: 'deletedExams', col: 'deletedExams', orderField: 'deletedAt', limitN: 200, windowed: true },
+  { key: 'labs',         col: 'labs' },
+  { key: 'trips',        col: 'trips' }
+];
+
+// ── 📚 Хугацааны хэсэгчилсэн ачаалалт ──────────────────────────
+// Цонхноос гадуурх үзлэг/санхүүг [from, to] огноогоор нэг удаа татаж STATE-д нэгтгэнэ.
+// Татсан хугацааг санаж давхар татахгүй. Сонсогч биш тул тэдгээр бичлэгийн
+// дараагийн өөрчлөлт бодит цагаар ирэхгүй (хуучин бичлэг ховор өөрчлөгддөг).
+const __loadedRanges = { exams: [[LIVE_CUTOFF, '9999-12-31']], fins: [[LIVE_CUTOFF, '9999-12-31']] };
+const __rangeInflight = {};
+let __allHistoryLoaded = false;
+function _rangeCovered(col, from, to) {
+  return (__loadedRanges[col] || []).some(r => r[0] <= from && r[1] >= to);
+}
+function _addRange(col, from, to) {
+  const arr = __loadedRanges[col] || (__loadedRanges[col] = []);
+  arr.push([from, to]);
+  // Давхацсан/залгаа хугацааг нэгтгэнэ
+  arr.sort((a, b) => a[0] < b[0] ? -1 : 1);
+  const out = [];
+  for (const r of arr) { const l = out[out.length - 1]; if (l && r[0] <= l[1]) { if (r[1] > l[1]) l[1] = r[1]; } else out.push(r.slice()); }
+  __loadedRanges[col] = out;
+}
+// Буцаана: шинэ бичлэг нэмэгдсэн бол true (дахин зурах хэрэгтэй)
+async function ensureRange(from, to, cols) {
+  cols = cols || ['exams', 'fins'];
+  if (!from) from = '2000-01-01';
+  if (!to || to > LIVE_CUTOFF) to = LIVE_CUTOFF < from ? from : LIVE_CUTOFF; // цонх доторхийг сонсогч өгнө
+  if (from > to) return false;
+  if (!window.__fbQuery || !window.__fbReady) return false;
+  let added = 0;
+  for (const col of cols) {
+    if (_rangeCovered(col, from, to)) continue;
+    const k = col + '|' + from + '|' + to;
+    if (__rangeInflight[k]) { await __rangeInflight[k]; continue; }
+    __rangeInflight[k] = (async () => {
+      try {
+        const res = await window.__fbQuery(col, [['date', '>=', from], ['date', '<=', to]]);
+        const before = (STATE[col] || []).length;
+        res.docs.forEach(d => { if (d && d.id) fbApplyRecord(col, d); });
+        added += (STATE[col] || []).length - before;
+        if (!res.fromCache || res.docs.length) _addRange(col, from, to);
+      } catch (e) { console.warn('[FB] ensureRange ' + col + ' ' + from + '…' + to, e && e.message); }
+    })();
+    await __rangeInflight[k];
+    delete __rangeInflight[k];
+  }
+  return added > 0;
+}
+// Бүх түүхийг (цонхноос өмнөхийг) нэг удаа татна — Түүх хуудасны хайлт бүрэн ажиллахад
+async function loadAllHistory() {
+  if (__allHistoryLoaded) return false;
+  toast('Бүх түүхийг татаж байна…', 'ok');
+  const ok = await ensureRange('2000-01-01', LIVE_CUTOFF);
+  __allHistoryLoaded = true;
+  toast('✅ Бүх түүх ачаалагдлаа', 'ok');
+  return ok;
+}
+function historyHint(from) {
+  if (__allHistoryLoaded) return '';
+  const partial = !from || from < LIVE_CUTOFF;
+  return partial
+    ? '<div class="muted" style="font-size:11.5px;margin:4px 0 8px">⏳ Сүүлийн ' + LIVE_WINDOW_DAYS + ' хоног (' + LIVE_CUTOFF + '-с хойш) ба төлөгдөөгүй бичлэг ачаалагдсан. Хуучин хугацааг харахын тулд огноо сонгох, эсвэл <a href="#" onclick="loadAllHistory().then(function(){softRefresh();});return false;">бүх түүхийг ачаалах</a>.</div>'
+    : '';
+}
 
 function fbStartListening() {
   if (!window.__fbReady || !window.__fbColListen) return;
@@ -10126,13 +10793,14 @@ function fbStartListening() {
     }
   }
 
-  // Collection бүрийг сонсох — эхний snapshot ирмэгц __fbOnFirstSnapshot дуудна
-  FB_COLLECTIONS.forEach(colName => {
-    if (__fbUnsubs[colName]) return;
-    let _firstSnap = false; // энэ collection-ийн эхний snapshot ирсэн эсэх
-    __fbUnsubs[colName] = window.__fbColListen(colName, (changes, allIds, isFirst, fromCache, isFirstServer) => {
+  // Сонсогч бүрийг эхлүүлнэ — эхний snapshot ирмэгц __fbOnFirstSnapshot дуудна
+  FB_LISTENERS.forEach(L => {
+    const key = L.key, colName = L.col;
+    if (__fbUnsubs[key]) return;
+    let _firstSnap = false; // энэ сонсогчийн эхний snapshot ирсэн эсэх
+    __fbUnsubs[key] = window.__fbColListen(colName, (changes, allIds, isFirst, fromCache, isFirstServer) => {
       // 📊 Синкийн төлөв (утсан дээрх оношилгооны самбарт)
-      const st = __fbColStatus[colName] || (__fbColStatus[colName] = { cacheAt: 0, serverAt: 0, lastAt: 0, n: 0, changes: 0 });
+      const st = __fbColStatus[key] || (__fbColStatus[key] = { cacheAt: 0, serverAt: 0, lastAt: 0, n: 0, changes: 0 });
       st.lastAt = Date.now(); st.n = allIds.length; st.changes += changes.length;
       if (fromCache && !st.cacheAt) st.cacheAt = Date.now();
       if (!fromCache) st.serverAt = Date.now();
@@ -10143,7 +10811,16 @@ function fbStartListening() {
       }
       changes.forEach(({ type, docId, data }) => {
         if (type === 'removed') {
-          fbRemoveRecord(colName, docId);
+          if (L.windowed && window.__fbDocIfExists) {
+            // Цонхтой сонсогч: «цонхноос гарсан» уу, «устсан» уу — сервэрээс шалгана.
+            // Ж: санхүү төлөгдөхөд paid!=true цонхноос гарна — устгаж БОЛОХГҮЙ, шинэчилнэ.
+            window.__fbDocIfExists(colName, docId).then(d => {
+              if (d === null) fbRemoveRecord(colName, docId);
+              else if (d) fbApplyRecord(colName, d);
+            });
+          } else {
+            fbRemoveRecord(colName, docId);
+          }
         } else {
           if (data._writer === window.__fbDeviceId && (Date.now() - (data._updatedAt||0)) < 5000) return;
           fbApplyRecord(colName, data);
@@ -10155,7 +10832,8 @@ function fbStartListening() {
       // Дискэн кэшийн allIds нь сервэрийн үнэн жагсаалт БИШ — үүгээр тулгавал
       // өөр компьютер дээр нэмсэн бичлэгийг «устсан» гэж үзэж алга болгоно.
       if (isFirstServer && colName === 'waiting') _fbReconcileWaiting(allIds);
-    }, (err) => console.error('[FB] onSnapshot алдаа (' + colName + '):', err), FB_COL_LIMITS[colName]);
+    }, (err) => console.error('[FB] onSnapshot алдаа (' + key + '):', err),
+       { where: L.where, orderField: L.orderField, limitN: L.limitN });
   });
 }
 

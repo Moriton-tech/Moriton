@@ -2,7 +2,7 @@ import { initializeApp } from "https://www.gstatic.com/firebasejs/11.0.2/firebas
 import {
   getFirestore, initializeFirestore, persistentLocalCache, persistentMultipleTabManager,
   terminate, clearIndexedDbPersistence,
-  doc, collection, onSnapshot, setDoc, getDoc, deleteDoc, getDocs, query, orderBy, limit
+  doc, collection, onSnapshot, setDoc, getDoc, deleteDoc, getDocs, query, where, orderBy, limit
 } from "https://www.gstatic.com/firebasejs/11.0.2/firebase-firestore.js";
 import {
   getStorage, ref as storageRef, uploadString, getDownloadURL, deleteObject
@@ -72,12 +72,16 @@ window.__fbColQuery = async (colName) => {
 // локал кэштэй тулгах (reconcile) боломжгүй болж, компьютер бүр
 // өөр өөр жагсаалт харуулдаг.
 window.__fbColListen = (colName, callback, onError, opts) => {
-  // opts.orderField + opts.limitN өгвөл зөвхөн сүүлийн N бичлэгийг сонсоно
-  // (лог мэтийн хязгааргүй өсдөг collection-д сүлжээний ачааллыг багасгана)
+  // opts.orderField + opts.limitN → зөвхөн сүүлийн N бичлэг (лог г.м.)
+  // opts.where = [[талбар, оператор, утга], ...] → ЦОНХТОЙ сонсогч:
+  //   ж: [['date','>=','2026-05-28']] — зөвхөн сүүлийн хугацааны үзлэг.
+  //   ⚠️ Цонхтой сонсогчийн 'removed' нь «устсан» биш «цонхноос гарсан»
+  //   байж болно — app.js тал үүнийг __fbDocExists-ээр ялгана.
   let ref = collection(db, colName);
-  if (opts && opts.orderField && opts.limitN) {
-    ref = query(ref, orderBy(opts.orderField, 'desc'), limit(opts.limitN));
-  }
+  const parts = [];
+  if (opts && Array.isArray(opts.where)) opts.where.forEach(w => parts.push(where(w[0], w[1], w[2])));
+  if (opts && opts.orderField && opts.limitN) { parts.push(orderBy(opts.orderField, 'desc')); parts.push(limit(opts.limitN)); }
+  if (parts.length) ref = query(ref, ...parts);
   let firstSnap = true, firstServerPending = true;
   return onSnapshot(ref, { includeMetadataChanges: true }, (snap) => {
     const changes = snap.docChanges().map(change => ({
@@ -104,6 +108,26 @@ window.__fbColListen = (colName, callback, onError, opts) => {
       callback(changes, allIds, isFirst, fromCache, isFirstServer);
     }
   }, onError || (() => {}));
+};
+
+// ── Нэг удаагийн шүүлтэт татах (хуучин хугацааг хэрэгтэй үед) ──
+// whereArr = [[талбар, оператор, утга], ...]; docs-ийн data()-г буцаана.
+window.__fbQuery = async (colName, whereArr, opts) => {
+  const parts = (whereArr || []).map(w => where(w[0], w[1], w[2]));
+  if (opts && opts.orderField) parts.push(orderBy(opts.orderField, opts.dir || 'asc'));
+  if (opts && opts.limitN) parts.push(limit(opts.limitN));
+  const snap = await getDocs(parts.length ? query(collection(db, colName), ...parts) : collection(db, colName));
+  return { docs: snap.docs.map(d => d.data()), fromCache: !!(snap.metadata && snap.metadata.fromCache) };
+};
+
+// ── Document байгаа эсэх (цонхтой сонсогчийн 'removed'-ийг ялгахад) ──
+// Байвал data()-г буцаана (хамгийн сүүлийн хувь), байхгүй бол null.
+// Сүлжээний алдаанд «байгаа» гэж үзнэ — санамсаргүй устгахгүйн тулд.
+window.__fbDocIfExists = async (colName, docId) => {
+  try {
+    const s = await getDoc(doc(db, colName, docId));
+    return s.exists() ? s.data() : null;
+  } catch (e) { return undefined; }
 };
 
 // ── Нэг document real-time сонсох ─────────────────────────────

@@ -29,9 +29,9 @@
      ⚠️ Доорх firebaseConfig-ийг ӨӨРИЙН project-ийн утгаар СОЛИНО.
         Firebase Console → Project settings → Your apps → Web app
      ============================================================ -->
-<script type="module" src="firebase.js?v=20260924"></script>
+<script type="module" src="firebase.js?v=20260925"></script>
 
-<link rel="stylesheet" href="style.css?v=20260917a">
+<link rel="stylesheet" href="style.css?v=20260925b">
 </head>
 <body>
 
@@ -468,14 +468,39 @@
         </div>
 
         <div class="card">
-          <div class="ch">🛏️ Байрлан эмчлүүлж буй адууд</div>
+          <div class="ch" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+            <span>🛏️ Байрлан эмчлүүлж буй адууд</span>
+            <div class="row" style="gap:4px;flex-wrap:wrap" id="inp-views">
+              <button type="button" class="btn btn-xs inp-view-btn on" data-view="cards" onclick="setInpView('cards')">🗂 Карт</button>
+              <button type="button" class="btn btn-xs inp-view-btn" data-view="loc" onclick="setInpView('loc')">📍 Байрлалаар</button>
+              <button type="button" class="btn btn-xs inp-view-btn" data-view="doc" onclick="setInpView('doc')">👨‍⚕️ Эмчээр</button>
+            </div>
+          </div>
+          <div id="inp-summary" class="inp-summary"></div>
+          <div class="fg r4" style="margin-bottom:10px">
+            <div class="fld"><label>Эмч</label><select class="inp" id="inp-f-doc" onchange="renderInpatient()"></select></div>
+            <div class="fld"><label>Байрлал</label><select class="inp" id="inp-f-loc" onchange="renderInpatient()"></select></div>
+            <div class="fld"><label>Хайх</label><input class="inp" id="inp-f-q" placeholder="Зүс / эзэн / утас / онош" oninput="renderInpatient()"></div>
+            <div class="fld"><label>Эрэмбэ</label>
+              <select class="inp" id="inp-f-sort" onchange="renderInpatient()">
+                <option value="days_desc">Хоног (их → бага)</option>
+                <option value="days_asc">Хоног (бага → их)</option>
+                <option value="due_desc">Дутуу төлбөр (их → бага)</option>
+                <option value="name">Зүс (А → Я)</option>
+                <option value="loc">Байрлал</option>
+              </select>
+            </div>
+          </div>
           <div class="list" id="inp-list"></div>
         </div>
 
         <div class="card hidden" id="inp-detail-card">
           <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
             <div class="ch" id="inp-detail-title" style="margin-bottom:0">📌 Дэлгэрэнгүй</div>
-            <button class="btn btn-sm" onclick="printInpatientCard()" title="Дэвтэр хэвлэх">🖨️ Дэвтэр хэвлэх</button>
+            <div class="row" style="gap:6px;flex-wrap:wrap">
+              <button class="btn btn-sm btn-p" onclick="printInpBook()" title="Эмчилгээний дэвтэр (эмнэлзүйн хуудас, мөнгөгүй)">📖 Эмчилгээний дэвтэр</button>
+              <button class="btn btn-sm" onclick="printInpatientCard()" title="Төлбөрийн тооцоотой хуудас">🧾 Төлбөрийн хуудас</button>
+            </div>
           </div>
 
           <!-- Tab nav -->
@@ -651,7 +676,6 @@
             <div class="ph-sub">Нэхэмжлэх ба орлого</div>
           </div>
           <div class="ph-r">
-            <select class="inp" id="f-kind" style="width:auto;padding:6px 10px;font-size:12px" onchange="onKindFilterChange('f-kind')"><option value="all">Бүх үзлэг</option><option value="clinic">Зөвхөн клиник</option><option value="planned">Зөвхөн төлөвлөгөөт (ТҮ)</option></select>
             <button class="btn btn-sm" onclick="exportCSV()">⬇ CSV</button>
           </div>
         </div>
@@ -661,8 +685,47 @@
             <button class="tab active" data-ftab="pending">💳 Хүлээгдэж буй <span id="ft-p">0</span></button>
             <button class="tab" data-ftab="receivable">🧾 Авлага <span id="ft-r">0</span></button>
             <button class="tab" data-ftab="paid">✅ Төлөгдсөн <span id="ft-d">0</span></button>
+            <button class="tab" data-ftab="ledger">📒 Эмчилгээний авлага <span id="ft-l">0</span></button>
             <button class="tab" data-ftab="sum">📊 Тойм</button>
             <button class="tab" data-ftab="bonus">🎁 Урамшуулал</button>
+          </div>
+        </div>
+
+        <!-- 🔎 Шүүлт (Хүлээгдэж буй / Авлага / Төлөгдсөн / Эмчилгээний авлага) -->
+        <div class="card" id="f-filter-card">
+          <div class="fg r6" style="align-items:end">
+            <div class="fld"><label>Огнооноос</label><input class="inp" type="date" id="f-from" onchange="onFinFilterChange()"></div>
+            <div class="fld"><label>Огноо хүртэл</label><input class="inp" type="date" id="f-to" onchange="onFinFilterChange()"></div>
+            <div class="fld"><label>Эмч</label><select class="inp" id="f-doc" onchange="onFinFilterChange()"><option value="">Бүх эмч</option></select></div>
+            <div class="fld"><label>Төрөл</label>
+              <select class="inp" id="f-kind" onchange="onKindFilterChange('f-kind')">
+                <option value="all">Бүгд</option><option value="clinic">Клиник үзлэг</option><option value="inpatient">Байрлан эмчилгээ</option><option value="planned">Төлөвлөгөөт (ТҮ)</option>
+              </select>
+            </div>
+            <div class="fld"><label>Төлбөрийн хэлбэр</label>
+              <select class="inp" id="f-method" onchange="onFinFilterChange()">
+                <option value="">Бүгд</option><option>бэлэн</option><option>карт</option><option>QPay</option><option>дансаар</option><option>шилжүүлэг</option><option>зээл</option><option>хосолсон</option>
+              </select>
+            </div>
+            <div class="fld"><label>Хайх</label><input class="inp" id="f-q" placeholder="Зүс / эзэн / утас / дугаар" oninput="onFinFilterChange()"></div>
+          </div>
+          <div class="row" style="gap:8px;align-items:center;margin-top:6px;flex-wrap:wrap">
+            <span class="muted" style="font-size:11.5px" id="f-filter-info"></span>
+            <button class="btn btn-xs" onclick="resetFinFilter()">✕ Шүүлт цэвэрлэх</button>
+          </div>
+        </div>
+
+        <!-- 📒 Эмчилгээний авлага — эзнээр нэгтгэсэн тайлан -->
+        <div class="ftab hidden" data-ftab="ledger">
+          <div class="card">
+            <div class="ch" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+              <span>📒 Эмчилгээний авлага — эзнээр</span>
+              <div class="row" style="gap:6px;flex-wrap:wrap">
+                <button class="btn btn-sm" onclick="printFinLedger()">🖨️ Хэвлэх / PDF</button>
+                <button class="btn btn-sm" onclick="exportFinLedgerCSV()">⬇ CSV (Excel)</button>
+              </div>
+            </div>
+            <div id="fin-ledger-body"></div>
           </div>
         </div>
 
@@ -724,6 +787,7 @@
         <div class="ftab hidden" data-ftab="paid">
           <div class="card">
             <div class="ch">✅ Төлөгдсөн бүртгэлүүд</div>
+            <div id="f-hint"></div>
             <div class="tbl-wrap" style="overflow-x:auto;-webkit-overflow-scrolling:touch">
               <table style="min-width:760px">
                 <thead><tr>
@@ -930,6 +994,7 @@
             <div class="fld"><label>Огнооноос</label><input class="inp" type="date" id="h-from"></div>
             <div class="fld"><label>Огноо хүртэл</label><input class="inp" type="date" id="h-to"></div>
           </div>
+          <div id="h-hint"></div>
           <div class="fg r2" style="margin-top:8px">
             <div class="fld"><label>Эрэмбэлэх</label>
               <select class="inp" id="h-sort" onchange="renderHistory()">
@@ -990,6 +1055,16 @@
             <button class="btn btn-p btn-sm" onclick="addDoc()">+ Нэмэх</button>
             <div class="ch" style="margin-top:14px">Бүртгэлтэй эмч нар</div>
             <div class="list" id="a-doc-list"></div>
+          </div>
+          <div class="card" id="inp-loc-card">
+            <div class="ch">📍 Байрлан эмчлүүлэх байрлалууд <span class="muted" style="font-weight:600;text-transform:none">— зүчээ, нарлагаа</span></div>
+            <div class="muted" style="font-size:12px;margin-bottom:8px">Мөр бүрд нэг байрлал. Байрлан эмчлүүлэх хуудсан дээр адуу бүрд байрлал сонгож, «Байрлалаар» харах горимд чөлөөтэй/эзэнтэй байрлал харагдана.</div>
+            <textarea class="inp" id="inp-loc-list" rows="6" style="font-family:inherit"></textarea>
+            <div class="row" style="gap:6px;margin-top:8px;align-items:center;flex-wrap:wrap">
+              <button class="btn btn-sm btn-p" onclick="saveInpLocationsFromForm()">💾 Хадгалах</button>
+              <button class="btn btn-sm" onclick="resetInpLocations()">↺ Анхдагч (Зүчээ 1–5, Нарлагаа 1–10)</button>
+              <span class="muted" style="font-size:11px" id="inp-loc-status"></span>
+            </div>
           </div>
           <div class="card" id="examnum-cfg-card">
             <div class="ch">🔢 Үзлэгийн хуудасны дугаарлалт</div>
@@ -1533,7 +1608,7 @@
 
 <div id="print-area"></div>
 
-<script src="app.js?v=20260924"></script>
+<script src="app.js?v=20260925b"></script>
 <script src="lab.js?v=20260917"></script>
 
 <!-- PWA: service worker бүртгэх, автомат шинэчлэлт, суулгах товч -->
