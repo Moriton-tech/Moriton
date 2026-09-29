@@ -474,6 +474,7 @@
               <button type="button" class="btn btn-xs inp-view-btn on" data-view="cards" onclick="setInpView('cards')">🗂 Карт</button>
               <button type="button" class="btn btn-xs inp-view-btn" data-view="loc" onclick="setInpView('loc')">📍 Байрлалаар</button>
               <button type="button" class="btn btn-xs inp-view-btn" data-view="doc" onclick="setInpView('doc')">👨‍⚕️ Эмчээр</button>
+              <button type="button" class="btn btn-xs inp-view-btn" data-view="out" onclick="setInpView('out')" title="Гарсан адууд — хэн, хэзээ гаргасан; андуурсан бол буцаан хэвтүүлэх">🚪 Гарсан</button>
             </div>
           </div>
           <div id="inp-summary" class="inp-summary"></div>
@@ -551,6 +552,14 @@
               </div>
               <div id="inp-svc-chips" style="margin-top:6px;display:flex;flex-direction:column;gap:4px"></div>
             </div>
+            <div class="fld"><label>➕ Гараар дүн нэмэх <span style="font-size:10px;color:var(--muted);font-weight:400">(жагсаалтад байхгүй эмчилгээ / эм, эсвэл зөвхөн дүн)</span></label>
+              <div class="row" style="gap:6px;flex-wrap:wrap;align-items:stretch">
+                <select class="inp" id="inp-man-kind" style="max-width:130px;flex:0 0 auto"><option value="svc">💊 Эмчилгээ</option><option value="med">💉 Эм</option></select>
+                <input class="inp" id="inp-man-name" placeholder="Нэр / тайлбар (заавал биш)" style="flex:1;min-width:150px">
+                <input class="inp" type="number" id="inp-man-amt" placeholder="Дүн ₮" min="0" style="width:120px;flex:0 0 auto" onkeydown="if(event.key==='Enter'){event.preventDefault();addInpManualItem();}">
+                <button class="btn btn-sm" type="button" onclick="addInpManualItem()" style="flex:0 0 auto">Нэмэх</button>
+              </div>
+            </div>
             <div class="fg r2">
               <div class="fld">
                 <label>Тухайн өдрийн үйлчилгээний дүн (автомат)</label>
@@ -589,7 +598,7 @@
 
             <div class="ch" style="margin-top:14px">💵 Үзлэгийн төлбөр / Урьдчилгаа</div>
             <div id="inp-prepay-summary"></div>
-            <div class="row" style="justify-content:flex-end;margin-top:6px">
+            <div class="row" style="justify-content:flex-end;margin-top:6px" id="inp-prepay-row">
               <button class="btn btn-sm btn-p" onclick="openInpPrepay()">+ Урьдчилгаа нэмэх</button>
             </div>
 
@@ -597,8 +606,10 @@
             <div id="inp-fin-summary"></div>
           </div>
 
+          <!-- Гарсан адууны карт нээхэд харагдах мөр (renderIDetail бөглөнө) -->
+          <div id="inp-discharged-bar" class="hidden" style="margin-top:14px;padding:10px 12px;border-radius:10px;background:var(--gold-soft,#f6efdc);font-size:12.5px"></div>
           <!-- Action buttons (always visible at bottom) -->
-          <div class="row" style="justify-content:flex-end;margin-top:14px;gap:6px;flex-wrap:wrap;padding-top:14px;border-top:1px solid var(--border)">
+          <div class="row" id="inp-action-row" style="justify-content:flex-end;margin-top:14px;gap:6px;flex-wrap:wrap;padding-top:14px;border-top:1px solid var(--border)">
             <button class="btn btn-sm" onclick="cancelInpatient()" title="Андуурч хэвтүүлсэн бол хүлээлт рүү буцаах">↩ Хүлээлт рүү буцаах</button>
             <button class="btn btn-r btn-sm" onclick="dischargeInpatient()">🚪 Гаргах ба эцсийн төлбөр</button>
           </div>
@@ -1516,6 +1527,18 @@
   </div>
 </div>
 
+<!-- FIX DISCHARGE DATE MODAL -->
+<div class="mod-bd" id="inp-fixdate-modal">
+  <div class="mod" style="max-width:520px">
+    <div class="mod-t">🗓 Гарсан огноог засах</div>
+    <div id="inp-fixdate-body"></div>
+    <div class="mod-actions">
+      <button class="btn btn-sm" onclick="closeModal('inp-fixdate-modal')">Болих</button>
+      <button class="btn btn-p btn-sm" onclick="saveDischargeDateFix()">💾 Хадгалах ба дахин тооцох</button>
+    </div>
+  </div>
+</div>
+
 <!-- PAYMENT MODAL -->
 <div class="mod-bd" id="pay-modal">
   <div class="mod" style="max-width:540px">
@@ -1613,7 +1636,7 @@
 
 <div id="print-area"></div>
 
-<script src="app.js?v=20260929"></script>
+<script src="app.js?v=20260929d"></script>
 <script src="lab.js?v=20260917"></script>
 
 <!-- PWA: service worker бүртгэх, автомат шинэчлэлт, суулгах товч -->

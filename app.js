@@ -2279,7 +2279,7 @@ function openExamDetail(eid) {
     const iDays = inpatientDays(inp.admittedMs, inp.dischargedMs);
     const iLogs = Array.isArray(inp.log) ? inp.log : [];
     const statusBadge = inp.discharged
-      ? '<span class="badge b-g">🚪 Гарсан · ' + escHTML(inp.dischargedDate || '') + '</span>'
+      ? '<span class="badge b-g" title="' + escHTML(inpDischargeAuditText(inp)) + '">🚪 Гарсан · ' + escHTML(inp.dischargedDate || '') + (inp.dischargedBy ? ' · ' + escHTML(inp.dischargedBy) : '') + '</span>'
       : '<span class="badge b-p">🏥 Байрлаж байна</span>';
     const logRows = iLogs.length
       ? '<div style="max-height:160px;overflow-y:auto;display:flex;flex-direction:column;gap:3px;margin-top:6px">' + iLogs.map(l => `
@@ -3304,11 +3304,13 @@ function moveToInpatient() {
     location: '',
     admittedMs: nowMs(),
     admittedDate: todayStr(),
+    admittedBy: (STATE.user && STATE.user.name) || '',
     initialAmount: total,
     services: [...e.services],
     meds: [...e.meds],
     log: [],
-    discharged: false
+    discharged: false,
+    ms: nowMs()
   };
   STATE.inps.push(inp);
   STATE.waiting = STATE.waiting.filter(w => String(w.id) !== String(e.waitId));
@@ -3319,6 +3321,8 @@ function moveToInpatient() {
   fbDeleteDoc('waiting', String(e.waitId));
   // 🧪 Шинжилгээний захиалга автоматаар үүсгэнэ
   try { if (typeof createLabOrdersFromExam === 'function') createLabOrdersFromExam(exam); } catch(err) { console.error('lab', err); }
+  // 📜 Хэвтүүлсэн үйлдлийг логт бүртгэнэ (хэн, хэзээ, аль төхөөрөмжөөс)
+  writeLog('Байрлан эмчилгээнд хэвтүүлэв', inp.id, e.horse + ' — ' + exam.docName, (e.diagnosis ? 'Онош: ' + e.diagnosis + ' · ' : '') + _deviceLabel(), exam.examNum);
   STATE.curExam = null;
   STATE.selectedW = null;
   updateBadges();
@@ -3506,6 +3510,75 @@ function _inpGroupHTML(title, items, extra) {
   </div>`;
 }
 
+// ── 🚪 ГАРСАН АДУУД — мөшгих жагсаалт ───────────────────────────
+// «Адуу өөрөө гараад санхүү рүү шилжчихлээ» гэсэн асуулт гарч байсан —
+// систем автоматаар гаргадаггүй; хэн, хэзээ, аль төхөөрөмжөөс гаргасныг
+// энд харуулна, андуурсан бол ↩ буцаан хэвтүүлнэ.
+let __inpOutAll = false;
+function _inpOutTs(i) { return parseFloat(i.dischargedAtMs) || parseFloat(i.dischargedMs) || 0; }
+function openFinRecord(finId) {
+  const f = STATE.fins.find(x => String(x.id) === String(finId));
+  if (!f) { toast('Нэхэмжлэх олдсонгүй (устгагдсан байж болно)', 'err'); return; }
+  STATE.activeFTab = isFullyPaid(f) ? 'paid' : (isReceivable(f) ? 'receivable' : 'pending');
+  STATE.selectedF = String(f.id);
+  nav('finance'); // nav өөрөө renderFinance дуудна
+}
+function _renderInpOutView(list, F) {
+  list.style.display = 'block';
+  const since = Date.now() - 60 * 86400000;
+  let outs = (STATE.inps || []).filter(i => i.discharged);
+  outs = _inpApplyFilter(outs, { doc: F.doc, loc: F.loc, q: F.q, sort: 'days_desc' }).sort((a, b) => _inpOutTs(b) - _inpOutTs(a));
+  const recent = outs.filter(i => _inpOutTs(i) >= since);
+  const show = (__inpOutAll ? outs : recent).slice(0, 300);
+  const canUndo = canEditData();
+  const edit = __inpOutEdit && canUndo;
+  const today = todayStr();
+  const rows = show.map(i => {
+    const f = _inpDischargeFinOf(i);
+    const days = inpatientDays(i.admittedMs, i.dischargedMs);
+    const finTxt = f ? (fmt(f.amount) + ' ' + (isFullyPaid(f) ? '<span class="badge b-g">Төлөгдсөн</span>' : (getPaidAmount(f) > 0 ? '<span class="badge b-r">Үлдэгдэл ' + fmt(getDueAmount(f)) + '</span>' : '<span class="badge b-o">Хүлээгдэж буй</span>')))
+      : '<span class="muted">нэхэмжлэх олдсонгүй (устгагдсан?)</span>';
+    const undoHint = i.dischargeUndo ? '<div class="muted" style="font-size:10.5px">↩ өмнө нь буцаагдаж байсан: ' + escHTML(i.dischargeUndo.by || '') + ' · ' + fmtDateTime(i.dischargeUndo.ms) + '</div>' : '';
+    const fixHint = i.dischargeFix ? '<div class="muted" style="font-size:10.5px">🗓 огноо засагдсан: ' + escHTML(i.dischargeFix.prevDate || '—') + ' → ' + escHTML(i.dischargedDate || '') + ' (' + escHTML(i.dischargeFix.by || '') + ' · ' + fmtDateTime(i.dischargeFix.ms) + ')</div>' : '';
+    const sameDay = i.dischargedAtMs && i.dischargedDate === localDateStr(new Date(i.dischargedAtMs)) && days > 1 && (i.dischargedAtMs >= Date.now() - 2 * 86400000);
+    const dateCell = edit
+      ? `<span style="display:inline-flex;align-items:center;gap:6px;flex-wrap:wrap"><input type="date" class="inp inp-out-date" data-id="${escHTML(i.id)}" value="${escHTML(i.dischargedDate || '')}" min="${escHTML(i.admittedDate || '')}" max="${today}" style="width:auto;padding:4px 8px;font-weight:700" oninput="_inpOutRowPreview(this)" onchange="_inpOutRowPreview(this)"><span id="inp-out-prev-${escHTML(i.id)}" style="font-size:12px"></span></span>`
+      : `<b>${escHTML(i.dischargedDate || '')}</b>`;
+    return `<div class="inp-out-row" data-id="${escHTML(i.id)}">
+      <div class="inp-out-main">
+        <div><b style="font-size:14px">${escHTML(i.horse || '')}</b> <span class="muted">· ${escHTML(i.owner || '')}${i.phone ? ' · ' + escHTML(i.phone) : ''}</span> ${inpExamNum(i) ? '<span class="badge b-o" style="font-size:10px">' + escHTML(inpExamNum(i)) + '</span>' : ''}</div>
+        <div style="font-size:12.5px;margin-top:3px">${escHTML(i.admittedDate || '')} → ${dateCell} <span class="muted">· ${days} хоног${i.location ? ' · 📍 ' + escHTML(i.location) : ''}${i.docName ? ' · 👨‍⚕️ ' + escHTML(i.docName) : ''}</span></div>
+        <div style="font-size:12.5px;margin-top:3px">🧾 ${finTxt}</div>
+        <div style="font-size:12px;margin-top:3px;color:var(--purple);font-weight:700">🚪 Гаргасан: ${escHTML(inpDischargeAuditText(i))}</div>${fixHint}${undoHint}
+      </div>
+      <div class="inp-out-act">
+        <button class="btn btn-xs" onclick="printOwnerSheet('${escHTML(i.id)}')" title="Эзэнд өгөх гарах хуудас">📋 Гарах хуудас</button>
+        ${f ? `<button class="btn btn-xs" onclick="openFinRecord('${escHTML(f.id)}')" title="Санхүү дээр харах">🧾 Санхүү</button>` : ''}
+        ${canUndo && !edit ? `<button class="btn btn-xs" onclick="openDischargedCard('${escHTML(i.id)}','treat')" title="Эмчилгээ / эмийн дүн нэмэх, устгах — нэхэмжлэх дахин бодогдоно">📋 Эмчилгээ нэмэх</button>` : ''}
+        ${canUndo && !edit ? `<button class="btn btn-xs ${sameDay ? 'btn-p' : ''}" onclick="openDischargeDateFix('${escHTML(i.id)}')" title="Бодит гарсан огноог оруулахад хоног, хөлс, нэхэмжлэх дахин бодогдоно">🗓 Огноо засах</button>` : ''}
+        ${canUndo && !edit ? `<button class="btn btn-xs" onclick="undoDischarge('${escHTML(i.id)}')" title="Андуурч гаргасан бол буцаан хэвтүүлнэ">↩ Буцаан хэвтүүлэх</button>` : ''}
+      </div>
+    </div>`;
+  }).join('');
+  const editBar = canUndo ? (edit
+    ? `<div class="row" style="gap:8px;flex-wrap:wrap;align-items:center;background:var(--gold-soft,#f6efdc);border-radius:10px;padding:8px 12px;margin-bottom:10px">
+        <span style="font-size:12.5px;flex:1;min-width:200px">🗓 <b>Багцаар засах:</b> мөр бүрийн огноог бодит гарсан өдрөөр солино — хоног, хоногийн хөлс, нэхэмжлэхийн дүн шууд дахин бодогдоно. Өөрчлөгдсөн мөр тодорно.</span>
+        <button class="btn btn-sm" onclick="toggleInpOutEdit()">Болих</button>
+        <button class="btn btn-sm btn-p" id="inp-out-save" onclick="saveInpOutDates()" disabled>💾 Хадгалах (0)</button>
+      </div>`
+    : `<div class="row" style="gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px">
+        <button class="btn btn-sm" onclick="toggleInpOutEdit()" title="Олон адууны гарсан огноог нэг дор засах">🗓 Гарсан огноог багцаар засах</button>
+        <span class="muted" style="font-size:11.5px">Адууг бодит гарсан өдрөөс хожуу гаргасан бол огноог засахад төлбөр зөв болно.</span>
+      </div>`) : '';
+  list.innerHTML = `
+    <div class="muted" style="font-size:12px;margin-bottom:8px;line-height:1.5">
+      🔍 Систем адууг <b>өөрөө гаргадаггүй</b> — гаргалт бүр тухайн адууны карт дээрх «🚪 Гаргах ба эцсийн төлбөр» → «🚪 Гаргах ба нэхэмжлэх үүсгэх» дарснаар л хийгдэнэ (2026-09-29-2 хувилбараас хойш хэн, хэзээ, аль төхөөрөмжөөс гаргасан нь бүртгэгдэнэ). Өөр компьютер/утаснаас гаргавал энд хэдхэн секундын дараа харагдана.
+      ${__inpOutAll ? 'Бүх гарсан адуу: <b>' + outs.length + '</b>' : 'Сүүлийн 60 хоногт гарсан: <b>' + recent.length + '</b>'}${outs.length !== recent.length ? ' · <a href="#" onclick="__inpOutAll=!__inpOutAll;renderInpatient();return false;">' + (__inpOutAll ? 'Зөвхөн сүүлийн 60 хоног' : 'Бүгдийг харах (' + outs.length + ')') + '</a>' : ''}
+    </div>
+    ${editBar}
+    ${show.length ? rows : '<div class="empty"><div class="empty-em">🚪</div>Гарсан адуу алга</div>'}`;
+}
+
 function renderInpatient() {
   ensureInpCardStyles();
   ensureInpDrawer();
@@ -3515,6 +3588,16 @@ function renderInpatient() {
   _inpFillFilters(active);
   const F = _inpFilterState();
   $$('.inp-view-btn').forEach(b => b.classList.toggle('on', b.dataset.view === INP_VIEW));
+  // 🚪 Гарсан адуудын мөшгих жагсаалт
+  const out7 = (STATE.inps || []).filter(i => i.discharged && _inpOutTs(i) >= Date.now() - 7 * 86400000).length;
+  const outBtn = $('.inp-view-btn[data-view="out"]'); if (outBtn) outBtn.textContent = '🚪 Гарсан' + (out7 ? ' · 7 хоногт ' + out7 : '');
+  if (INP_VIEW === 'out') {
+    // Гарсан адууны карт нээлттэй бол (эмчилгээ нэмэх/засах) drawer-ийг хаахгүй
+    const selOut = STATE.selectedI && STATE.inps.find(x => String(x.id) === String(STATE.selectedI) && x.discharged);
+    if (!selOut) closeInpDrawer(); else if (isInpDrawerOpen()) renderIDetail();
+    const sum0 = $('#inp-summary'); if (sum0) sum0.innerHTML = '';
+    _renderInpOutView(list, F); return;
+  }
 
   // 📊 Тойм мөр
   const sum = $('#inp-summary');
@@ -3529,6 +3612,7 @@ function renderInpatient() {
       <div class="inp-sum-card"><div class="inp-sum-n">${used.size}<span class="muted">/${locs.length}</span></div><div class="inp-sum-l">байрлал ашиглалт</div></div>
       <div class="inp-sum-card ${dueN ? 'inp-sum-warn' : ''}"><div class="inp-sum-n">${dueN}</div><div class="inp-sum-l">дутуу төлбөртэй · ${fmtCompact ? fmtCompact(dueSum) : fmt(dueSum)}</div></div>
       <div class="inp-sum-card ${longN ? 'inp-sum-warn' : ''}"><div class="inp-sum-n">${longN}</div><div class="inp-sum-l">20+ хоног</div></div>
+      <div class="inp-sum-card" style="cursor:pointer" onclick="setInpView('out')" title="Хэн, хэзээ гаргасныг харах"><div class="inp-sum-n">${out7}</div><div class="inp-sum-l">🚪 7 хоногт гарсан</div></div>
       <div class="inp-sum-card inp-sum-wide"><div class="inp-sum-l">Эмчээр: ${Object.entries(byDoc).sort((a, b) => b[1] - a[1]).map(([k, n]) => escHTML(k) + ' <b>' + n + '</b>').join(' · ') || '—'}</div></div>`;
   }
 
@@ -3694,6 +3778,13 @@ function ensureInpCardStyles() {
   .inp-sum-n .muted{font-size:12px;font-weight:700}
   .inp-sum-l{font-size:11px;color:var(--muted,#8a8398);margin-top:2px;line-height:1.4}
   .inp-sum-warn{border-color:#e6b8b3;background:var(--red-soft,#fbeae8)}
+  .inp-out-row{display:flex;gap:10px;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;
+    background:var(--card,#fff);border:1px solid var(--border,#e9e6f0);border-left:4px solid var(--muted,#8a8398);
+    border-radius:12px;padding:10px 12px;margin-bottom:8px}
+  .inp-out-main{flex:1;min-width:220px;line-height:1.45}
+  .inp-out-act{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+  .inp-out-row.inp-out-changed{border-left-color:var(--orange,#e0862a);background:var(--orange-soft,#fdf3e7)}
+  @media (max-width:700px){.inp-out-act{width:100%}.inp-out-act .btn{flex:1;min-height:38px}}
   .inp-group{margin-bottom:6px}
   .inp-group-h{display:flex;justify-content:space-between;align-items:center;font-weight:800;font-size:13px;
     padding:6px 10px;background:var(--gold-soft,#f6efdc);border-radius:8px;margin-bottom:8px}
@@ -3777,8 +3868,10 @@ function updateDailyFee() {
   if (!i) return;
   const v = parseFloat($('#inp-daily-fee').value);
   i.dailyFee = (isNaN(v) || v < 0) ? DEFAULT_DAILY_FEE : v;
+  i.ms = nowMs();
   saveAll();
   fbSaveRecord('inps', i);
+  if (i.discharged) { clearTimeout(window.__feeRecalcT); window.__feeRecalcT = setTimeout(() => { if (recomputeDischargedInvoice(i, 'хоногийн төлбөр ' + fmt(i.dailyFee))) renderIDetail(); }, 600); }
   renderInpFinTab(i);
 }
 
@@ -3786,9 +3879,29 @@ function renderIDetail() {
   const i = STATE.inps.find(x => String(x.id) === String(STATE.selectedI));
   if (!i) { $('#inp-detail-card').classList.add('hidden'); return; }
   $('#inp-detail-card').classList.remove('hidden');
-  const days = inpatientDays(i.admittedMs);
+  const days = inpatientDays(i.admittedMs, i.dischargedMs);
 
-  $('#inp-detail-title').innerHTML = `📌 ${escHTML(i.horse)} <span class="muted" style="font-size:11px;font-weight:600">· ${escHTML(i.owner)} · ${days} хоног</span>${inpExamNum(i) ? ' <span class="badge b-o" style="font-size:11px;font-weight:800;margin-left:6px">🔢 ' + escHTML(inpExamNum(i)) + '</span>' : ''}`;
+  $('#inp-detail-title').innerHTML = `📌 ${escHTML(i.horse)} <span class="muted" style="font-size:11px;font-weight:600">· ${escHTML(i.owner)} · ${days} хоног</span>${inpExamNum(i) ? ' <span class="badge b-o" style="font-size:11px;font-weight:800;margin-left:6px">🔢 ' + escHTML(inpExamNum(i)) + '</span>' : ''}${i.discharged ? ' <span class="badge b-g" style="font-size:11px;font-weight:800;margin-left:6px">🚪 Гарсан · ' + escHTML(i.dischargedDate || '') + '</span>' : ''}`;
+
+  // 🚪 Гарсан адууны карт: гаргах/цуцлах товч нуугдана, урьдчилгаа нэмэхгүй (төлбөр Санхүү дээр),
+  // эмчилгээний бичлэг нэмэх/устгахад нэхэмжлэх дахин бодогдоно
+  const bar = $('#inp-discharged-bar'), act = $('#inp-action-row'), pre = $('#inp-prepay-row');
+  if (i.discharged) {
+    const f = _inpDischargeFinOf(i);
+    if (bar) { bar.classList.remove('hidden'); bar.innerHTML = `🚪 <b>Гарсан адуу</b> · ${escHTML(i.admittedDate || '')} → <b>${escHTML(i.dischargedDate || '')}</b> · ${days} хоног · гаргасан: ${escHTML(inpDischargeAuditText(i))}<br>
+      <span class="muted">Энд эмчилгээ / эмийн дүн нэмэх, устгах, хоногийн төлбөр солиход <b>нэхэмжлэх (${f ? fmt(f.amount) : 'олдсонгүй'}) автоматаар дахин бодогдоно</b>. Төлбөрийг Санхүү дээр бүртгэнэ.</span>
+      <div class="row" style="gap:6px;flex-wrap:wrap;margin-top:8px">
+        ${f ? `<button class="btn btn-xs" onclick="openFinRecord('${escHTML(f.id)}')">🧾 Нэхэмжлэх (Санхүү)</button>` : ''}
+        ${canEditData() ? `<button class="btn btn-xs" onclick="openDischargeDateFix('${escHTML(i.id)}')">🗓 Гарсан огноо засах</button><button class="btn btn-xs" onclick="undoDischarge('${escHTML(i.id)}')">↩ Буцаан хэвтүүлэх</button>` : ''}
+        <button class="btn btn-xs" onclick="printOwnerSheet('${escHTML(i.id)}')">📋 Гарах хуудас</button>
+      </div>`; }
+    if (act) act.classList.add('hidden');
+    if (pre) pre.classList.add('hidden');
+  } else {
+    if (bar) { bar.classList.add('hidden'); bar.innerHTML = ''; }
+    if (act) act.classList.remove('hidden');
+    if (pre) pre.classList.remove('hidden');
+  }
 
   // Wire up tab switcher
   $$('.tab[data-itab]').forEach(t => {
@@ -3822,8 +3935,8 @@ function renderInpInfoTab(i) {
       <div class="fld"><label>Утас</label><div class="bold">${escHTML(i.phone)}</div></div>
       <div class="fld"><label>Эмчлэгч эмч</label><select class="inp" onchange="setInpField('docId', this.value)">${docOpts}</select></div>
       <div class="fld"><label>📍 Байрлал</label><select class="inp" onchange="setInpField('location', this.value)">${locOpts}</select></div>
-      <div class="fld"><label>Орсон огноо</label><div class="bold">${escHTML(i.admittedDate)}</div></div>
-      <div class="fld"><label>Хоног</label><div class="bold">${inpatientDays(i.admittedMs)}</div></div>
+      <div class="fld"><label>Орсон огноо</label><div class="bold">${escHTML(i.admittedDate)}${i.discharged ? ' → ' + escHTML(i.dischargedDate || '') : ''}</div></div>
+      <div class="fld"><label>Хоног</label><div class="bold">${inpatientDays(i.admittedMs, i.dischargedMs)}</div></div>
     </div>
     <div class="fld" style="margin-top:8px"><label>Анхны онош</label>
       <div style="background:var(--input);padding:10px;border-radius:8px;font-size:13px">${escHTML(i.diagnosis)}</div>
@@ -3872,7 +3985,13 @@ function renderInpTreatTab(i) {
       `<option value="${escHTML(d.id)}" ${String(d.id)===String(i.docId)?'selected':''}>${escHTML(d.name)}</option>`
     ).join('');
   }
-  if ($('#inp-log-date') && !$('#inp-log-date').value) $('#inp-log-date').value = todayStr();
+  const ld = $('#inp-log-date');
+  if (ld) {
+    // Гарсан адуу: огноо орсон→гарсан хооронд, анхдагч нь гарсан өдөр
+    ld.min = i.admittedDate || ''; ld.max = i.discharged ? (i.dischargedDate || todayStr()) : todayStr();
+    if (!ld.value || ld.dataset.inpId !== String(i.id) || (i.discharged && ld.value > (i.dischargedDate || todayStr()))) ld.value = i.discharged ? (i.dischargedDate || todayStr()) : todayStr();
+    ld.dataset.inpId = String(i.id);
+  }
 
   // ⤵ "Өмнөх өдрийг татах" товчийг маягтын дээр нэг удаа суулгана (index.html засах шаардлагагүй)
   ensureCopyPrevBtn();
@@ -3932,7 +4051,8 @@ function renderInpFinTab(i) {
   if ($('#inp-daily-fee')) $('#inp-daily-fee').value = fee;
 
   // Build day-by-day list with amounts
-  const days = inpatientDays(i.admittedMs);
+  // ⚠️ Хоногийн тоо нь гаргах тооцоотой ЯГ ИЖИЛ дүрмээр (inpatientDays: 12:00-оос өмнө бол сүүлийн өдөр тооцохгүй)
+  const days = inpatientDays(i.admittedMs, i.dischargedMs);
   const logs = Array.isArray(i.log) ? i.log : [];
 
   // Group log amounts by date
@@ -3963,6 +4083,8 @@ function renderInpFinTab(i) {
       cur.setDate(cur.getDate() + 1);
       dayN++;
     }
+    // Сүүлийн өдөр 12:00-оос өмнө (гарсан / одоо) бол хоногийн хөлс тооцогдохгүй — тооцоотой нийцүүлнэ
+    if (list.length > days && list.length) { const last = list[list.length - 1]; last.accommodation = 0; last.halfDay = true; }
   }
 
   const finList = $('#inp-fin-list');
@@ -3979,7 +4101,7 @@ function renderInpFinTab(i) {
             ${list.map(d => `
               <tr>
                 <td>${d.dayN}</td>
-                <td>${escHTML(d.date)}</td>
+                <td>${escHTML(d.date)}${d.halfDay ? ' <span class="muted" style="font-size:10px">12:00-оос өмнө — хоног тооцохгүй</span>' : ''}</td>
                 <td>${fmt(d.accommodation)}</td>
                 <td>${fmt(d.treatment)}</td>
                 <td class="bold">${fmt(d.accommodation + d.treatment)}</td>
@@ -4007,7 +4129,7 @@ function renderInpFinTab(i) {
         <span>🩺 Үзлэгийн төлбөр:</span><span class="bold">${fmt(examFee)}</span>
       </div>
       <div class="row" style="justify-content:space-between;font-size:13px;margin-bottom:4px">
-        <span>🏨 Хоног (${list.length} × ${fmt(fee)}):</span><span class="bold">${fmt(accommodation)}</span>
+        <span>🏨 Хоног (${days} × ${fmt(fee)}):</span><span class="bold">${fmt(accommodation)}</span>
       </div>
       <div class="row" style="justify-content:space-between;font-size:13px;margin-bottom:4px">
         <span>💊 Эмчилгээ:</span><span class="bold">${fmt(treatment)}</span>
@@ -4038,7 +4160,7 @@ function renderInpPrepaymentsList(i) {
       <span>${methodIcon(p.method)} <b>${escHTML(p.method)}</b> · ${escHTML(p.purpose||'')} <span class="muted">${escHTML(p.date||'')}</span></span>
       <span class="row" style="gap:8px">
         <span class="bold">${fmt(p.amount)}</span>
-        <button class="btn btn-r btn-xs" onclick="deleteInpPrepay(${idx})">✕</button>
+        ${i.discharged ? '' : `<button class="btn btn-r btn-xs" onclick="deleteInpPrepay(${idx})">✕</button>`}
       </span>
     </div>
   `).join('') + '</div>';
@@ -4088,6 +4210,21 @@ function renderInpDraftMeds() {
 
 function updateInpMedPrice(idx, val) {
   if (INP_DRAFT.meds[idx]) { INP_DRAFT.meds[idx].price = parseFloat(val) || 0; recomputeInpDayAmt(); }
+}
+
+// ➕ Гараар дүн нэмэх — жагсаалтад байхгүй эмчилгээ/эм, эсвэл зөвхөн дүн.
+// Үйлчилгээ/эмийн мөр болж ордог тул дүн, задаргаа, хэвлэлт бүгд хэвийн ажиллана.
+function addInpManualItem() {
+  const kind = ($('#inp-man-kind') || {}).value || 'svc';
+  const nameEl = $('#inp-man-name'), amtEl = $('#inp-man-amt');
+  const amt = parseFloat(amtEl ? amtEl.value : '');
+  if (!amt || amt <= 0) { toast('Дүн оруулна уу', 'err'); if (amtEl) amtEl.focus(); return; }
+  const name = ((nameEl ? nameEl.value : '') || '').trim() || (kind === 'med' ? 'Эм (гараар бичсэн дүн)' : 'Эмчилгээ (гараар бичсэн дүн)');
+  if (kind === 'med') { INP_DRAFT.meds.push({ name, note: '', price: amt, manual: true }); renderInpDraftMeds(); }
+  else { INP_DRAFT.services.push({ name, price: amt, manual: true }); renderInpDraftServices(); }
+  recomputeInpDayAmt();
+  if (nameEl) nameEl.value = ''; if (amtEl) amtEl.value = '';
+  toast('➕ ' + name + ' · ' + fmt(amt), 'ok');
 }
 
 function removeInpDraftMed(idx) {
@@ -4188,6 +4325,7 @@ function addInpLog() {
     amount: amount,
     ms: nowMs()
   };
+  if (i.discharged && i.dischargedDate && date > i.dischargedDate) { toast('Гарсан огноо (' + i.dischargedDate + ')-оос хойш бичлэг оруулах боломжгүй — эхлээд «🗓 Гарсан огноо засах»', 'err'); return; }
   if (!Array.isArray(i.log)) i.log = [];
   i.log.push(log);
   i.ms = nowMs();
@@ -4196,8 +4334,10 @@ function addInpLog() {
   // Reset form fields
   $('#inp-temp').value = ''; $('#inp-pulse').value = ''; $('#inp-wt').value = '';
   $('#inp-note').value = ''; $('#inp-diag').value = '';
-  if ($('#inp-log-date')) $('#inp-log-date').value = todayStr();
+  if ($('#inp-log-date')) $('#inp-log-date').value = i.discharged ? (i.dischargedDate || todayStr()) : todayStr();
   INP_DRAFT = { meds: [], services: [], _inpId: String(i.id) };
+  // 🚪 Гарсан адуу бол нэхэмжлэхийг дахин бодно
+  if (i.discharged) recomputeDischargedInvoice(i, 'эмчилгээ нэмэв ' + fmt(amount));
   renderIDetail();
   toast('💾 Өдрийн бичлэг хадгалагдлаа', 'ok');
 }
@@ -4206,10 +4346,12 @@ function deleteInpLog(idx) {
   const i = STATE.inps.find(x => String(x.id) === String(STATE.selectedI));
   if (!i || !Array.isArray(i.log) || idx < 0 || idx >= i.log.length) return;
   if (!confirm('Энэ өдрийн бичлэгийг устгах уу?')) return;
+  const removed = i.log[idx];
   i.log.splice(idx, 1);
   i.ms = nowMs();
   saveAll();
   fbSaveRecord('inps', i);
+  if (i.discharged) recomputeDischargedInvoice(i, 'эмчилгээний бичлэг устгав ' + fmt((removed && removed.amount) || 0));
   renderIDetail();
 }
 
@@ -4363,6 +4505,7 @@ function cancelInpatient() {
   if (exam) fbDeleteDoc('exams', String(exam.id));
   removedFins.forEach(f => fbDeleteDoc('fins', String(f.id)));
   fbDeleteDoc('inps', String(i.id));
+  writeLog('Байрлан эмчилгээг цуцлав (хүлээлт рүү)', i.id, i.horse + ' — ' + (i.docName || ''), 'Үзлэг ' + (exam ? 1 : 0) + ', нэхэмжлэх ' + removedFins.length + ' устгав · ' + _deviceLabel(), inpExamNum(i));
 
   STATE.selectedI = null;
   updateBadges();
@@ -4393,8 +4536,8 @@ function dischargeInpatient() {
       <div class="fld"><label>Адуу / Эзэн</label><div class="bold">${escHTML(i.horse)} · ${escHTML(i.owner)}</div></div>
       <div class="fld"><label>Хоног</label><div class="bold" id="inp-dis-days">${days} хоног</div></div>
     </div>
-    <div class="fld" style="margin-top:8px"><label>🗓 Гарсан огноо (өнгөрсөн огноогоор нөхөж гаргаж болно)</label>
-      <input class="inp" type="date" id="inp-dis-date" value="${todayStr()}" min="${escHTML(i.admittedDate || '')}" max="${todayStr()}" onchange="updateDischargeDate()">
+    <div class="fld" style="margin-top:8px;background:var(--orange-soft,#fdf3e7);border-radius:8px;padding:8px 10px"><label style="color:var(--orange-dark)">🗓 Бодит гарсан огноо — адуу өмнө гарсан бол ЭНД тэр өдрийг сонго (хоног, төлбөр үүгээр бодогдоно)</label>
+      <input class="inp" type="date" id="inp-dis-date" value="${todayStr()}" min="${escHTML(i.admittedDate || '')}" max="${todayStr()}" onchange="updateDischargeDate()" oninput="updateDischargeDate()" style="font-weight:800">
     </div>
     <div class="ch" style="margin-top:10px">📋 Эмчилгээний дэлгэрэнгүй</div>
     <div class="tbl-wrap" style="max-height:200px;overflow-y:auto">
@@ -4463,12 +4606,24 @@ function dischargeInpatient() {
     ((lastLog && Array.isArray(lastLog.meds)) ? lastLog.meds : []).forEach(m => addHomeMedRow(m.name || m, m.note || '', ''));
   }
   STATE.dischargeTarget = i.id;
+  __disOpenedAt = Date.now();
   openModal('inp-discharge-modal');
 }
 
+// 🛡 Санамсаргүй гаргалтаас хамгаалах
+// Утсан дээр modal доороос гулсаж гарахад «🚪 Гаргах ба нэхэмжлэх үүсгэх» товч
+// яг drawer-ийн «🚪 Гаргах» товчны байранд ирдэг. Давхар/ghost tap нэг л
+// хүрэлтээр адууг гаргачихдаг байсан → modal нээгдснээс 700ms дотор ирсэн
+// даралтыг тоохгүй, мөн эцсийн баталгаажуулалт асууна.
+let __disOpenedAt = 0;
+function _deviceLabel() {
+  try { return /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent) ? 'утас' : 'компьютер'; } catch (e) { return ''; }
+}
 function confirmDischarge() {
   const i = STATE.inps.find(x => String(x.id) === String(STATE.dischargeTarget));
   if (!i) return;
+  if (Date.now() - __disOpenedAt < 700) return; // ghost / давхар tap
+  if (i.discharged) { toast('Энэ адуу аль хэдийн гарсан байна', 'err'); closeModal('inp-discharge-modal'); return; }
   // 📋 Эзэнд өгөх заавар + гэрийн эм — modal-аас цуглуулж inp дээр хадгална
   // (fbSaveRecord('inps', i) доор дуудагддаг тул Firestore-т автоматаар орно)
   const homeMeds = collectHomeMeds();
@@ -4483,11 +4638,8 @@ function confirmDischarge() {
   const disMs = getSelectedDischargeMs();
   if (i.admittedMs && disMs < i.admittedMs) { toast('Гарсан огноо орсон огнооноос өмнө байж болохгүй', 'err'); return; }
   const disDate = localDateStr(new Date(disMs));
-  i.discharged = true;
-  i.dischargedMs = disMs;
-  i.dischargedDate = disDate;
   // Recompute with discharge time
-  const days = inpatientDays(i.admittedMs, i.dischargedMs);
+  const days = inpatientDays(i.admittedMs, disMs);
   const dailyFee = getDailyFee(i);
   const examFee = parseFloat(i.initialAmount)||0;
   const treatmentTotal = getInpDailyTotal(i);
@@ -4502,6 +4654,21 @@ function confirmDischarge() {
   }));
   const prepaid = payments.reduce((a,b) => a + b.amount, 0);
   const due = Math.max(0, grandTotal - prepaid);
+  // ✅ Эцсийн баталгаажуулалт — санамсаргүй гаргалтаас сэргийлнэ
+  if (!confirm('🚪 «' + i.horse + '» адууг байрлан эмчилгээнээс гаргах уу?\n\n' +
+      'Гарсан огноо: ' + disDate + ' · ' + days + ' хоног\n' +
+      'Нийт: ' + fmt(grandTotal) + ' · Урьдчилгаа: ' + fmt(prepaid) + ' · Үлдэгдэл: ' + fmt(due) + '\n\n' +
+      'Адуу жагсаалтаас хасагдаж, нэхэмжлэх Санхүүд үүснэ.\n' +
+      '(Андуурсан бол «🚪 Гарсан» хэсгээс буцаан хэвтүүлж болно.)')) return;
+  i.discharged = true;
+  i.dischargedMs = disMs;
+  i.dischargedDate = disDate;
+  // 🔍 Хэн, хэзээ, аль төхөөрөмжөөс гаргасныг бичлэг дээр хадгална
+  i.dischargedBy = (STATE.user && STATE.user.name) || '';
+  i.dischargedByRole = (STATE.user && STATE.user.role) || '';
+  i.dischargedAtMs = nowMs();
+  i.dischargedDevice = _deviceLabel();
+  i.ms = nowMs(); // ⚠️ өмнө нь ms шинэчлэгддэггүй → өөр төхөөрөмжийн хуучин хуулбар гаргалтыг дарж болзошгүй байв
 
   // Find linked exam to pull examNum — with robust fallback chain
   const linkedExam = STATE.exams.find(e => String(e.id) === String(i.examId));
@@ -4538,6 +4705,8 @@ function confirmDischarge() {
   const dischargedId = i.id;
   STATE.selectedI = null;
   STATE.dischargeTarget = null;
+  writeLog('Байрлан эмчилгээнээс гаргав', i.id, i.horse + ' — ' + (i.docName || ''),
+    days + ' хоног · нийт ' + fmt(grandTotal) + ' · үлдэгдэл ' + fmt(due) + ' · ' + _deviceLabel(), examNum);
   updateBadges();
   toast(due > 0 ? '🚪 Гарлаа · ' + fmt(due) + ' үлдэгдэлтэй' : '🚪 Гарлаа · төлбөр бүрэн', 'ok');
   renderInpatient();
@@ -4702,6 +4871,232 @@ function hasOwnerSheet(f) {
   return !!STATE.inps.find(x => String(x.examId) === String(f.examId) && x.discharged);
 }
 
+// ── ↩ ГАРГАЛТЫГ БУЦААХ ──────────────────────────────────────────
+// Санамсаргүй гаргасан адууг буцаан хэвтүүлнэ: гаргахад үүссэн нэхэмжлэхийг
+// устгаж, тэр нэхэмжлэх дээр гаргасны ДАРАА бүртгэсэн төлбөрийг урьдчилгаа
+// болгон адууны бичлэгт буцаана (мөнгө алдагдахгүй). Бүрэн төлөгдсөн
+// нэхэмжлэхийг зөвхөн Админ буцаана.
+function _inpDischargeFins(i) {
+  const re = /^(Байрлан|Хэвтэн) эмчилгээ/i;
+  return (STATE.fins || []).filter(f =>
+    (f.breakdown && f.breakdown.inpId && String(f.breakdown.inpId) === String(i.id)) ||
+    (i.examId && String(f.examId) === String(i.examId) && re.test(String(f.services || ''))));
+}
+function _inpDischargeFinOf(i) {
+  const fs = _inpDischargeFins(i);
+  if (!fs.length) return null;
+  return fs.slice().sort((a, b) => (parseFloat(b.ms) || 0) - (parseFloat(a.ms) || 0))[0];
+}
+function undoDischarge(inpId) {
+  const i = STATE.inps.find(x => String(x.id) === String(inpId));
+  if (!i) { toast('Байрлан эмчилгээний бичлэг олдсонгүй', 'err'); return; }
+  if (!i.discharged) { toast('Энэ адуу хэвтэж байна — буцаах шаардлагагүй', 'err'); return; }
+  if (!canEditData()) { toast('⛔ Буцаах эрхгүй (Ерөнхий эмч / Ахлах эмч / Админ)', 'err'); return; }
+  const fins = _inpDischargeFins(i);
+  if (fins.some(f => isFullyPaid(f)) && !canDelete()) { toast('⛔ Нэхэмжлэх бүрэн төлөгдсөн — зөвхөн Админ буцаана', 'err'); return; }
+  // Гаргасны дараа нэхэмжлэх дээр нэмэгдсэн төлбөр (урьдчилгаанд байгаагүй) — буцааж урьдчилгаа болгоно
+  const preMs = new Set(getInpPrepayments(i).map(p => String(p.ms || '')));
+  const extra = [];
+  fins.forEach(f => getPayments(f).forEach(p => { if (!preMs.has(String(p.ms || ''))) extra.push(p); }));
+  const extraSum = extra.reduce((a, p) => a + (parseFloat(p.amount) || 0), 0);
+  if (!confirm('↩ «' + i.horse + '» адууг буцаан хэвтүүлэх үү?\n\n' +
+      'Гарсан: ' + (i.dischargedDate || '—') + (i.dischargedBy ? ' · ' + i.dischargedBy : '') + '\n' +
+      'Устгах нэхэмжлэх: ' + fins.length + (fins.length ? ' (' + fmt(fins.reduce((a, f) => a + (parseFloat(f.amount) || 0), 0)) + ')' : '') + '\n' +
+      (extraSum ? 'Гаргасны дараа авсан төлбөр ' + fmt(extraSum) + ' → урьдчилгаа болно\n' : '') +
+      '\nАдуу «Байрлан эмчлүүлэх» жагсаалтад буцаж орно, хоног үргэлжлэн тоологдоно.')) return;
+  if (extra.length) {
+    if (!Array.isArray(i.prepayments)) i.prepayments = [];
+    extra.forEach(p => i.prepayments.push({ amount: parseFloat(p.amount) || 0, method: p.method || 'бэлэн', purpose: 'Гаргасны дараах төлбөр', date: p.date || todayStr(), ms: p.ms || nowMs() }));
+  }
+  i.dischargeUndo = { ms: nowMs(), by: (STATE.user && STATE.user.name) || '', prevDate: i.dischargedDate || '', prevBy: i.dischargedBy || '', finIds: fins.map(f => String(f.id)), homecare: (i.dischargeInfo && i.dischargeInfo.homecare) || '' };
+  i.discharged = false;
+  delete i.dischargedMs; delete i.dischargedDate; delete i.dischargedBy; delete i.dischargedByRole; delete i.dischargedAtMs; delete i.dischargedDevice;
+  delete i.dischargeInfo; // гэрийн эм / заавар — дараагийн гаргалт дээр дахин бөглөнө
+  i.ms = nowMs();
+  fins.forEach(f => { STATE.deletedIds.add(String(f.id)); fbDeleteDoc('fins', String(f.id)); });
+  const finIds = new Set(fins.map(f => String(f.id)));
+  STATE.fins = STATE.fins.filter(f => !finIds.has(String(f.id)));
+  saveAll();
+  fbSaveRecord('inps', i);
+  writeLog('Байрлан эмчилгээнд буцаан хэвтүүлэв', i.id, i.horse + ' — ' + (i.docName || ''),
+    'Гаргалтыг буцаав (гарсан: ' + (i.dischargeUndo.prevDate || '—') + (i.dischargeUndo.prevBy ? ', ' + i.dischargeUndo.prevBy : '') + ') · нэхэмжлэх ' + fins.length + ' устгав' + (extraSum ? ' · ' + fmt(extraSum) + ' урьдчилгаа болгов' : '') + ' · ' + _deviceLabel(), inpExamNum(i));
+  updateBadges();
+  toast('↩ ' + i.horse + ' буцаан хэвтүүллээ', 'ok');
+  if (STATE.activePage === 'inpatient') { INP_VIEW = 'cards'; STATE.selectedI = String(i.id); renderInpatient(); if (typeof renderIDetail === 'function') { renderIDetail(); openInpDrawer(); } }
+  else if (STATE.activePage === 'finance') { STATE.selectedF = null; renderFinance(); }
+}
+function undoDischargeByFin(finId) {
+  const f = STATE.fins.find(x => String(x.id) === String(finId)); if (!f) return;
+  const i = (STATE.inps || []).find(x => (f.breakdown && f.breakdown.inpId && String(x.id) === String(f.breakdown.inpId)) || (f.examId && String(x.examId) === String(f.examId) && x.discharged));
+  if (!i) { toast('Байрлан эмчилгээний бичлэг олдсонгүй', 'err'); return; }
+  undoDischarge(i.id);
+}
+// ── 🗓 ГАРСАН ОГНООГ ЗАСАХ (дахин тооцоолол) ──────────────────────
+// Адууг бодит гарсан өдрөөс хожуу (ж: овоолоод нэг өдөр бүгдийг) гаргавал
+// хоног, байрны хөлс, нэхэмжлэхийн дүн зөрдөг. Энд бодит огноог оруулахад
+// хоног/хөлс/нийт дүн, нэхэмжлэхийн огноо, задаргаа бүгд дахин бодогдоно;
+// төлбөрийн бүртгэл хэвээр үлдэнэ.
+function _dischargeRecalc(i, dateStr) {
+  const today = todayStr();
+  // Огноо өөрчлөгдөөгүй бол одоогийн гарсан агшныг хэвээр (хоног хэлбэлзэхгүй);
+  // өөрчлөгдсөн бол: өнөөдөр → одоо, өнгөрсөн өдөр → тэр өдрийн 12:00
+  const sameAsCurrent = !!(i.dischargedMs && localDateStr(new Date(i.dischargedMs)) === dateStr);
+  const ms = sameAsCurrent ? i.dischargedMs : (dateStr === today ? nowMs() : dateStrToMs(dateStr) + 12 * 3600000);
+  const days = inpatientDays(i.admittedMs, ms);
+  const dailyFee = getDailyFee(i);
+  const examFee = parseFloat(i.initialAmount) || 0;
+  const treat = getInpDailyTotal(i);
+  const accom = dailyFee * days;
+  const homeMeds = (i.dischargeInfo && Array.isArray(i.dischargeInfo.homeMeds)) ? i.dischargeInfo.homeMeds.reduce((a, m) => a + (parseFloat(m.price) || 0), 0) : 0;
+  const lateLogs = (Array.isArray(i.log) ? i.log : []).filter(l => l.date && l.date > dateStr).length;
+  return { ms, date: dateStr, days, dailyFee, examFee, treat, accom, homeMeds, total: examFee + treat + accom + homeMeds, lateLogs };
+}
+function _fixDatePreviewHTML(i, R) {
+  const f = _inpDischargeFinOf(i);
+  const oldDays = inpatientDays(i.admittedMs, i.dischargedMs), oldTotal = f ? (parseFloat(f.amount) || 0) : getInpFullTotal(i, i.dischargedMs);
+  const paid = f ? getPaidAmount(f) : getInpPrepaidTotal(i);
+  const due = Math.max(0, R.total - paid);
+  const row = (l, a, b) => `<div class="row" style="justify-content:space-between;padding:5px 0;border-bottom:1px solid var(--border);font-size:13px"><span>${l}</span><span><span class="muted" style="text-decoration:line-through">${a}</span> → <b>${b}</b></span></div>`;
+  return `
+    ${row('🗓 Гарсан огноо', escHTML(i.dischargedDate || '—'), escHTML(R.date))}
+    ${row('Хоног', oldDays, R.days)}
+    ${row('🏨 Хоногийн хөлс (' + R.days + ' × ' + fmt(R.dailyFee) + ')', fmt(getDailyFee(i) * oldDays), fmt(R.accom))}
+    <div class="row" style="justify-content:space-between;padding:5px 0;font-size:12.5px;color:var(--muted)"><span>🩺 Үзлэг ${fmt(R.examFee)} · 💊 Эмчилгээ ${fmt(R.treat)}${R.homeMeds ? ' · 🏠 Гэрийн эм ' + fmt(R.homeMeds) : ''}</span><span>өөрчлөгдөхгүй</span></div>
+    ${row('<b>Нийт нэхэмжлэх</b>', fmt(oldTotal), fmt(R.total))}
+    <div class="row" style="justify-content:space-between;padding:6px 0;font-size:14px"><span>Төлсөн: <b style="color:var(--green)">${fmt(paid)}</b></span><span>Үлдэгдэл: <b style="color:${due > 0 ? 'var(--red)' : 'var(--green)'}">${fmt(due)}</b>${paid > R.total ? ' <span class="badge b-o">илүү төлөлт ' + fmt(paid - R.total) + '</span>' : ''}</span></div>
+    ${R.lateLogs ? '<div class="badge b-o" style="margin-top:6px">⚠️ Энэ огнооноос ХОЙШ бичигдсэн эмчилгээний бичлэг ' + R.lateLogs + ' — дүнд орсон хэвээр, шаардлагатай бол Байрлан хэсгээс устгана</div>' : ''}
+    ${!f ? '<div class="badge b-o" style="margin-top:6px">⚠️ Гаргахад үүссэн нэхэмжлэх олдсонгүй — зөвхөн адууны бичлэг засагдана</div>' : ''}`;
+}
+// Дахин бодсон дүнг нэхэмжлэх дээр бичнэ (төлбөрийн бүртгэл хэвээр; төлөгдсөн эсэх дахин тогтоогдоно)
+function _writeDischargeFin(i, f, R, setDate) {
+  const payments = getPayments(f);
+  const paid = getPaidAmount(f);
+  f.amount = R.total;
+  f.services = 'Байрлан эмчилгээ ' + R.days + ' хоног' + (R.homeMeds > 0 ? ' + гэрийн эм' : '');
+  f.breakdown = { examFee: R.examFee, treat: R.treat, accom: R.accom, homeMeds: R.homeMeds, days: R.days, dailyFee: R.dailyFee, inpId: i.id };
+  if (setDate) f.date = R.date;
+  const fully = paid >= R.total && payments.length > 0;
+  f.paid = fully;
+  if (fully) { if (!f.paidDate) f.paidDate = R.date; if (!f.paidMs) f.paidMs = nowMs(); } else { f.paidDate = ''; f.paidMs = 0; }
+  f.ms = nowMs();
+  fbSaveRecord('fins', f);
+}
+// 🚪 Гарсан адууны эмчилгээ/эм/хоногийн төлбөр өөрчлөгдөхөд нэхэмжлэхийг дахин бодно
+function recomputeDischargedInvoice(i, reason) {
+  if (!i || !i.discharged) return false;
+  const f = _inpDischargeFinOf(i);
+  if (!f) { toast('⚠️ Гаргахад үүссэн нэхэмжлэх олдсонгүй — Санхүү дээр шинэчлэгдсэнгүй', 'err'); return false; }
+  const R = _dischargeRecalc(i, i.dischargedDate || localDateStr(new Date(i.dischargedMs || nowMs())));
+  const prevAmt = parseFloat(f.amount) || 0;
+  if (prevAmt === R.total && f.breakdown && f.breakdown.treat === R.treat) return false;
+  _writeDischargeFin(i, f, R, false);
+  saveAll();
+  writeLog('Гарсан адууны нэхэмжлэх дахин бодов', i.id, i.horse + ' — ' + (i.docName || ''),
+    (reason || '') + ' · нэхэмжлэх ' + fmt(prevAmt) + ' → ' + fmt(R.total) + ' · ' + _deviceLabel(), inpExamNum(i));
+  toast('🧾 Нэхэмжлэх ' + fmt(prevAmt) + ' → ' + fmt(R.total), 'ok');
+  return true;
+}
+// 🚪 Гарсан адууны картыг нээх (эмчилгээ нэмэх/засах)
+function openDischargedCard(inpId, tab) {
+  const i = STATE.inps.find(x => String(x.id) === String(inpId));
+  if (!i) { toast('Бичлэг олдсонгүй', 'err'); return; }
+  INP_VIEW = 'out'; __inpOutEdit = false;
+  STATE.selectedI = String(i.id);
+  if (STATE.activePage !== 'inpatient') nav('inpatient'); else renderInpatient();
+  renderIDetail(); openInpDrawer();
+  const t = tab || 'treat';
+  $$('.tab[data-itab]').forEach(x => x.classList.toggle('active', x.dataset.itab === t));
+  $$('.itab').forEach(x => x.classList.toggle('hidden', x.dataset.itab !== t));
+}
+// Хадгалах: inp + нэхэмжлэхийг дахин бодож бичнэ. Буцаана: true (амжилттай)
+function applyDischargeDate(inpId, dateStr, opts) {
+  opts = opts || {};
+  const i = STATE.inps.find(x => String(x.id) === String(inpId));
+  if (!i || !i.discharged) { if (!opts.silent) toast('Гарсан адууны бичлэг олдсонгүй', 'err'); return false; }
+  if (!canEditData()) { if (!opts.silent) toast('⛔ Засах эрхгүй', 'err'); return false; }
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dateStr || '')) { if (!opts.silent) toast('Огноо сонгоно уу', 'err'); return false; }
+  if (i.admittedDate && dateStr < i.admittedDate) { if (!opts.silent) toast(i.horse + ': гарсан огноо орсон огноо (' + i.admittedDate + ')-оос өмнө байж болохгүй', 'err'); return false; }
+  if (dateStr > todayStr()) { if (!opts.silent) toast('Ирээдүйн огноо байж болохгүй', 'err'); return false; }
+  const R = _dischargeRecalc(i, dateStr);
+  const f = _inpDischargeFinOf(i);
+  const prevDate = i.dischargedDate || '', prevAmt = f ? (parseFloat(f.amount) || 0) : 0;
+  if (prevDate === dateStr && f && prevAmt === R.total) { if (!opts.silent) toast('Өөрчлөлт алга', 'err'); return false; }
+  i.dischargedMs = R.ms; i.dischargedDate = R.date;
+  i.dischargeFix = { ms: nowMs(), by: (STATE.user && STATE.user.name) || '', prevDate, prevAmt, n: ((i.dischargeFix && i.dischargeFix.n) || 0) + 1 };
+  i.ms = nowMs();
+  if (f) _writeDischargeFin(i, f, R, true);
+  saveAll();
+  fbSaveRecord('inps', i);
+  writeLog('Гарсан огноо засав', i.id, i.horse + ' — ' + (i.docName || ''),
+    prevDate + ' → ' + R.date + ' · ' + R.days + ' хоног · нэхэмжлэх ' + fmt(prevAmt) + ' → ' + fmt(R.total) + ' · ' + _deviceLabel(), inpExamNum(i));
+  if (!opts.silent) toast('🗓 ' + i.horse + ': ' + R.date + ' · ' + R.days + ' хоног · ' + fmt(R.total), 'ok');
+  return true;
+}
+// Нэг адууны огноо засах modal (Гарсан жагсаалт ба Санхүүгээс дуудна)
+let __fixDateTarget = null;
+function openDischargeDateFix(inpId) {
+  const i = STATE.inps.find(x => String(x.id) === String(inpId));
+  if (!i || !i.discharged) { toast('Гарсан адууны бичлэг олдсонгүй', 'err'); return; }
+  if (!canEditData()) { toast('⛔ Засах эрхгүй', 'err'); return; }
+  __fixDateTarget = String(i.id);
+  $('#inp-fixdate-body').innerHTML = `
+    <div style="font-weight:800;font-size:14px">${escHTML(i.horse)} <span class="muted" style="font-weight:600">· ${escHTML(i.owner || '')}</span></div>
+    <div class="muted" style="font-size:12px;margin:2px 0 10px">Орсон: <b>${escHTML(i.admittedDate || '')}</b> · Одоо бүртгэлтэй гарсан огноо: <b>${escHTML(i.dischargedDate || '')}</b>${i.dischargedBy ? ' · гаргасан: ' + escHTML(i.dischargedBy) : ''}</div>
+    <div class="fld"><label>🗓 Бодит гарсан огноо</label><input class="inp" type="date" id="inp-fix-date" value="${escHTML(i.dischargedDate || todayStr())}" min="${escHTML(i.admittedDate || '')}" max="${todayStr()}" oninput="_renderFixDatePreview()" onchange="_renderFixDatePreview()"></div>
+    <div id="inp-fix-prev" style="margin-top:10px;background:var(--input);border-radius:8px;padding:6px 12px"></div>
+    <div class="muted" style="font-size:11.5px;margin-top:8px">Хоног, хоногийн хөлс, нэхэмжлэхийн нийт дүн ба огноо шинэ огноогоор дахин бодогдоно. Бүртгэгдсэн төлбөр (урьдчилгаа, дараа нь авсан) хэвээр үлдэнэ.</div>`;
+  _renderFixDatePreview();
+  openModal('inp-fixdate-modal');
+}
+function _renderFixDatePreview() {
+  const i = STATE.inps.find(x => String(x.id) === String(__fixDateTarget)); const el = $('#inp-fix-prev'); if (!i || !el) return;
+  const v = ($('#inp-fix-date') || {}).value || '';
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(v)) { el.innerHTML = '<div class="muted">Огноо сонгоно уу</div>'; return; }
+  el.innerHTML = _fixDatePreviewHTML(i, _dischargeRecalc(i, v));
+}
+function saveDischargeDateFix() {
+  const v = ($('#inp-fix-date') || {}).value || '';
+  if (!applyDischargeDate(__fixDateTarget, v)) return;
+  closeModal('inp-fixdate-modal');
+  updateBadges();
+  if (STATE.activePage === 'inpatient') renderInpatient();
+  else if (STATE.activePage === 'finance') renderFinance();
+  else if (STATE.activePage === 'history') renderHistory();
+}
+// Багцаар засах горим («🚪 Гарсан» жагсаалт): мөр бүрд огнооны талбар + урьдчилсан дүн
+let __inpOutEdit = false;
+function toggleInpOutEdit() { if (!canEditData()) { toast('⛔ Засах эрхгүй', 'err'); return; } __inpOutEdit = !__inpOutEdit; renderInpatient(); }
+function _inpOutRowPreview(inp) {
+  const i = STATE.inps.find(x => String(x.id) === String(inp.dataset.id)); const el = $('#inp-out-prev-' + inp.dataset.id); if (!i || !el) return;
+  const v = inp.value;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(v) || v === (i.dischargedDate || '')) { el.innerHTML = ''; inp.closest('.inp-out-row').classList.remove('inp-out-changed'); }
+  else if (i.admittedDate && v < i.admittedDate) { el.innerHTML = '<span class="badge b-r">орсон огнооноос өмнө</span>'; inp.closest('.inp-out-row').classList.remove('inp-out-changed'); }
+  else {
+    const R = _dischargeRecalc(i, v); const f = _inpDischargeFinOf(i); const old = f ? (parseFloat(f.amount) || 0) : 0;
+    el.innerHTML = `<b>${R.days} хоног</b> · нийт <span class="muted" style="text-decoration:line-through">${fmt(old)}</span> → <b>${fmt(R.total)}</b>` + (R.lateLogs ? ' <span class="badge b-o">⚠️ хойших бичлэг ' + R.lateLogs + '</span>' : '');
+    inp.closest('.inp-out-row').classList.add('inp-out-changed');
+  }
+  const n = $$('.inp-out-row.inp-out-changed').length; const b = $('#inp-out-save'); if (b) { b.textContent = '💾 Хадгалах (' + n + ')'; b.disabled = !n; }
+}
+function saveInpOutDates() {
+  const rows = $$('.inp-out-row.inp-out-changed .inp-out-date');
+  if (!rows.length) { toast('Өөрчлөлт алга', 'err'); return; }
+  if (!confirm(rows.length + ' адууны гарсан огноог засаж, нэхэмжлэхийн дүнг дахин бодох уу?')) return;
+  let ok = 0, fail = 0;
+  rows.forEach(inp => { if (applyDischargeDate(inp.dataset.id, inp.value, { silent: true })) ok++; else fail++; });
+  __inpOutEdit = false;
+  updateBadges(); renderInpatient();
+  toast('🗓 ' + ok + ' адууны огноо, нэхэмжлэх засагдлаа' + (fail ? ' · ' + fail + ' алдаа' : ''), fail ? 'err' : 'ok');
+}
+
+// Гаргалтын мөшгих мэдээлэл — хэн, хэзээ, аль төхөөрөмжөөс
+function inpDischargeAuditText(i) {
+  if (!i || !i.discharged) return '';
+  const who = i.dischargedBy ? i.dischargedBy + (i.dischargedByRole ? ' (' + i.dischargedByRole + ')' : '') : 'хэн гаргасан нь бүртгэгдээгүй (хуучин хувилбар)';
+  const when = i.dischargedAtMs ? fmtDateTime(i.dischargedAtMs) : (i.dischargedDate || '');
+  return who + (when ? ' · ' + when : '') + (i.dischargedDevice ? ' · ' + i.dischargedDevice : '');
+}
+
 // ============================================================
 // FINANCE
 // ============================================================
@@ -4857,7 +5252,7 @@ function renderFinLedger(finsK) {
       </tbody>
     </table></div>
     ${L.inpRows.length ? `
-    <div class="ch" style="margin-top:16px">🏥 Хэвтэж буй адуудын хуримтлагдсан төлбөр <span class="muted" style="font-weight:600;text-transform:none">— гарахад нэхэмжлэгдэнэ</span></div>
+    <div class="ch" style="margin-top:16px">🏥 Хэвтэж буй адуудын хуримтлагдсан төлбөр <span class="muted" style="font-weight:600;text-transform:none">— эдгээр адуу ГАРААГҮЙ, одоо ч байрлан эмчлүүлж байна; нэхэмжлэх нь гаргах үед л үүснэ (урьдчилсан тооцоо)</span></div>
     <div class="tbl-wrap" style="overflow-x:auto"><table class="ledger-tb">
       <thead><tr><th>Адуу</th><th>Эзэн</th><th>Эмч</th><th>Байрлал</th><th class="num">Хоног</th><th class="num">Үзлэг</th><th class="num">Эмчилгээ</th><th class="num">Хоногийн хөлс</th><th class="num">Хуримтлагдсан</th><th class="num">Урьдчилгаа</th><th class="num">Үлдэгдэл</th></tr></thead>
       <tbody>${L.inpRows.map(r => `<tr><td><b>${escHTML(r.i.horse)}</b><div class="muted" style="font-size:10.5px">${escHTML(r.i.phone || '')}</div></td><td>${escHTML(r.i.owner)}</td><td>${escHTML(r.doc)}</td><td>${escHTML(r.loc)}</td><td class="num">${r.days}</td><td class="num">${fmt(r.examFee)}</td><td class="num">${fmt(r.treat)}</td><td class="num">${fmt(r.accom)}</td><td class="num">${fmt(r.full)}</td><td class="num">${fmt(r.pre)}</td><td class="num" style="color:var(--red);font-weight:800">${fmt(r.due)}</td></tr>`).join('')}
@@ -5098,8 +5493,20 @@ function inpBreakdownHTML(f) {
     </div>`;
 }
 
+// Санхүү дээрх байрлангийн нэхэмжлэхийн доор: хэн/хэзээ гаргасан + ↩ буцаах
+function _finInpAuditHTML(f) {
+  const B = finInpBreakdown(f); const i = B && B.inp; if (!i || !i.discharged) return '';
+  const fix = i.dischargeFix ? '<div>🗓 Огноо засагдсан: ' + escHTML(i.dischargeFix.prevDate || '—') + ' → ' + escHTML(i.dischargedDate || '') + ' · ' + escHTML(i.dischargeFix.by || '') + ' · ' + fmtDateTime(i.dischargeFix.ms) + '</div>' : '';
+  return `<div class="muted" style="font-size:11.5px;margin-top:6px;display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
+    <span>🚪 Гаргасан: ${escHTML(inpDischargeAuditText(i))}${fix}</span>
+    ${canEditData() ? `<span style="display:inline-flex;gap:6px;flex-wrap:wrap">
+      <button class="btn btn-xs btn-p" onclick="openDischargeDateFix('${escHTML(i.id)}')" title="Бодит гарсан огноог оруулахад хоног, хөлс, энэ нэхэмжлэхийн дүн дахин бодогдоно">🗓 Гарсан огноо засах</button>
+      <button class="btn btn-xs" onclick="openDischargedCard('${escHTML(i.id)}','treat')" title="Эмчилгээ / эмийн дүн нэмэх, устгах — нэхэмжлэх дахин бодогдоно">📋 Эмчилгээ нэмэх</button>
+      <button class="btn btn-xs" onclick="undoDischargeByFin('${escHTML(f.id)}')" title="Андуурч гаргасан бол адууг буцаан хэвтүүлж, энэ нэхэмжлэхийг устгана">↩ Байрланд буцаах</button></span>` : ''}
+  </div>`;
+}
 function servicesPricedHTML(f) {
-  const inpHTML = inpBreakdownHTML(f); if (inpHTML) return inpHTML;
+  const inpHTML = inpBreakdownHTML(f); if (inpHTML) return inpHTML + _finInpAuditHTML(f);
   const ex = STATE.exams.find(x => String(x.id) === String(f.examId));
   const svcItems = (ex && Array.isArray(ex.services)) ? ex.services : [];
   if (!svcItems.length) {
@@ -9811,7 +10218,10 @@ function _doExportExcel() {
     'Орсон огноо': i.admittedDate || '',
     'Гарсан огноо': i.dischargedDate || '',
     'Дүн': i.initialAmount || 0,
-    'Гарсан эсэх': i.discharged ? 'Тийм' : 'Үгүй'
+    'Гарсан эсэх': i.discharged ? 'Тийм' : 'Үгүй',
+    'Хэн гаргасан': i.dischargedBy || '',
+    'Гаргасан цаг': i.dischargedAtMs ? fmtDateTime(i.dischargedAtMs) : '',
+    'Гаргасан төхөөрөмж': i.dischargedDevice || ''
   }));
   XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(inpsData), 'Байрлан');
 
