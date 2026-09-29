@@ -3298,6 +3298,7 @@ function moveToInpatient() {
     examId: exam.id,
     horse: e.horse, owner: e.owner, phone: e.phone,
     diagnosis: e.diagnosis,
+    examNum: exam.examNum || '',
     docId: e.docId || '',
     docName: exam.docName,
     location: '',
@@ -3382,6 +3383,15 @@ function inpDoctorOf(i) {
   if (!i) return null;
   const ds = STATE.doctors || [];
   return (i.docId && ds.find(d => String(d.id) === String(i.docId))) || (i.docName && ds.find(d => d.name === i.docName)) || null;
+}
+// Байрлан эмчлүүлэгчийн үзлэгийн хуудасны дугаар — бичлэг дээрээ, үзлэг, санхүүгээс
+function inpExamNum(i) {
+  if (!i) return '';
+  if (i.examNum) return String(i.examNum);
+  const ex = i.examId ? recById('exams', i.examId) : null;
+  if (ex && ex.examNum) return String(ex.examNum);
+  const f = i.examId ? finByExamId(i.examId) : null;
+  return (f && f.examNum) ? String(f.examNum) : '';
 }
 // Нэвтэрсэн хэрэглэгч эмч мөн бол түүний doctor бичлэг
 function currentUserDoctor() {
@@ -3478,6 +3488,7 @@ function _inpCardHTML(i) {
         <div class="inpc-days ${dClass}">${days} хоног</div>
       </div>
       <div class="inpc-tags">
+        ${inpExamNum(i) ? `<span class="inpc-tag inpc-tag-num">🔢 ${escHTML(inpExamNum(i))}</span>` : ''}
         <span class="inpc-tag ${d ? '' : 'inpc-tag-none'}">👨‍⚕️ ${escHTML(d ? d.name : (i.docName || 'Эмч заагаагүй'))}</span>
         <span class="inpc-tag ${i.location ? 'inpc-tag-loc' : 'inpc-tag-none'}">📍 ${escHTML(i.location || 'Байрлал заагаагүй')}</span>
       </div>
@@ -3673,6 +3684,7 @@ function ensureInpCardStyles() {
   .inpc-tag{font-size:10.5px;font-weight:700;padding:2px 7px;border-radius:6px;background:var(--input,#faf9fc);
     border:1px solid var(--border,#e9e6f0);color:var(--muted,#5b5468);white-space:nowrap;max-width:100%;overflow:hidden;text-overflow:ellipsis}
   .inpc-tag-loc{background:var(--gold-soft,#f6efdc);color:#7a5a12;border-color:#e6d5a8}
+  .inpc-tag-num{background:var(--orange-soft,#fcf3e0);color:var(--orange-dark,#b57708);border-color:#f0d9a8;font-weight:800}
   .inpc-tag-none{opacity:.6;font-style:italic}
   .inp-view-btn.on{background:var(--navy,#0b2b3d);color:#fff;border-color:var(--navy,#0b2b3d)}
   .inp-summary{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px}
@@ -3776,7 +3788,7 @@ function renderIDetail() {
   $('#inp-detail-card').classList.remove('hidden');
   const days = inpatientDays(i.admittedMs);
 
-  $('#inp-detail-title').innerHTML = `📌 ${escHTML(i.horse)} <span class="muted" style="font-size:11px;font-weight:600">· ${escHTML(i.owner)} · ${days} хоног</span>`;
+  $('#inp-detail-title').innerHTML = `📌 ${escHTML(i.horse)} <span class="muted" style="font-size:11px;font-weight:600">· ${escHTML(i.owner)} · ${days} хоног</span>${inpExamNum(i) ? ' <span class="badge b-o" style="font-size:11px;font-weight:800;margin-left:6px">🔢 ' + escHTML(inpExamNum(i)) + '</span>' : ''}`;
 
   // Wire up tab switcher
   $$('.tab[data-itab]').forEach(t => {
@@ -3802,7 +3814,9 @@ function renderInpInfoTab(i) {
   const docOpts = '<option value="">— заагаагүй —</option>' + (STATE.doctors || []).map(x => `<option value="${escHTML(x.id)}" ${d && String(d.id) === String(x.id) ? 'selected' : ''}>${escHTML(x.name)}</option>`).join('');
   const locs = inpLocations().slice(); if (i.location && !locs.includes(i.location)) locs.push(i.location);
   const locOpts = '<option value="">— заагаагүй —</option>' + locs.map(l => `<option ${l === i.location ? 'selected' : ''}>${escHTML(l)}</option>`).join('');
+  const num = inpExamNum(i);
   $('#inp-info-body').innerHTML = `
+    <div style="background:var(--orange-soft);padding:8px 12px;border-radius:8px;margin-bottom:10px;font-weight:800;color:var(--orange-dark);font-size:14px">🔢 Үзлэгийн хуудасны дугаар: ${num ? escHTML(num) : '<span class="muted" style="font-weight:600">— олдсонгүй (үзлэг холбогдоогүй)</span>'}</div>
     <div class="fg r2">
       <div class="fld"><label>Эзэн</label><div class="bold">${escHTML(i.owner)}</div></div>
       <div class="fld"><label>Утас</label><div class="bold">${escHTML(i.phone)}</div></div>
@@ -4504,6 +4518,8 @@ function confirmDischarge() {
     docName: i.docName,
     amount: grandTotal,
     services: 'Байрлан эмчилгээ ' + days + ' хоног' + (homeMedsTotal > 0 ? ' + гэрийн эм' : ''),
+    // 💰 Задаргаа — санхүү дээр үзлэг / эмчилгээ / хоног / гэрийн эм тусад нь харуулахад
+    breakdown: { examFee, treat: treatmentTotal, accom: accommodation, homeMeds: homeMedsTotal, days, dailyFee, inpId: i.id },
     paid: due === 0 && payments.length > 0,
     method: payments.length === 0 ? '' : (payments.length === 1 ? payments[0].method : 'хосолсон'),
     payments: payments,
@@ -4796,7 +4812,8 @@ function buildFinLedger(fins) {
   // Хэвтэж буй адуудын хуримтлагдсан төлбөр
   const inpRows = (STATE.inps || []).filter(i => !i.discharged).map(i => {
     const full = getInpFullTotal(i), pre = getInpPrepaidTotal(i); const d = inpDoctorOf(i);
-    return { i, days: inpatientDays(i.admittedMs), full, pre, due: Math.max(0, full - pre), doc: d ? d.name : (i.docName || ''), loc: i.location || '' };
+    const examFee = parseFloat(i.initialAmount) || 0, treat = (Array.isArray(i.log) ? i.log : []).reduce((a, l) => a + (parseFloat(l.amount) || 0), 0);
+    return { i, days: inpatientDays(i.admittedMs), full, pre, due: Math.max(0, full - pre), doc: d ? d.name : (i.docName || ''), loc: i.location || '', examFee, treat, accom: Math.max(0, full - examFee - treat) };
   }).filter(r => r.due > 0).sort((a, b) => b.due - a.due);
   const inpDue = inpRows.reduce((a, r) => a + r.due, 0);
   return { rows, tot, inpRows, inpDue };
@@ -4824,7 +4841,7 @@ function renderFinLedger(finsK) {
           const subs = open ? g.recs.map(f => { const due = getDueAmount(f), age = _ageDays(f.date); return `
             <tr class="sub"><td></td>
               <td colspan="2">${f.examNum ? '<span class="badge b-o" style="font-size:10px">' + escHTML(f.examNum) + '</span> ' : ''}${escHTML(f.horse || '')} <span class="muted">· ${escHTML(f.date || '')} · ${srcLbl[finSourceOf(f)] || ''}${f.docName ? ' · ' + escHTML(f.docName) : ''}</span></td>
-              <td class="num muted">${escHTML((f.services || '').slice(0, 40))}</td>
+              <td class="num muted">${finSourceOf(f) === 'inpatient' ? escHTML(finInpBreakdownShort(f)) : escHTML((f.services || '').slice(0, 40))}</td>
               <td class="num">${fmt(f.amount)}</td><td class="num">${fmt(getPaidAmount(f))}</td><td class="num" style="color:var(--red);font-weight:800">${fmt(due)}</td>
               <td><span class="ledger-age ${_ageClass(age)}">${age} хоног</span></td>
               <td><button class="btn btn-xs btn-g" onclick="event.stopPropagation();markPaid('${escHTML(f.id)}')">💰 Төлбөр</button> <button class="btn btn-xs" onclick="event.stopPropagation();printInvoice('${escHTML(f.id)}')">🖨</button></td>
@@ -4842,9 +4859,9 @@ function renderFinLedger(finsK) {
     ${L.inpRows.length ? `
     <div class="ch" style="margin-top:16px">🏥 Хэвтэж буй адуудын хуримтлагдсан төлбөр <span class="muted" style="font-weight:600;text-transform:none">— гарахад нэхэмжлэгдэнэ</span></div>
     <div class="tbl-wrap" style="overflow-x:auto"><table class="ledger-tb">
-      <thead><tr><th>Адуу</th><th>Эзэн</th><th>Утас</th><th>Эмч</th><th>Байрлал</th><th class="num">Хоног</th><th class="num">Хуримтлагдсан</th><th class="num">Урьдчилгаа</th><th class="num">Үлдэгдэл</th></tr></thead>
-      <tbody>${L.inpRows.map(r => `<tr><td><b>${escHTML(r.i.horse)}</b></td><td>${escHTML(r.i.owner)}</td><td>${escHTML(r.i.phone || '')}</td><td>${escHTML(r.doc)}</td><td>${escHTML(r.loc)}</td><td class="num">${r.days}</td><td class="num">${fmt(r.full)}</td><td class="num">${fmt(r.pre)}</td><td class="num" style="color:var(--red);font-weight:800">${fmt(r.due)}</td></tr>`).join('')}
-      <tr><td colspan="8"><b>НИЙТ</b></td><td class="num" style="color:var(--red)"><b>${fmt(L.inpDue)}</b></td></tr></tbody>
+      <thead><tr><th>Адуу</th><th>Эзэн</th><th>Эмч</th><th>Байрлал</th><th class="num">Хоног</th><th class="num">Үзлэг</th><th class="num">Эмчилгээ</th><th class="num">Хоногийн хөлс</th><th class="num">Хуримтлагдсан</th><th class="num">Урьдчилгаа</th><th class="num">Үлдэгдэл</th></tr></thead>
+      <tbody>${L.inpRows.map(r => `<tr><td><b>${escHTML(r.i.horse)}</b><div class="muted" style="font-size:10.5px">${escHTML(r.i.phone || '')}</div></td><td>${escHTML(r.i.owner)}</td><td>${escHTML(r.doc)}</td><td>${escHTML(r.loc)}</td><td class="num">${r.days}</td><td class="num">${fmt(r.examFee)}</td><td class="num">${fmt(r.treat)}</td><td class="num">${fmt(r.accom)}</td><td class="num">${fmt(r.full)}</td><td class="num">${fmt(r.pre)}</td><td class="num" style="color:var(--red);font-weight:800">${fmt(r.due)}</td></tr>`).join('')}
+      <tr><td colspan="5"><b>НИЙТ</b></td><td class="num"><b>${fmt(L.inpRows.reduce((a, r) => a + r.examFee, 0))}</b></td><td class="num"><b>${fmt(L.inpRows.reduce((a, r) => a + r.treat, 0))}</b></td><td class="num"><b>${fmt(L.inpRows.reduce((a, r) => a + r.accom, 0))}</b></td><td colspan="2"></td><td class="num" style="color:var(--red)"><b>${fmt(L.inpDue)}</b></td></tr></tbody>
     </table></div>` : ''}`;
 }
 function _ledgerFins() { const F = _finFilter(); return (STATE.fins || []).filter(f => finFilterOk(f, F)); }
@@ -4941,7 +4958,7 @@ function renderFinance() {
           <div class="li-av">📄</div>
           <div class="li-info">
             <div class="li-name">${escHTML(f.horse)} <span class="muted" style="font-weight:600">· ${escHTML(f.owner)}</span></div>
-            <div class="li-sub">${f.examNum ? '<span class="badge b-o" style="font-size:10px;margin-right:4px">'+escHTML(f.examNum)+'</span>' : ''}${kindBadge(f, true)}${escHTML(f.services||'—')}</div>
+            <div class="li-sub">${f.examNum ? '<span class="badge b-o" style="font-size:10px;margin-right:4px">'+escHTML(f.examNum)+'</span>' : ''}${kindBadge(f, true)}${escHTML(f.services||'—')}${finSourceOf(f) === 'inpatient' ? '<div class="muted" style="font-size:10.5px">' + escHTML(finInpBreakdownShort(f)) + '</div>' : ''}</div>
           </div>
           <div class="li-r">
             <span class="badge b-o">${fmt(f.amount)}</span>
@@ -5018,7 +5035,7 @@ function renderFinance() {
           <td>${iabd?escHTML(iabd):'<span class="muted">—</span>'}</td>
           <td style="max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escHTML(f.horse||'')}">${escHTML(f.horse)}</td>
           <td>${escHTML(f.owner)}</td>
-          <td class="bold">${fmt(f.amount)}</td>
+          <td class="bold">${fmt(f.amount)}${finSourceOf(f) === 'inpatient' ? '<div class="muted" style="font-size:10px;font-weight:600;white-space:nowrap">🏥 ' + escHTML(finInpBreakdownShort(f)) + '</div>' : ''}</td>
           <td><span class="badge b-a">${methodIcon(f.method)} ${escHTML(f.method)}</span></td>
           <td>${f.paidMs?fmtTime(f.paidMs):'—'}</td>
           <td>
@@ -5037,7 +5054,52 @@ function renderFinance() {
 }
 
 // Үйлчилгээг тус бүрийн үнэтэй жагсаалт болгож HTML буцаана (холбоотой үзлэгээс)
+// ── 🏥 Байрлан эмчилгээний санхүүгийн задаргаа ─────────────────
+// Гарахад үүссэн нэхэмжлэх нэг дүнтэй байдаг; эмчилгээний өдөр тутмын
+// дүн (байрлан хэсэгт бичигдсэн) санхүүд харагддаггүй байв. Энд:
+// үзлэг / эмчилгээ (өдөр бүрээр) / хоногийн хөлс / гэрийн эм / урьдчилгаа.
+// Эх сурвалж: fin.breakdown (шинэ) эсвэл inps бичлэг (хуучин).
+function finInpBreakdown(f) {
+  if (!f || finSourceOf(f) !== 'inpatient') return null;
+  const inp = (STATE.inps || []).find(i => (f.breakdown && f.breakdown.inpId && String(i.id) === String(f.breakdown.inpId)) || (f.examId && String(i.examId) === String(f.examId)));
+  const logs = inp && Array.isArray(inp.log) ? inp.log.slice().sort((a, b) => (a.date || '') < (b.date || '') ? -1 : 1) : [];
+  const b = f.breakdown || {};
+  const examFee = b.examFee != null ? +b.examFee : (inp ? parseFloat(inp.initialAmount) || 0 : 0);
+  const treat = b.treat != null ? +b.treat : logs.reduce((a, l) => a + (parseFloat(l.amount) || 0), 0);
+  const days = b.days != null ? +b.days : (inp ? inpatientDays(inp.admittedMs, inp.dischargedMs) : 0);
+  const dailyFee = b.dailyFee != null ? +b.dailyFee : (inp ? getDailyFee(inp) : 0);
+  const accom = b.accom != null ? +b.accom : dailyFee * days;
+  const hm = inp && inp.dischargeInfo && Array.isArray(inp.dischargeInfo.homeMeds) ? inp.dischargeInfo.homeMeds : [];
+  const homeMeds = b.homeMeds != null ? +b.homeMeds : hm.reduce((a, m) => a + (parseFloat(m.price) || 0), 0);
+  const prepaid = inp ? getInpPrepaidTotal(inp) : 0;
+  const ex = f.examId ? recById('exams', f.examId) : null;
+  return { inp, ex, logs, examFee, treat, days, dailyFee, accom, homeMeds, homeMedsRows: hm, prepaid, total: examFee + treat + accom + homeMeds };
+}
+function finInpBreakdownShort(f) {
+  const B = finInpBreakdown(f); if (!B) return '';
+  return ['үзлэг ' + fmt(B.examFee), 'эмчилгээ ' + fmt(B.treat), 'хоног ' + B.days + '×' + fmt(B.dailyFee) + '=' + fmt(B.accom), B.homeMeds ? 'гэрийн эм ' + fmt(B.homeMeds) : ''].filter(Boolean).join(' · ');
+}
+function inpBreakdownHTML(f) {
+  const B = finInpBreakdown(f); if (!B) return '';
+  const row = (l, v, cls) => `<div class="row" style="justify-content:space-between;align-items:center;padding:7px 12px;font-size:13px;border-top:1px solid var(--border);${cls || ''}"><span>${l}</span><span style="font-weight:800;white-space:nowrap">${v}</span></div>`;
+  const sub = (l, v) => `<div class="row" style="justify-content:space-between;align-items:center;padding:4px 12px 4px 26px;font-size:12px;color:var(--muted)"><span>${l}</span><span style="white-space:nowrap">${v}</span></div>`;
+  const exSvcs = B.ex && Array.isArray(B.ex.services) ? B.ex.services : [];
+  return `
+    <div style="background:var(--input);border-radius:8px;overflow:hidden">
+      <div style="padding:8px 12px;font-size:12px;font-weight:800;color:var(--purple)">🏥 Байрлан эмчилгээ · ${B.days} хоног${B.inp && B.inp.admittedDate ? ' · ' + escHTML(B.inp.admittedDate) + (B.inp.dischargedDate ? ' → ' + escHTML(B.inp.dischargedDate) : '') : ''}${B.inp && B.inp.location ? ' · 📍 ' + escHTML(B.inp.location) : ''}</div>
+      ${row('🩺 Анхны үзлэг', fmt(B.examFee))}
+      ${exSvcs.map(s => sub(escHTML(s.name || ''), fmt(parseFloat(s.price) || 0))).join('')}
+      ${row('💊 Эмчилгээ <span class="muted" style="font-weight:600">(' + B.logs.length + ' бичлэг)</span>', fmt(B.treat))}
+      ${B.logs.map(l => sub(escHTML(l.date || '') + ' · ' + escHTML([...(Array.isArray(l.services) ? l.services.map(x => x.name || x) : []), ...(Array.isArray(l.meds) ? l.meds.map(m => m.name || m) : [])].join(', ') || l.note || '—') + (l.docName ? ' · ' + escHTML(l.docName) : ''), fmt(parseFloat(l.amount) || 0))).join('')}
+      ${row('🏨 Хоногийн хөлс <span class="muted" style="font-weight:600">(' + B.days + ' × ' + fmt(B.dailyFee) + ')</span>', fmt(B.accom))}
+      ${B.homeMeds ? row('🏠 Гэрийн эм', fmt(B.homeMeds)) + B.homeMedsRows.map(m => sub(escHTML(m.name || ''), fmt(parseFloat(m.price) || 0))).join('') : ''}
+      ${row('<b>Нийт</b>', '<b>' + fmt(B.total) + '</b>', 'border-top:2px solid var(--border-strong);background:var(--card)')}
+      ${B.prepaid ? row('Урьдчилгаа (хэвтэх үед)', '−' + fmt(B.prepaid), 'color:var(--green)') : ''}
+    </div>`;
+}
+
 function servicesPricedHTML(f) {
+  const inpHTML = inpBreakdownHTML(f); if (inpHTML) return inpHTML;
   const ex = STATE.exams.find(x => String(x.id) === String(f.examId));
   const svcItems = (ex && Array.isArray(ex.services)) ? ex.services : [];
   if (!svcItems.length) {
@@ -5348,6 +5410,18 @@ function renderSummary() {
     </div>
   `).join('');
 
+  // 🏥 Байрлан эмчилгээний орлогын задаргаа (энэ сард төлөгдсөн)
+  const smInp = $('#sm-inp-breakdown');
+  if (smInp) {
+    const agg = { n: 0, examFee: 0, treat: 0, accom: 0, homeMeds: 0, total: 0 };
+    month.forEach(f => { const B = finInpBreakdown(f); if (!B) return; agg.n++; agg.examFee += B.examFee; agg.treat += B.treat; agg.accom += B.accom; agg.homeMeds += B.homeMeds; agg.total += parseFloat(f.amount) || 0; });
+    const clinicTotal = month.reduce((a, f) => a + (parseFloat(f.amount) || 0), 0) - agg.total;
+    const bar = (l, v, tot) => `<div style="margin-bottom:8px"><div class="row" style="justify-content:space-between;font-size:12px"><span class="bold">${l}</span><span class="muted">${fmtCompact(v)} (${tot ? Math.round(v / tot * 100) : 0}%)</span></div><div class="prog"><div class="prog-fill" style="width:${tot ? v / tot * 100 : 0}%"></div></div></div>`;
+    smInp.innerHTML = agg.n
+      ? `<div class="muted" style="font-size:12px;margin-bottom:8px">Энэ сард ${agg.n} байрлан эмчилгээний нэхэмжлэх төлөгдсөн — нийт ${fmt(agg.total)} (клиник үзлэг: ${fmt(clinicTotal)})</div>` +
+        bar('🩺 Анхны үзлэг', agg.examFee, agg.total) + bar('💊 Эмчилгээ (өдөр тутмын бичлэг)', agg.treat, agg.total) + bar('🏨 Хоногийн хөлс', agg.accom, agg.total) + (agg.homeMeds ? bar('🏠 Гэрийн эм', agg.homeMeds, agg.total) : '')
+      : '<div class="muted" style="font-size:12px">Энэ сард төлөгдсөн байрлан эмчилгээний нэхэмжлэх алга</div>';
+  }
   $('#sm-cnt').textContent = month.length;
   $('#sm-avg').textContent = fmtCompact(month.length ? month.reduce((a,b)=>a+b.amount,0)/month.length : 0);
   const pending = STATE.fins.filter(f => !f.paid);
@@ -5541,7 +5615,14 @@ function printInvoice(id) {
     </div>
     <div class="uz-block" style="margin-top:2mm;font-size:8pt">
       <div><b>Хийсэн үйлчилгээ:</b></div>
-      <div class="uz-svc-block">${svcRowsHTML}</div>
+      <div class="uz-svc-block">${(() => { const B = finInpBreakdown(f); if (!B) return svcRowsHTML;
+        const line = (l, v) => `<div class="uz-svc-line"><span>${l}</span><span class="uz-svc-price">${v}</span></div>`;
+        return line('Анхны үзлэг' + (B.ex && Array.isArray(B.ex.services) && B.ex.services.length ? ' (' + escHTML(B.ex.services.map(x => x.name).join(', ')) + ')' : ''), fmt(B.examFee)) +
+          line('Эмчилгээ — ' + B.logs.length + ' бичлэг', fmt(B.treat)) +
+          B.logs.map(l => line('&nbsp;&nbsp;' + escHTML(l.date || '') + ' ' + escHTML([...(Array.isArray(l.services) ? l.services.map(x => x.name || x) : []), ...(Array.isArray(l.meds) ? l.meds.map(m => m.name || m) : [])].join(', ').slice(0, 60)), fmt(parseFloat(l.amount) || 0))).join('') +
+          line('Хоногийн хөлс — ' + B.days + ' × ' + fmt(B.dailyFee), fmt(B.accom)) +
+          (B.homeMeds ? line('Гэрийн эм', fmt(B.homeMeds)) : '') +
+          (B.prepaid ? line('Урьдчилгаа', '−' + fmt(B.prepaid)) : ''); })()}</div>
     </div>
     <div class="uz-block" style="margin-top:2mm;font-size:8pt">
       <div><b>Эмчийн өгсөн зөвлөгөө:</b></div>
@@ -5709,7 +5790,7 @@ function printInvoice(id) {
     ${diag ? `<div style="margin-bottom:14px"><div style="font-size:11px;font-weight:800;color:var(--muted);letter-spacing:0.8px;margin-bottom:6px">🩺 ОНОШ</div><div style="background:var(--input);border-radius:8px;padding:10px 14px;font-size:13px;font-weight:600">${escHTML(diag)}</div></div>` : ''}
     ${note ? `<div style="margin-bottom:14px"><div style="font-size:11px;font-weight:800;color:var(--muted);letter-spacing:0.8px;margin-bottom:6px">📝 ТЭМДЭГЛЭЛ</div><div style="background:var(--input);border-radius:8px;padding:10px 14px;font-size:13px;white-space:pre-wrap">${escHTML(note)}</div></div>` : ''}
     <div style="margin-bottom:16px">
-      <div style="font-size:11px;font-weight:800;color:var(--muted);letter-spacing:0.8px;margin-bottom:8px">🩻 ҮЙЛЧИЛГЭЭ</div>${svcRows}
+      <div style="font-size:11px;font-weight:800;color:var(--muted);letter-spacing:0.8px;margin-bottom:8px">🩻 ҮЙЛЧИЛГЭЭ</div>${finSourceOf(f) === 'inpatient' ? inpBreakdownHTML(f) : svcRows}
     </div>
     <div style="margin-bottom:18px">
       <div style="font-size:11px;font-weight:800;color:var(--muted);letter-spacing:0.8px;margin-bottom:4px">💊 ЭМИЙН ЖОР</div>${medsDisplay}
@@ -5822,7 +5903,7 @@ function printInpBook(inpId) {
     <tr><td class="k">Эзэн</td><td>${cell(i.owner)}</td><td class="k">Утас</td><td>${cell(i.phone)}</td></tr>
     <tr><td class="k">Хэвтсэн огноо</td><td>${cell(admDate)}</td><td class="k">Гарсан огноо</td><td>${cell(disDate) || '<span class="line"></span>'}</td></tr>
     <tr><td class="k">Байрлал</td><td>${cell(i.location) || '<span class="line"></span>'}</td><td class="k">Нийт хоног</td><td>${days}</td></tr>
-    <tr><td class="k">Эмчлэгч эмч</td><td>${cell(doc ? doc.name : i.docName)}</td><td class="k">Үзлэгийн хуудас №</td><td>${cell((ex && ex.examNum) || i.examNum)}</td></tr>
+    <tr><td class="k">Эмчлэгч эмч</td><td>${cell(doc ? doc.name : i.docName)}</td><td class="k">Үзлэгийн хуудас №</td><td>${cell(inpExamNum(i))}</td></tr>
   </table>
   <table class="kv">
     <tr><td class="k">Анамнез</td><td>${cell(an.text)}${an.symptoms && an.symptoms.length ? (an.text ? '<br>' : '') + '<i>Шинж тэмдэг:</i> ' + escHTML(an.symptoms.join(', ')) : ''}${!an.text && !(an.symptoms || []).length ? '<span class="line"></span>' : ''}</td></tr>
@@ -5931,7 +6012,7 @@ function printInpatientCard(inpId) {
     <div style="flex:1;min-width:40mm"><b>Хэвтсэн:</b> ${escHTML(admDate)}</div>
     <div style="flex:1;min-width:40mm"><b>Гарсан:</b> ${escHTML(disDate)}</div>
     <div style="flex:1;min-width:40mm"><b>Нийт хоног:</b> ${days}</div>
-    <div style="flex:1;min-width:40mm"><b>УУД №:</b> ${escHTML(i.examNum||'—')}</div>
+    <div style="flex:1;min-width:40mm"><b>УУД №:</b> ${escHTML(inpExamNum(i)||'—')}</div>
   </div>
   <table style="width:100%;border-collapse:collapse;font-size:8.5pt;margin-bottom:4mm">
     <thead><tr>
