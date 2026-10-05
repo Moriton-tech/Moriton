@@ -7988,6 +7988,8 @@ const BONUS_DEFAULT = {
   perUnit: true // qty = 1 үзлэг = 1 адуу (систем дээр үзлэг бүр тусдаа бичлэг)
 };
 const BONUS_CATS = ['Клиник', 'Зонд', 'Дуудлага', 'Клиник дуудлага', 'Төлөвлөгөөт'];
+const BONUS_PL_CAT = 'Төлөвлөгөөт';                                   // тусдаа олгогддог
+const BONUS_MAIN_CATS = BONUS_CATS.filter(c => c !== BONUS_PL_CAT);   // үндсэн үзлэгийн ангиллууд
 function bonusCfg() { return Object.assign({}, BONUS_DEFAULT, STATE.bonusCfg || {}); }
 function saveBonusCfg(patch) {
   STATE.bonusCfg = Object.assign({}, bonusCfg(), patch || {});
@@ -8040,18 +8042,58 @@ function computeBonus(ym, province) {
       svc: (Array.isArray(e.services) ? e.services : []).map(s => s.name).filter(Boolean).join(', '),
       cat: bonusCategoryOf(e), auto: !e.bonusCat, main, asst, qty, mainAmt, asstAmt, skip, noDoc: !main || main === '—' };
   });
-  // Эмчийн нэгтгэл
+  // Эмчийн нэгтгэл — 🏥 үндсэн үзлэг (Клиник/Зонд/Дуудлага/Клиник дуудлага) ба
+  // 🗓️ Төлөвлөгөөт үзлэгийг ТУСАД НЬ (хамтран дүн мөн тусдаа) — ТҮ-ийн урамшуулал тусдаа олгогддог.
+  // Ангилал «Төлөвлөгөөт» бол ТҮ-д тооцно (мөрөөр гараар сольсон ангиллыг мөрдөнө).
   const docMap = {};
-  const ensure = (n) => { if (!docMap[n]) docMap[n] = { name: n, role: bonusDocRole(n), cats: {}, assist: 0, total: 0, count: 0, assistCount: 0 }; return docMap[n]; };
+  const ensure = (n) => { if (!docMap[n]) docMap[n] = { name: n, role: bonusDocRole(n), cats: {}, assist: 0, count: 0, assistCount: 0,
+    plMain: 0, plAssist: 0, plCount: 0, plAssistCount: 0, mainTotal: 0, plTotal: 0, total: 0 }; return docMap[n]; };
   rows.forEach(r => {
     if (r.skip) return;
-    const m = ensure(r.main); m.cats[r.cat] = (m.cats[r.cat] || 0) + r.mainAmt; m.total += r.mainAmt; m.count += r.qty;
-    if (r.asst) { const a = ensure(r.asst); a.assist += r.asstAmt; a.total += r.asstAmt; a.assistCount += r.qty; }
+    const pl = r.cat === BONUS_PL_CAT;
+    const m = ensure(r.main);
+    m.cats[r.cat] = (m.cats[r.cat] || 0) + r.mainAmt;
+    if (pl) { m.plMain += r.mainAmt; m.plCount += r.qty; m.plTotal += r.mainAmt; }
+    else { m.count += r.qty; m.mainTotal += r.mainAmt; }
+    m.total += r.mainAmt;
+    if (r.asst) {
+      const a = ensure(r.asst);
+      if (pl) { a.plAssist += r.asstAmt; a.plAssistCount += r.qty; a.plTotal += r.asstAmt; }
+      else { a.assist += r.asstAmt; a.assistCount += r.qty; a.mainTotal += r.asstAmt; }
+      a.total += r.asstAmt;
+    }
   });
   const docs = Object.values(docMap).sort((a, b) => b.total - a.total);
   const byCat = {}; BONUS_CATS.forEach(c => byCat[c] = rows.filter(r => r.cat === c));
   const total = docs.reduce((a, d) => a + d.total, 0);
-  return { ym, rows, docs, byCat, total, cfg, skipped: rows.filter(r => r.skip).length };
+  const mainTotal = docs.reduce((a, d) => a + d.mainTotal, 0), plTotal = docs.reduce((a, d) => a + d.plTotal, 0);
+  const live = rows.filter(r => !r.skip);
+  return { ym, rows, docs, byCat, total, mainTotal, plTotal, cfg, skipped: rows.filter(r => r.skip).length,
+    mainDocs: docs.filter(d => d.mainTotal > 0 || d.count || d.assistCount).sort((a, b) => b.mainTotal - a.mainTotal),
+    plDocs: docs.filter(d => d.plTotal > 0 || d.plCount || d.plAssistCount).sort((a, b) => b.plTotal - a.plTotal),
+    mainN: live.filter(r => r.cat !== BONUS_PL_CAT).length, plN: live.filter(r => r.cat === BONUS_PL_CAT).length,
+    mainAsstN: live.filter(r => r.cat !== BONUS_PL_CAT && r.asst).length, plAsstN: live.filter(r => r.cat === BONUS_PL_CAT && r.asst).length };
+}
+// Хоёр нэгтгэл хүснэгт: үндсэн үзлэг (ТҮ-гүй) ба төлөвлөгөөт үзлэг
+function bonusMainSummaryHTML(B, print) {
+  const sum = f => B.mainDocs.reduce((a, d) => a + (f(d) || 0), 0);
+  const dash = print ? '' : '<span class="muted">—</span>';
+  const R = 'style="text-align:right"';
+  return `<tr><th>Нэрс</th><th>Албан тушаал</th><th ${R}>Үзлэг</th>${BONUS_MAIN_CATS.map(c => `<th ${R}>${c}</th>`).join('')}<th ${R}>Хамтран</th><th ${R}>Нийт дүн</th></tr>` +
+    B.mainDocs.map(d => `<tr><td${print ? '' : ' class="bold"'}>${escHTML(d.name)}</td><td${print ? '' : ' class="muted"'}>${escHTML(d.role)}</td>
+      <td ${R}>${d.count}${d.assistCount ? (print ? ' +' : ' <span class="muted">+') + d.assistCount + (print ? '' : '</span>') : ''}</td>
+      ${BONUS_MAIN_CATS.map(c => `<td ${R}>${d.cats[c] ? fmt(d.cats[c]) : dash}</td>`).join('')}
+      <td ${R}>${d.assist ? fmt(d.assist) : dash}</td><td ${R}><b>${fmt(d.mainTotal)}</b></td></tr>`).join('') +
+    `<tr style="background:var(--input)"><td colspan="2"><b>Нийт дүн</b></td><td ${R}><b>${B.mainN}</b></td>${BONUS_MAIN_CATS.map(c => `<td ${R}><b>${fmt(sum(d => d.cats[c]))}</b></td>`).join('')}<td ${R}><b>${fmt(sum(d => d.assist))}</b></td><td ${R}><b>${fmt(B.mainTotal)}</b></td></tr>`;
+}
+function bonusPlSummaryHTML(B, print) {
+  const sum = f => B.plDocs.reduce((a, d) => a + (f(d) || 0), 0);
+  const dash = print ? '' : '<span class="muted">—</span>';
+  const R = 'style="text-align:right"';
+  return `<tr><th>Нэрс</th><th>Албан тушаал</th><th ${R}>Үзлэг (ахлах эмч)</th><th ${R}>Ахлах эмчийн дүн</th><th ${R}>Хамтарсан үзлэг</th><th ${R}>Хамтран дүн</th><th ${R}>Нийт дүн</th></tr>` +
+    B.plDocs.map(d => `<tr><td${print ? '' : ' class="bold"'}>${escHTML(d.name)}</td><td${print ? '' : ' class="muted"'}>${escHTML(d.role)}</td>
+      <td ${R}>${d.plCount || dash}</td><td ${R}>${d.plMain ? fmt(d.plMain) : dash}</td><td ${R}>${d.plAssistCount || dash}</td><td ${R}>${d.plAssist ? fmt(d.plAssist) : dash}</td><td ${R}><b>${fmt(d.plTotal)}</b></td></tr>`).join('') +
+    `<tr style="background:var(--input)"><td colspan="2"><b>Нийт дүн</b></td><td ${R}><b>${B.plN}</b></td><td ${R}><b>${fmt(sum(d => d.plMain))}</b></td><td ${R}><b>${B.plAsstN}</b></td><td ${R}><b>${fmt(sum(d => d.plAssist))}</b></td><td ${R}><b>${fmt(B.plTotal)}</b></td></tr>`;
 }
 
 let __bonusLast = null;
@@ -8075,27 +8117,23 @@ function renderBonus() {
   const catCount = (c) => B.byCat[c].filter(r => !r.skip).length;
   host.innerHTML = `
     <div class="stats s5" style="margin-bottom:12px">
-      <div class="stat green"><div class="stat-l">🎁 Нийт урамшуулал</div><div class="snum">${fmtCompact(B.total)}</div><div class="muted" style="font-size:10px">${B.docs.length} эмч</div></div>
-      <div class="stat"><div class="stat-l">📋 Үзлэг</div><div class="snum">${B.rows.length - B.skipped}</div><div class="muted" style="font-size:10px">${B.skipped ? B.skipped + ' хасагдсан' : 'бүгд тооцогдсон'}</div></div>
+      <div class="stat green"><div class="stat-l">🏥 Үндсэн үзлэгийн урамшуулал</div><div class="snum">${fmtCompact(B.mainTotal)}</div><div class="muted" style="font-size:10px">${B.mainN} үзлэг · ${B.mainAsstN} хамтарсан · ${B.mainDocs.length} эмч</div></div>
+      <div class="stat purple"><div class="stat-l">🗓️ Төлөвлөгөөт урамшуулал</div><div class="snum">${fmtCompact(B.plTotal)}</div><div class="muted" style="font-size:10px">${B.plN} үзлэг · ${B.plAsstN} хамтарсан · тусдаа олгоно</div></div>
       <div class="stat accent"><div class="stat-l">🏥 Клиник</div><div class="snum">${catCount('Клиник')}</div><div class="muted" style="font-size:10px">кл. дуудлага ${catCount('Клиник дуудлага')}</div></div>
-      <div class="stat purple"><div class="stat-l">🧪 Зонд</div><div class="snum">${catCount('Зонд')}</div><div class="muted" style="font-size:10px">«${escHTML(cfg.kwZond)}» үйлчилгээтэй</div></div>
-      <div class="stat"><div class="stat-l">🚗 Дуудлага / 🗓️ ТҮ</div><div class="snum">${catCount('Дуудлага')} <span class="muted" style="font-size:14px">/ ${catCount('Төлөвлөгөөт')}</span></div><div class="muted" style="font-size:10px">${B.rows.filter(r => r.asst && !r.skip).length} хамтарсан үзлэг</div></div>
+      <div class="stat"><div class="stat-l">🧪 Зонд / 🚗 Дуудлага</div><div class="snum">${catCount('Зонд')} <span class="muted" style="font-size:14px">/ ${catCount('Дуудлага')}</span></div><div class="muted" style="font-size:10px">«${escHTML(cfg.kwZond)}» / «${escHTML(cfg.kwCall)}»</div></div>
+      <div class="stat"><div class="stat-l">🎁 Бүгд нийт</div><div class="snum">${fmtCompact(B.total)}</div><div class="muted" style="font-size:10px">${B.rows.length - B.skipped} үзлэг${B.skipped ? ' · ' + B.skipped + ' хасагдсан' : ''}</div></div>
     </div>
     <div class="muted" style="font-size:11px;margin-bottom:10px">Хувь хэмжээ: ганцаараа <b>${fmt(cfg.alone)}</b> · хамтарсан бол үндсэн <b>${fmt(cfg.main)}</b> + хамтрагч <b>${fmt(cfg.assist)}</b> (нэг үзлэг = нэг адуу). Ангилал үйлчилгээний нэрээр автоматаар тогтооно — мөр бүр дээр гараар солих, эсвэл урамшууллаас хасах боломжтой; өөрчлөлт бүх төхөөрөмжид хадгалагдана. Тохиргоо → «🎁 Урамшуулал».</div>
 
-    <div class="ch">👨‍⚕️ Эмч тус бүрийн нэгтгэл — ${escHTML(bonusMonthLabel(B.ym))}</div>
-    <div class="tbl-wrap" style="overflow-x:auto"><table style="min-width:760px">
-      <thead><tr><th>Нэрс</th><th>Албан тушаал</th><th class="num" style="text-align:right">Үзлэг</th>${BONUS_CATS.map(c => `<th style="text-align:right">${c}</th>`).join('')}<th style="text-align:right">Хамтран</th><th style="text-align:right">Нийт дүн</th></tr></thead>
-      <tbody>${B.docs.map(d => `<tr>
-        <td class="bold">${escHTML(d.name)}</td><td class="muted">${escHTML(d.role)}</td>
-        <td style="text-align:right">${d.count}${d.assistCount ? ' <span class="muted">+' + d.assistCount + '</span>' : ''}</td>
-        ${BONUS_CATS.map(c => `<td style="text-align:right">${d.cats[c] ? fmt(d.cats[c]) : '<span class="muted">—</span>'}</td>`).join('')}
-        <td style="text-align:right">${d.assist ? fmt(d.assist) : '<span class="muted">—</span>'}</td>
-        <td class="bold" style="text-align:right">${fmt(d.total)}</td></tr>`).join('')}
-        <tr style="background:var(--input)"><td class="bold" colspan="2">Нийт дүн</td><td class="bold" style="text-align:right">${B.rows.length - B.skipped}</td>
-        ${BONUS_CATS.map(c => `<td class="bold" style="text-align:right">${fmt(B.docs.reduce((a, d) => a + (d.cats[c] || 0), 0))}</td>`).join('')}
-        <td class="bold" style="text-align:right">${fmt(B.docs.reduce((a, d) => a + d.assist, 0))}</td><td class="bold" style="text-align:right">${fmt(B.total)}</td></tr>
-      </tbody></table></div>
+    <div class="ch">🏥 Үндсэн үзлэгийн урамшуулал — эмч тус бүрээр <span class="muted" style="font-weight:600;text-transform:none">(төлөвлөгөөт үзлэггүй) · ${escHTML(bonusMonthLabel(B.ym))}</span></div>
+    ${B.mainDocs.length ? `<div class="tbl-wrap" style="overflow-x:auto"><table style="min-width:760px"><tbody>${bonusMainSummaryHTML(B)}</tbody></table></div>`
+      : '<div class="muted" style="font-size:12px">Энэ сард үндсэн үзлэг алга</div>'}
+    <div class="muted" style="font-size:11px;margin-top:4px">«Хамтран» — зөвхөн үндсэн үзлэгт хамтрагч эмчээр орсон дүн. Үзлэг баганын «+N» — хамтрагчаар орсон үзлэгийн тоо.</div>
+
+    <div class="ch" style="margin-top:16px">🗓️ Төлөвлөгөөт үзлэгийн урамшуулал — эмч тус бүрээр <span class="muted" style="font-weight:600;text-transform:none">(тусдаа олгоно)</span></div>
+    ${B.plDocs.length ? `<div class="tbl-wrap" style="overflow-x:auto"><table style="min-width:640px"><tbody>${bonusPlSummaryHTML(B)}</tbody></table></div>`
+      : '<div class="muted" style="font-size:12px">Энэ сард төлөвлөгөөт үзлэг алга</div>'}
+    <div style="margin-top:10px;padding:8px 12px;background:var(--input);border-radius:8px;font-size:12.5px">🎁 Бүгд: үндсэн <b>${fmt(B.mainTotal)}</b> + төлөвлөгөөт <b>${fmt(B.plTotal)}</b> = <b>${fmt(B.total)}</b></div>
 
     ${BONUS_CATS.map(c => {
       const list = B.byCat[c]; if (!list.length) return '';
@@ -8152,19 +8190,18 @@ function printBonus() {
       </table>
     </div>`;
   };
-  $('#print-area').innerHTML = `<div class="rp-print bn-print">
-    ${BONUS_CATS.map(catTable).join('')}
-    <div class="bn-page">
+  const summaryPage = (title, rowsHTML, note) => `<div class="bn-page">
       <div class="bn-appr">Батлав: ${escHTML(cfg.approver)} ______________</div>
-      <div class="pr-h1">Морьтон адууны эмнэлэг үзлэг урамшуулал /${escHTML(label)}/</div>
-      <table class="pr-tbl">
-        <tr><th>Нэрс</th><th>Албан тушаал</th><th>Үзлэг</th>${BONUS_CATS.map(c => `<th>${c}</th>`).join('')}<th>Хамтран</th><th>Нийт дүн</th></tr>
-        ${B.docs.map(d => `<tr><td>${escHTML(d.name)}</td><td>${escHTML(d.role)}</td><td style="text-align:right">${d.count}${d.assistCount ? ' +' + d.assistCount : ''}</td>${BONUS_CATS.map(c => `<td style="text-align:right">${d.cats[c] ? fmt(d.cats[c]) : ''}</td>`).join('')}<td style="text-align:right">${d.assist ? fmt(d.assist) : ''}</td><td style="text-align:right"><b>${fmt(d.total)}</b></td></tr>`).join('')}
-        <tr><td colspan="2"><b>Нийт дүн</b></td><td style="text-align:right"><b>${B.rows.length - B.skipped}</b></td>${BONUS_CATS.map(c => `<td style="text-align:right"><b>${fmt(B.docs.reduce((a, d) => a + (d.cats[c] || 0), 0))}</b></td>`).join('')}<td style="text-align:right"><b>${fmt(B.docs.reduce((a, d) => a + d.assist, 0))}</b></td><td style="text-align:right"><b>${fmt(B.total)}</b></td></tr>
-      </table>
-      <div class="muted" style="font-size:8.5pt;margin-top:6px">Хувь хэмжээ: ганцаараа ${fmt(cfg.alone)}, хамтарсан үзлэгт үндсэн эмч ${fmt(cfg.main)} + хамтрагч ${fmt(cfg.assist)}. Системээс автоматаар тооцов — ${localDateStr(new Date())}.</div>
+      <div class="pr-h1">Морьтон адууны эмнэлэг ${escHTML(title)} /${escHTML(label)}/</div>
+      <table class="pr-tbl">${rowsHTML}</table>
+      <div class="muted" style="font-size:8.5pt;margin-top:6px">${escHTML(note)} Хувь хэмжээ: ганцаараа ${fmt(cfg.alone)}, хамтарсан үзлэгт үндсэн эмч ${fmt(cfg.main)} + хамтрагч ${fmt(cfg.assist)}. Системээс автоматаар тооцов — ${localDateStr(new Date())}.</div>
       <div class="pr-sign" style="margin-top:40px"><div>Хянасан: ______________ /${escHTML(cfg.checker)}/</div><div>Нягтлан бодогч: ______________ /${escHTML(cfg.accountant)}/</div></div>
-    </div>
+    </div>`;
+  $('#print-area').innerHTML = `<div class="rp-print bn-print">
+    ${BONUS_MAIN_CATS.map(catTable).join('')}
+    ${B.mainDocs.length ? summaryPage('үзлэг урамшуулал', bonusMainSummaryHTML(B, true), 'Төлөвлөгөөт үзлэг энэ хүснэгтэд ОРООГҮЙ (тусдаа хуудсанд).') : ''}
+    ${catTable(BONUS_PL_CAT)}
+    ${B.plDocs.length ? summaryPage('төлөвлөгөөт үзлэгийн урамшуулал', bonusPlSummaryHTML(B, true), 'Зөвхөн төлөвлөгөөт (хээрийн) үзлэг.') : ''}
   </div>`;
   try { writeLog('Урамшууллын тайлан хэвлэв', '', '', label + ' · ' + fmt(B.total)); } catch (_) {}
   setTimeout(() => window.print(), 100);
@@ -8173,10 +8210,16 @@ function exportBonusCSV() {
   const B = __bonusLast; if (!B || !B.rows.length) { toast('Эхлээд сар сонгоно уу', 'err'); return; }
   const rows = [['Ангилал', 'Огноо', 'Цаг', 'Баримт №', 'Адуу', 'Эзэн', 'Үйлчилгээ', 'Тоо хэмжээ', 'Ахлах эмч', 'Мөнгөн дүн', 'Хамтрагч эмч', 'Мөнгөн дүн', 'Тооцсон эсэх']];
   BONUS_CATS.forEach(c => B.byCat[c].forEach(r => rows.push([c, r.date, r.time, r.examNum, r.horse, r.owner, r.svc, r.qty, r.main, r.mainAmt, r.asst, r.asstAmt, r.skip ? 'Хасагдсан' : 'Тийм'])));
-  rows.push([]); rows.push(['НЭГТГЭЛ — ' + bonusMonthLabel(B.ym)]);
-  rows.push(['Нэрс', 'Албан тушаал', 'Үзлэг', ...BONUS_CATS, 'Хамтран', 'Нийт дүн']);
-  B.docs.forEach(d => rows.push([d.name, d.role, d.count, ...BONUS_CATS.map(c => d.cats[c] || 0), d.assist, d.total]));
-  rows.push(['Нийт', '', B.rows.length - B.skipped, ...BONUS_CATS.map(c => B.docs.reduce((a, d) => a + (d.cats[c] || 0), 0)), B.docs.reduce((a, d) => a + d.assist, 0), B.total]);
+  const S = f => B.mainDocs.reduce((a, d) => a + (f(d) || 0), 0), P = f => B.plDocs.reduce((a, d) => a + (f(d) || 0), 0);
+  rows.push([]); rows.push(['ҮНДСЭН ҮЗЛЭГИЙН УРАМШУУЛАЛ (төлөвлөгөөтгүй) — ' + bonusMonthLabel(B.ym)]);
+  rows.push(['Нэрс', 'Албан тушаал', 'Үзлэг', 'Хамтарсан үзлэг', ...BONUS_MAIN_CATS, 'Хамтран', 'Нийт дүн']);
+  B.mainDocs.forEach(d => rows.push([d.name, d.role, d.count, d.assistCount, ...BONUS_MAIN_CATS.map(c => d.cats[c] || 0), d.assist, d.mainTotal]));
+  rows.push(['Нийт', '', B.mainN, B.mainAsstN, ...BONUS_MAIN_CATS.map(c => S(d => d.cats[c])), S(d => d.assist), B.mainTotal]);
+  rows.push([]); rows.push(['ТӨЛӨВЛӨГӨӨТ ҮЗЛЭГИЙН УРАМШУУЛАЛ — ' + bonusMonthLabel(B.ym)]);
+  rows.push(['Нэрс', 'Албан тушаал', 'Үзлэг (ахлах эмч)', 'Ахлах эмчийн дүн', 'Хамтарсан үзлэг', 'Хамтран дүн', 'Нийт дүн']);
+  B.plDocs.forEach(d => rows.push([d.name, d.role, d.plCount, d.plMain, d.plAssistCount, d.plAssist, d.plTotal]));
+  rows.push(['Нийт', '', B.plN, P(d => d.plMain), B.plAsstN, P(d => d.plAssist), B.plTotal]);
+  rows.push([]); rows.push(['БҮГД', '', '', '', '', '', B.total]);
   downloadCSV(rows, 'урамшуулал_' + B.ym + '.csv');
 }
 
