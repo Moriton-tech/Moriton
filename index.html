@@ -105,6 +105,7 @@
         <div class="ni" data-page="inpatient"><div class="ni-icon">🏥</div><div class="ni-label">Байрлан эмчлүүлэх</div><span class="ni-badge b-p" id="bdg-i">0</span></div>
         <div class="ni" data-page="planned"><div class="ni-icon">🗓️</div><div class="ni-label">Төлөвлөгөөт үзлэг</div></div>
         <div class="ni" data-page="lab"><div class="ni-icon">🧪</div><div class="ni-label">Шинжилгээ</div><span class="ni-badge b-a" id="bdg-lab">0</span></div>
+        <div class="ni" data-page="review"><div class="ni-icon">👁️</div><div class="ni-label">Ахлах эмчийн хяналт</div><span class="ni-badge" id="bdg-rv" style="display:none">0</span></div>
       </div>
       <div class="sb-section">Бүртгэл</div>
       <div class="sb-list">
@@ -143,6 +144,7 @@
         <div class="ni" data-page="inpatient"><div class="ni-icon">🏥</div><div class="ni-label">Байрлан эмчлүүлэх</div><span class="ni-badge b-p" id="bdg-i2">0</span></div>
         <div class="ni" data-page="planned"><div class="ni-icon">🗓️</div><div class="ni-label">Төлөвлөгөөт үзлэг</div></div>
         <div class="ni" data-page="lab"><div class="ni-icon">🧪</div><div class="ni-label">Шинжилгээ</div><span class="ni-badge b-a" id="bdg-lab2">0</span></div>
+        <div class="ni" data-page="review"><div class="ni-icon">👁️</div><div class="ni-label">Ахлах эмчийн хяналт</div><span class="ni-badge" id="bdg-rv2" style="display:none">0</span></div>
       </div>
       <div class="sb-section" style="color:var(--gold);opacity:0.85">Бүртгэл</div>
       <div class="sb-list">
@@ -174,6 +176,8 @@
           </div>
           <button class="btn" onclick="nav('register')">+ Шинэ бүртгэл</button>
         </div>
+
+        <div id="d-alerts"></div>
 
         <div class="stats">
           <div class="stat green">
@@ -474,13 +478,16 @@
               <button type="button" class="btn btn-xs inp-view-btn on" data-view="cards" onclick="setInpView('cards')">🗂 Карт</button>
               <button type="button" class="btn btn-xs inp-view-btn" data-view="loc" onclick="setInpView('loc')">📍 Байрлалаар</button>
               <button type="button" class="btn btn-xs inp-view-btn" data-view="doc" onclick="setInpView('doc')">👨‍⚕️ Эмчээр</button>
+              <button type="button" class="btn btn-xs inp-view-btn" data-view="days" onclick="setInpView('days')" title="Хэдэн хоногтой адуу хэд байгааг бүлгээр">📅 Хоногоор</button>
               <button type="button" class="btn btn-xs inp-view-btn" data-view="out" onclick="setInpView('out')" title="Гарсан адууд — хэн, хэзээ гаргасан; андуурсан бол буцаан хэвтүүлэх">🚪 Гарсан</button>
             </div>
           </div>
           <div id="inp-summary" class="inp-summary"></div>
-          <div class="fg r4" style="margin-bottom:10px">
+          <div id="inp-days-strip" class="inp-days-strip"></div>
+          <div class="fg" style="margin-bottom:10px;grid-template-columns:repeat(auto-fit,minmax(150px,1fr))">
             <div class="fld"><label>Эмч</label><select class="inp" id="inp-f-doc" onchange="renderInpatient()"></select></div>
             <div class="fld"><label>Байрлал</label><select class="inp" id="inp-f-loc" onchange="renderInpatient()"></select></div>
+            <div class="fld"><label>📅 Хоног</label><select class="inp" id="inp-f-days" onchange="INP_DAYS_F=this.value;INP_PAGE=1;renderInpatient()"></select></div>
             <div class="fld"><label>Хайх</label><input class="inp" id="inp-f-q" placeholder="Зүс / эзэн / утас / онош" oninput="renderInpatient()"></div>
             <div class="fld"><label>Эрэмбэ</label>
               <select class="inp" id="inp-f-sort" onchange="renderInpatient()">
@@ -514,15 +521,31 @@
           <!-- TAB 1: INFO -->
           <div class="itab" data-itab="info">
             <div id="inp-info-body"></div>
+            <!-- 📞 Эзэнд мэдээлсэн тэмдэглэл (3 хоносон сануулга) -->
+            <div id="inp-call-card" style="margin-top:14px">
+              <div class="ch">📞 Эзэнд мэдээлсэн тэмдэглэл</div>
+              <div id="inp-call-alert" style="margin-bottom:8px"></div>
+              <div id="inp-call-form" style="background:var(--input);border-radius:10px;padding:10px;margin-bottom:8px">
+                <div style="display:flex;flex-wrap:wrap;gap:8px">
+                  <div class="fld" style="flex:0 1 180px;min-width:140px"><label>Үр дүн</label>
+                    <select class="inp" id="inp-call-status"><option value="talked">✅ Ярьсан</option><option value="noanswer">📵 Утсаа аваагүй</option><option value="msg">✉️ Мессеж үлдээсэн</option></select></div>
+                  <div class="fld" style="flex:1 1 240px"><label>Юу ярьсан</label>
+                    <textarea class="inp" id="inp-call-note" rows="2" placeholder="ж: Биеийн байдал сайжирч байгааг хэлсэн. Эзэн 2 хоногийн дараа ирж авна. Төлбөрийн талаар ярьсан..."></textarea></div>
+                </div>
+                <button class="btn btn-p btn-sm" style="margin-top:8px" onclick="addInpCall()">📞 Тэмдэглэл хадгалах</button>
+              </div>
+              <div id="inp-call-list"></div>
+            </div>
             <div class="ch" style="margin-top:14px">📜 Өдөр өдрөөр</div>
             <div id="inp-summary-list"></div>
           </div>
 
           <!-- TAB 2: TREATMENT -->
           <div class="itab hidden" data-itab="treat">
+            <div id="inp-plan-today"></div>
             <div class="ch">📋 Өдрийн эмчилгээний бүртгэл</div>
             <div class="fg r2">
-              <div class="fld"><label>Огноо <span style="font-size:10px;color:var(--muted);font-weight:400">(нөхөж бүртгэх бол өдрийг өөрчилнэ)</span></label><input class="inp" type="date" id="inp-log-date"></div>
+              <div class="fld"><label>Огноо <span style="font-size:10px;color:var(--muted);font-weight:400">(нөхөж бүртгэх бол өдрийг өөрчилнэ)</span></label><input class="inp" type="date" id="inp-log-date" onchange="onInpLogDateChange()"></div>
               <div class="fld"><label>Эмч</label>
                 <select class="inp" id="inp-log-doc"></select>
               </div>
@@ -568,6 +591,19 @@
               <div class="fld" style="justify-content:flex-end">
                 <label>&nbsp;</label>
                 <button class="btn btn-p" onclick="addInpLog()">💾 Өдрийн бичлэг хадгалах</button>
+              </div>
+            </div>
+
+            <!-- 🗓 Маргаашийн эмчилгээний төлөвлөгөө -->
+            <div id="inp-plan-card" style="margin-top:16px;background:var(--purple-soft);border-radius:12px;padding:10px 12px">
+              <div class="ch" style="margin-bottom:6px">🗓 Маргаашийн эмчилгээний төлөвлөгөө</div>
+              <div style="display:flex;flex-wrap:wrap;gap:8px">
+                <div class="fld" style="flex:0 1 170px;min-width:140px"><label>Аль өдрийн</label><input class="inp" type="date" id="inp-plan-date" onchange="onInpPlanDateChange()"></div>
+                <div class="fld" style="flex:1 1 240px"><label>Төлөвлөгөө</label><textarea class="inp" id="inp-plan-text" rows="3" placeholder="ж: Дусал 2л (NaCl), антибиотик үргэлжлүүлэх, шархны боолт солих, 10:00-д ЭХО давтах..."></textarea></div>
+              </div>
+              <div class="row" style="gap:8px;align-items:center;flex-wrap:wrap;margin-top:8px">
+                <button class="btn btn-sm btn-p" type="button" onclick="saveInpPlan()">💾 Төлөвлөгөө хадгалах</button>
+                <span class="muted" style="font-size:11px">Маргааш энэ адууны эмчилгээний маягтын дээр «📌 төлөвлөгөө» болж харагдана, «⤵ Маягтад татах»-аар бөглөнө.</span>
               </div>
             </div>
 
@@ -642,6 +678,24 @@
             Эрхийг Системийн тохиргоо → Нэвтрэх эрх хэсгээс өөрчилнө.
           </div>
           <div class="list" id="lab-viewers"></div>
+        </div>
+      </section>
+
+      <!-- ====== 👁️ АХЛАХ ЭМЧИЙН ХЯНАЛТ ====== -->
+      <section class="page" id="page-review">
+        <div class="ph">
+          <div class="ph-l">
+            <div class="ph-title">👁️ Ахлах эмчийн хяналт</div>
+            <div class="ph-sub">Онош батлах · өдрийн эмчилгээ бичсэн эсэх · эзэнд мэдээлэх</div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="tabs" style="margin-bottom:12px">
+            <button class="tab active" data-rvtab="dx" onclick="setReviewTab('dx')">🩺 Онош батлах<span id="rv-n-dx"></span></button>
+            <button class="tab" data-rvtab="treat" onclick="setReviewTab('treat')">📝 Өдрийн эмчилгээ<span id="rv-n-treat"></span></button>
+            <button class="tab" data-rvtab="call" onclick="setReviewTab('call')">📞 Эзэнд мэдээлэх<span id="rv-n-call"></span></button>
+          </div>
+          <div id="rv-body"></div>
         </div>
       </section>
 
@@ -1082,6 +1136,15 @@
               <span class="muted" style="font-size:11px" id="inp-loc-status"></span>
             </div>
           </div>
+          <div class="card" id="call-cfg-card">
+            <div class="ch">📞 Эзэнд мэдээлэх сануулга <span class="muted" style="font-weight:600;text-transform:none">— байрлан эмчлүүлэх</span></div>
+            <div class="muted" style="font-size:12px;margin-bottom:8px">Адуу энэ хоног хоноход эмчлэгч эмчид «эзэнд залгах» сануулга гарна (карт, самбар, Ахлах эмчийн хяналт). Эмч «✅ Ярьсан» тэмдэглэл бичмэгц сануулга арилна.</div>
+            <div class="fg r2">
+              <div class="fld"><label>Хэдэн хоноход</label><input class="inp" type="number" id="call-cfg-first" min="1" max="60" placeholder="3"></div>
+              <div class="fld"><label>Дараа нь хэдэн хоног тутам (0 = давтахгүй)</label><input class="inp" type="number" id="call-cfg-rep" min="0" max="60" placeholder="0"></div>
+            </div>
+            <button class="btn btn-p btn-sm" style="margin-top:8px" onclick="saveCallCfgFromForm()">💾 Хадгалах</button>
+          </div>
           <div class="card" id="examnum-cfg-card">
             <div class="ch">🔢 Үзлэгийн хуудасны дугаарлалт</div>
             <div class="muted" style="font-size:12px;margin-bottom:8px">Адуу бүртгэхэд дугаар автоматаар: <b>max(эхлэх дугаар, бүртгэгдсэн хамгийн их дугаар) + 1</b>. Эхлэх дугаараас доош хуучин цувралын дугаарууд тооцогдохгүй — шинэ цуврал эхлүүлэхдээ энд сүүлийн дугаараа бичнэ.</div>
@@ -1303,6 +1366,11 @@
       <div class="fld"><label>Нууц үг <span style="color:var(--red)">*</span></label><input class="inp" id="u-pw" placeholder="Нууц үг" autocomplete="new-password"></div>
       <div class="fld"><label>Зэрэг / Дүр</label>
         <select class="inp" id="u-role" onchange="onUserRoleChange()"></select>
+        <div class="row" style="gap:6px;margin-top:6px;flex-wrap:wrap">
+          <input class="inp" id="u-role-new" placeholder="Шинэ дүр нэмэх (ж: Нярав, Жолооч)" autocomplete="off" style="flex:1;min-width:150px" onkeydown="if(event.key==='Enter'){event.preventDefault();addCustomRole();}">
+          <button type="button" class="btn btn-sm" onclick="addCustomRole()">➕ Дүр нэмэх</button>
+        </div>
+        <div id="u-role-custom" style="margin-top:6px;display:flex;gap:4px;flex-wrap:wrap;align-items:center"></div>
       </div>
       <div class="fld"><label>Хандах эрх (хуудсууд)</label>
         <div id="u-pages" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:4px"></div>
@@ -1312,6 +1380,16 @@
         <button type="button" id="u-lab-edit" data-on="0" onclick="toggleLabEdit()"
           style="padding:8px 14px;border-radius:8px;font-weight:800;font-size:12px;cursor:pointer;border:1.5px solid var(--border);background:#fff;color:var(--muted)">👁️ Зөвхөн үзэх</button>
         <div class="muted" style="font-size:11px;margin-top:6px">"Шинжилгээ" хуудсын эрх нь ҮЗЭХ эрх. Энэ товч асаалттай бол төлөв солих, хариу оруулах ЗАСАХ эрхтэй болно.</div>
+      </div>
+      <div class="fld"><label>🩺 Онош батлах эрх</label>
+        <button type="button" id="u-dx-approve" data-on="0" onclick="toggleFlag('u-dx-approve')"
+          style="padding:8px 14px;border-radius:8px;font-weight:800;font-size:12px;cursor:pointer;border:1.5px solid var(--border);background:#fff;color:var(--muted)">Онош батлахгүй</button>
+        <div class="muted" style="font-size:11px;margin-top:6px">Асаалттай хүн бусад эмчийн оношийг хянаж батална — батлагдсаны дараа л үйлчлүүлэгчид өгөх хуудсанд онош хэвлэгдэнэ. Түүний өөрийн үзлэг автоматаар батлагдана. Анхдагч: Ахлах эмч.</div>
+      </div>
+      <div class="fld"><label>✏️ Бичлэг засах эрх</label>
+        <button type="button" id="u-edit-data" data-on="0" onclick="toggleFlag('u-edit-data')"
+          style="padding:8px 14px;border-radius:8px;font-weight:800;font-size:12px;cursor:pointer;border:1.5px solid var(--border);background:#fff;color:var(--muted)">👁️ Зөвхөн үзэх</button>
+        <div class="muted" style="font-size:11px;margin-top:6px">Үзлэг, байрлан эмчлүүлэх (эмч/байрлал, гарсан огноо, буцаан хэвтүүлэх) засах. Анхдагч: Ерөнхий эмч, Ахлах эмч, Админ. Устгах эрх зөвхөн Админд.</div>
       </div>
     </div>
     <div class="mod-ft">
@@ -1636,7 +1714,7 @@
 
 <div id="print-area"></div>
 
-<script src="app.js?v=20260929d"></script>
+<script src="app.js?v=20261005a"></script>
 <script src="lab.js?v=20260917"></script>
 
 <!-- PWA: service worker бүртгэх, автомат шинэчлэлт, суулгах товч -->

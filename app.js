@@ -975,6 +975,8 @@ function loadAll() {
   STATE.bonusCfg = lsGet('mt_bonus_cfg', null);
   STATE.examNumCfg = lsGet('mt_examnum_cfg', null);
   STATE.inpLocations = lsGet('mt_inp_locations', null); // null = анхдагч жагсаалт
+  STATE.customRoles = lsGet('mt_custom_roles', []); if (!Array.isArray(STATE.customRoles)) STATE.customRoles = []; // 👥 админ нэмсэн дүрүүд
+  STATE.callCfg = lsGet('mt_call_cfg', null); // 📞 эзэнд мэдээлэх сануулга
   STATE.user = lsGet('mt_user', null);
   STATE.syncURL = ''; // Apps Script sync устгагдсан — Firebase ашиглана
   if (STATE.doctors.length === 0) STATE.doctors = [...DEFAULT_DOCS];
@@ -1216,9 +1218,10 @@ function populateLoginUsers() {
   if (!sel) return;
   const prev = sel.value;
   const users = (STATE.users && STATE.users.length) ? STATE.users : DEFAULT_USERS;
-  // Дүрүүдийг ALL_ROLES-ийн дарааллаар бүлэглэнэ
+  // Дүрүүдийг allRoles()-ийн дарааллаар бүлэглэнэ (админ нэмсэн дүрүүд мөн)
   let html = '<option value="">— Нэр сонгох —</option>';
-  ALL_ROLES.forEach(role => {
+  const _roles = allRoles();
+  _roles.forEach(role => {
     const inRole = users.filter(u => u.role === role);
     if (!inRole.length) return;
     html += '<optgroup label="' + escHTML(role) + '">';
@@ -1227,8 +1230,8 @@ function populateLoginUsers() {
     });
     html += '</optgroup>';
   });
-  // ALL_ROLES-д ороогүй дүртэй хэрэглэгч байвал "Бусад"-д хийнэ
-  const other = users.filter(u => !ALL_ROLES.includes(u.role));
+  // Жагсаалтад ороогүй дүртэй хэрэглэгч байвал "Бусад"-д хийнэ
+  const other = users.filter(u => !_roles.includes(u.role));
   if (other.length) {
     html += '<optgroup label="Бусад">';
     other.forEach(u => {
@@ -1281,13 +1284,34 @@ const ALL_PAGES = [
   { id: 'finance',   label: 'Санхүү' },
   { id: 'history',   label: 'Түүх' },
   { id: 'lab',       label: 'Шинжилгээ' },
+  { id: 'review',    label: 'Ахлах эмчийн хяналт' },
   { id: 'kpi',       label: 'KPI самбар' },
   { id: 'report',    label: 'Өдрийн тайлан' },
   { id: 'admin',     label: 'Системийн тохиргоо' }
 ];
 
-// Боломжит дүрүүд
-const ALL_ROLES = ['Ерөнхий эмч','Ахлах эмч','Малын их эмч','Дадлагажигч','Бүртгэлийн ажилтан','Санхүү','Админ'];
+// Боломжит дүрүүд — үндсэн жагсаалт. Админ «Нэвтрэх эрх» цонхноос шинэ дүр
+// (ж: Нярав, Жолооч) нэмж болно → STATE.customRoles (clinic_config-д хадгална).
+const ALL_ROLES = ['Ерөнхий эмч','Ахлах эмч','Малын их эмч','Дадлагажигч','Бүртгэлийн ажилтан','Санхүү','Менежер','Админ'];
+// Дүр шинээр сонгоход (тухайн дүртэй хэрэглэгч хараахан байхгүй үед) санал болгох хуудсууд
+const ROLE_DEFAULT_PAGES = {
+  'Ерөнхий эмч':        ['dashboard','register','waiting','exam','inpatient','planned','lab','review','finance','kpi','history','report','admin'],
+  'Ахлах эмч':          ['dashboard','register','waiting','exam','inpatient','planned','lab','review','finance','kpi','history','report'],
+  'Малын их эмч':       ['dashboard','register','waiting','exam','inpatient','lab','history'],
+  'Дадлагажигч':        ['dashboard','waiting','exam','inpatient','lab','history'],
+  'Бүртгэлийн ажилтан': ['dashboard','register','waiting','planned','history'],
+  'Санхүү':             ['dashboard','finance','history','report'],
+  'Менежер':            ['dashboard','inpatient','review','finance','kpi','history','report'],
+  'Админ':              ['dashboard','register','waiting','exam','inpatient','planned','lab','review','finance','kpi','history','report','admin']
+};
+// Бүх дүр: үндсэн + админ нэмсэн + одоо байгаа хэрэглэгчдийн дүр (жагсаалтаас гадуурх дүр алдагдахгүй)
+function allRoles() {
+  const out = ALL_ROLES.slice();
+  const add = r => { r = String(r || '').trim(); if (r && !out.includes(r)) out.splice(out.length - 1, 0, r); }; // Админ-ы өмнө
+  (Array.isArray(STATE.customRoles) ? STATE.customRoles : []).forEach(add);
+  (STATE.users || []).forEach(u => add(u && u.role));
+  return out;
+}
 
 // STATE.users массиваас нэрээр хайх хялбар объект (хуучин USERS[name]-тэй нийцтэй)
 function getUsers() {
@@ -1303,7 +1327,7 @@ function pagesForRole(role) {
   // Эхлээд тухайн дүртэй ямар нэг хэрэглэгчийн pages-ийг ашиглана
   const u = (STATE.users || []).find(x => x.role === role && Array.isArray(x.pages));
   if (u) return u.pages;
-  return [];
+  return ROLE_DEFAULT_PAGES[role] || ['dashboard'];
 }
 
 // ============================================================
@@ -1346,9 +1370,17 @@ function diffStr(before, after, fields) {
 function canDelete() {
   return !!(STATE.user && STATE.user.role === 'Админ');
 }
-// Засах эрх — Ерөнхий эмч / Ахлах эмч / Админ
+// Засах эрх — анхдагчаар Ерөнхий эмч / Ахлах эмч / Админ.
+// Хэрэглэгч бүрд «✏️ Засах эрх» тугийг (editData) Нэвтрэх эрх цонхноос асааж/унтрааж болно —
+// ингэснээр Менежер зэрэг шинэ дүрд засах эрх өгч болно. Админ үргэлж засна.
+const EDIT_ROLES = ['Ерөнхий эмч','Ахлах эмч','Админ'];
+function _meUser() { return STATE.user ? getUsers()[STATE.user.name] : null; }
 function canEditData() {
-  return !!(STATE.user && ['Ерөнхий эмч','Ахлах эмч','Админ'].includes(STATE.user.role));
+  if (!STATE.user) return false;
+  if (STATE.user.role === 'Админ') return true;
+  const me = _meUser();
+  if (me && typeof me.editData === 'boolean') return me.editData;
+  return EDIT_ROLES.includes(STATE.user.role);
 }
 
 // Орлого / мөнгөн дүн харах эрх — зөвхөн санхүүгийн хуудас руу хандах эрхтэй хүн.
@@ -1365,6 +1397,9 @@ function canAccess(page) {
   const pages = (me && Array.isArray(me.pages)) ? me.pages : pagesForRole(STATE.user.role);
   // 🗓️ Төлөвлөгөөт үзлэг: тусгайлан эрх өгөөгүй ч адуу бүртгэх эрхтэй хүн шивж болно
   if (page === 'planned' && !pages.includes('planned') && pages.includes('register')) return true;
+  // 🩺 Ахлах эмчийн хяналт: онош батлах эрхтэй хүн (Өсөхбаяр, Сайнбилэг), Ерөнхий эмч, Админ —
+  // хуудасны жагсаалтад тусгайлан нэмээгүй ч орно (хуучин хэрэглэгчдийн pages-д 'review' байхгүй)
+  if (page === 'review' && !pages.includes('review') && (canApproveDx() || ['Ерөнхий эмч', 'Админ'].includes(STATE.user.role))) return true;
   return pages.includes(page);
 }
 
@@ -1482,6 +1517,7 @@ function nav(p, opts) {
   if (p === 'report') initReport();
   if (p === 'history') renderHistory();
   if (p === 'lab' && typeof renderLab === 'function') renderLab();
+  if (p === 'review') renderReview();
   if (p === 'admin') renderAdmin();
   // Reset scroll only on real navigation (not when re-rendering current page via sync)
   if (!opts.silent && !samePage) {
@@ -1506,6 +1542,9 @@ function softRefresh() {
   // тиймээс тэмдэглээд хэрэглэгчид товчоор мэдэгдэнэ.
   const editPages = new Set(['register', 'exam', 'planned']);
   if (editPages.has(p)) { __refreshPending = true; renderRefreshChip(); return; }
+  // 🩺 Хяналтын хуудсанд онош засаж / шалтгаан бичиж байх үед дахин зурахгүй
+  const ae = document.activeElement;
+  if (p === 'review' && ae && /^(TEXTAREA|INPUT)$/.test(ae.tagName) && ae.closest && ae.closest('#page-review') && ae.type !== 'date') { __refreshPending = true; renderRefreshChip(); return; }
   __refreshPending = false; renderRefreshChip();
   // Save current scroll
   const main = $('#main');
@@ -1821,6 +1860,12 @@ function updateBadges() {
   if ($('#bdg-w2')) $('#bdg-w2').textContent = w;
   if ($('#bdg-i2')) $('#bdg-i2').textContent = i;
   if ($('#bdg-f2')) $('#bdg-f2').textContent = f;
+  // 🩺 Ахлах эмчийн хяналт — батлах хүлээгдэж буй онош
+  try {
+    const rv = dxOpenList().filter(e => e.dxStatus === 'pending').length;
+    ['bdg-rv', 'bdg-rv2'].forEach(id => { const el = document.getElementById(id); if (el) { el.textContent = rv; el.style.display = rv ? '' : 'none'; } });
+    reviewNotify();
+  } catch (e) { console.error('review badge', e); }
   // bottom-nav waiting dot
   const bnDotW = $('#bn-dot-w');
   if (bnDotW) {
@@ -1861,12 +1906,12 @@ function renderDashboard() {
   _monday.setHours(0,0,0,0);
   const weekStart = _monday.getTime();
   const weekEnd = new Date(_now.getFullYear(), _now.getMonth(), _now.getDate(), 23,59,59).getTime();
+  // ⚠️ Огноог эхэлж — e.ms нь засвар/онош батлахад шинэчлэгддэг тул үзлэгийн цаг биш
   const examTime = (e) => {
-    if (e.ms) return parseFloat(e.ms);
     if (e.date) {
-      try { return new Date(e.date + (e.time?'T'+e.time:'T12:00')).getTime(); } catch(_) { return 0; }
+      try { const t = new Date(e.date + (e.time?'T'+e.time:'T12:00')).getTime(); if (t > 0) return t; } catch(_) {}
     }
-    return 0;
+    return parseFloat(e.ms) || 0;
   };
   const weekExams = STATE.exams.filter(x => {
     const t = examTime(x);
@@ -1886,6 +1931,9 @@ function renderDashboard() {
   } else {
     if (revCard) revCard.style.display = 'none';
   }
+
+  // 🔔 Сануулгууд (онош батлах, эзэнд залгах, өдрийн эмчилгээ)
+  try { renderDashAlerts(); } catch (e) { console.error('dash alerts', e); }
 
   // Staff (HR) — render
   renderStaffSection();
@@ -2318,8 +2366,10 @@ function openExamDetail(eid) {
       <div style="background:var(--input);padding:10px;border-radius:8px;font-size:13px;white-space:pre-wrap">${escHTML(anam.text || '—')}</div>
       ${anam.symptoms.length ? '<div class="row" style="gap:4px;flex-wrap:wrap;margin-top:6px">' + anam.symptoms.map(x => '<span class="badge b-o">' + escHTML(x) + '</span>').join('') + '</div>' : ''}
     </div>
-    <div class="fld" style="margin-bottom:10px"><label>Онош</label>
+    <div class="fld" style="margin-bottom:10px"><label>Онош ${isPlanned(e) ? '' : dxBadgeHTML(e, { small: true, legacy: true })}</label>
       <div style="background:var(--input);padding:10px;border-radius:8px;font-size:13px">${escHTML(e.diagnosis||'—')}</div>
+      ${e.dxStatus === 'returned' && e.dxReturnNote ? `<div style="color:var(--red);font-size:12px;margin-top:4px">↩ ${escHTML(e.dxReturnedBy || '')}: ${escHTML(e.dxReturnNote)}</div>` : ''}
+      ${!isPlanned(e) && (canApproveDx() || (canResubmitDx(e) && !dxIsApproved(e))) ? `<button class="btn btn-xs ${dxIsOpen(e) ? 'btn-p' : ''}" style="margin-top:6px" onclick="closeModal('exam-detail-modal');openDxModal('${escHTML(e.id)}', function(){openExamDetail('${escHTML(e.id)}')})">🩺 ${canApproveDx() ? (dxIsApproved(e) ? 'Онош засах' : 'Онош хянах / батлах') : (e.dxStatus === 'returned' ? 'Онош засаж дахин илгээх' : (dxStatusOf(e) ? 'Онош засах' : 'Ахлах эмчид хянуулах'))}</button>` : ''}
     </div>
     ${e.note ? `<div class="fld" style="margin-bottom:10px"><label>Тэмдэглэл</label><div style="background:var(--input);padding:10px;border-radius:8px;font-size:13px;white-space:pre-wrap">${escHTML(e.note)}</div></div>` : ''}
     <div class="fld" style="margin-bottom:10px"><label>Үйлчилгээ</label>${svcHTML}</div>
@@ -3225,6 +3275,8 @@ function finishExam() {
     durationMin: (parseFloat(e.regMs) ? Math.max(0, Math.round((nowMs() - parseFloat(e.regMs)) / 60000)) : null), // зарцуулсан минут
     ms: nowMs()
   };
+  // 🩺 Онош батлах: ахлах эмчийнх бол автоматаар батлагдана, бусад нь «хянагдаж байна»
+  Object.assign(exam, dxInitFields(exam));
   STATE.exams.push(exam);
   // create finance record
   const fin = {
@@ -3263,11 +3315,12 @@ function finishExam() {
   // 🧪 Шинжилгээний захиалга автоматаар үүсгэнэ (эмчийн урсгалд нөлөөлөхгүй)
   let _labN = 0;
   try { if (typeof createLabOrdersFromExam === 'function') _labN = createLabOrdersFromExam(exam).length; } catch(err) { console.error('lab', err); }
-  writeLog('Үзлэг дуусгасан', exam.id, exam.horse + ' — ' + (exam.docName||''), exam.diagnosis ? ('Онош: ' + exam.diagnosis) : '', exam.examNum);
+  writeLog('Үзлэг дуусгасан', exam.id, exam.horse + ' — ' + (exam.docName||''), (exam.diagnosis ? ('Онош: ' + exam.diagnosis) : '') + (exam.dxStatus === 'pending' ? ' · онош хянуулахаар илгээгдсэн' : ''), exam.examNum);
   STATE.curExam = null;
   STATE.selectedW = null;
   updateBadges();
-  toast(_labN ? ('✅ Үзлэг дууслаа · 🧪 ' + _labN + ' шинжилгээ илгээгдлээ') : '✅ Үзлэг дууслаа, нэхэмжлэх үүсгэгдлээ', 'ok');
+  toast((_labN ? ('✅ Үзлэг дууслаа · 🧪 ' + _labN + ' шинжилгээ илгээгдлээ') : '✅ Үзлэг дууслаа, нэхэмжлэх үүсгэгдлээ') +
+    (exam.dxStatus === 'pending' ? ' · 🩺 онош ахлах эмчид хянуулахаар илгээгдлээ (батлагдсаны дараа хуудсанд хэвлэгдэнэ)' : ''), 'ok');
   nav('finance');
 }
 
@@ -3291,6 +3344,7 @@ function moveToInpatient() {
     temp: e.temp, pulse: e.pulse, resp: e.resp, wt: e.wt,
     amount: total, ms: nowMs(), inpatient: true
   };
+  Object.assign(exam, dxInitFields(exam)); // 🩺 онош батлах
   STATE.exams.push(exam);
   // create inpatient
   const inp = {
@@ -3439,9 +3493,49 @@ function resetInpLocations() {
   STATE.inpLocations = null; try { localStorage.removeItem('mt_inp_locations'); } catch (e) {}
   fbSaveClinicConfig(); renderInpLocCfg(); toast('↺ Анхдагч жагсаалт', 'ok');
 }
+// 📅 Хоногоор шүүх: '' | 'eq:N' (яг N хоног) | 'r:A-B' (хоорондох) | 'call' (эзэнд залгах) | 'notreat' (өнөөдөр бичээгүй) | 'noplan' (маргаашийн төлөвлөгөөгүй)
+let INP_DAYS_F = '';
+function setInpDaysF(v) { INP_DAYS_F = (INP_DAYS_F === v) ? '' : (v || ''); INP_PAGE = 1; if (INP_VIEW === 'out') INP_VIEW = 'cards'; renderInpatient(); }
+const INP_DAY_RANGES = [['r:1-2', '1–2 хоног', 1, 2], ['r:3-7', '3–7 хоног', 3, 7], ['r:8-14', '8–14 хоног', 8, 14], ['r:15-30', '15–30 хоног', 15, 30], ['r:31-99999', '31+ хоног', 31, 99999]];
+function _inpDaysOk(i, f) {
+  if (!f) return true;
+  const d = inpatientDays(i.admittedMs);
+  if (f.startsWith('eq:')) return d === parseInt(f.slice(3), 10);
+  if (f.startsWith('r:')) { const [a, b] = f.slice(2).split('-').map(Number); return d >= a && d <= b; }
+  if (f === 'call') return inpCallState(i).due;
+  if (f === 'notreat') return inpTreatStatus(i, todayStr()) === 'missing';
+  if (f === 'noplan') return !inpPlanFor(i, addDaysStr(todayStr(), 1));
+  return true;
+}
+// Хоногийн шүүлтийн select ба «хэдэн хоногтой хэдэн адуу» чипсийг тоотой нь шинэчилнэ
+function _inpRenderDaysUI(active) {
+  const cnt = {}; active.forEach(i => { const d = inpatientDays(i.admittedMs); cnt[d] = (cnt[d] || 0) + 1; });
+  const ds = Object.keys(cnt).map(Number).sort((a, b) => a - b);
+  const callN = active.filter(i => inpCallState(i).due).length;
+  const noTreatN = active.filter(i => inpTreatStatus(i, todayStr()) === 'missing').length;
+  const noPlanN = active.filter(i => !inpPlanFor(i, addDaysStr(todayStr(), 1))).length;
+  const sel = $('#inp-f-days');
+  if (sel) {
+    const opt = (v, l, n) => `<option value="${v}" ${INP_DAYS_F === v ? 'selected' : ''}>${l}${n != null ? ' (' + n + ')' : ''}</option>`;
+    sel.innerHTML = opt('', 'Бүх хоног', active.length) +
+      '<optgroup label="Яг хэдэн хоног">' + ds.map(d => opt('eq:' + d, d + ' хоног', cnt[d])).join('') + '</optgroup>' +
+      '<optgroup label="Хоорондох">' + INP_DAY_RANGES.map(r => opt(r[0], r[1], active.filter(i => { const d = inpatientDays(i.admittedMs); return d >= r[2] && d <= r[3]; }).length)).join('') + '</optgroup>' +
+      '<optgroup label="Хяналт">' + opt('call', '📞 Эзэнд залгах', callN) + opt('notreat', '📝 Өнөөдөр эмчилгээ бичээгүй', noTreatN) + opt('noplan', '🗓 Маргаашийн төлөвлөгөөгүй', noPlanN) + '</optgroup>';
+    if (INP_DAYS_F && sel.value !== INP_DAYS_F) { // хүчингүй болсон шүүлт (ж: тэр хоногтой адуу үлдээгүй)
+      sel.insertAdjacentHTML('afterbegin', opt(INP_DAYS_F, INP_DAYS_F.startsWith('eq:') ? INP_DAYS_F.slice(3) + ' хоног' : INP_DAYS_F, 0)); sel.value = INP_DAYS_F;
+    }
+  }
+  const strip = $('#inp-days-strip');
+  if (strip) {
+    strip.innerHTML = active.length ? '<span class="muted" style="font-weight:700">📅 Хоногоор:</span>' +
+      ds.map(d => `<button type="button" class="inp-days-chip ${INP_DAYS_F === 'eq:' + d ? 'on' : ''}" onclick="setInpDaysF('eq:${d}')">${d} хоног · <b>${cnt[d]}</b></button>`).join('') +
+      (callN ? `<button type="button" class="inp-days-chip warn ${INP_DAYS_F === 'call' ? 'on' : ''}" onclick="setInpDaysF('call')">📞 Эзэнд залгах · <b>${callN}</b></button>` : '') +
+      (INP_DAYS_F ? `<button type="button" class="inp-days-chip" onclick="setInpDaysF('')">✕ Шүүлт арилгах</button>` : '') : '';
+  }
+}
 function _inpFilterState() {
   const v = id => (($('#' + id) || {}).value || '');
-  return { doc: v('inp-f-doc'), loc: v('inp-f-loc'), q: v('inp-f-q').toLowerCase().trim(), sort: v('inp-f-sort') || 'days_desc' };
+  return { doc: v('inp-f-doc'), loc: v('inp-f-loc'), q: v('inp-f-q').toLowerCase().trim(), sort: v('inp-f-sort') || 'days_desc', days: INP_DAYS_F };
 }
 function _inpFillFilters(active) {
   const docSel = $('#inp-f-doc'), locSel = $('#inp-f-loc');
@@ -3465,6 +3559,7 @@ function _inpApplyFilter(active, F) {
   }
   if (F.loc) list = F.loc === '__none' ? list.filter(i => !i.location) : list.filter(i => i.location === F.loc);
   if (F.q) list = list.filter(i => ((i.horse || '') + ' ' + (i.owner || '') + ' ' + (i.phone || '') + ' ' + (i.diagnosis || '') + ' ' + (i.location || '')).toLowerCase().includes(F.q));
+  if (F.days) list = list.filter(i => _inpDaysOk(i, F.days));
   const dueOf = i => Math.max(0, getInpFullTotal(i) - getInpPrepaidTotal(i));
   const locIx = l => { const k = inpLocations().indexOf(l || ''); return k < 0 ? 999 : k; };
   const sorters = {
@@ -3481,6 +3576,13 @@ function _inpCardHTML(i) {
   const due = Math.max(0, getInpFullTotal(i) - getInpPrepaidTotal(i));
   const dClass = days > 40 ? 'inpc-days-long' : days > 20 ? 'inpc-days-warn' : '';
   const d = inpDoctorOf(i);
+  const cs = inpCallState(i);
+  const ts = inpTreatStatus(i, todayStr());
+  const tmr = inpPlanFor(i, addDaysStr(todayStr(), 1));
+  const watchTags =
+    (cs.due ? `<span class="inpc-tag inpc-tag-call" title="Эзэнд нь залгаж эмчилгээний явцыг мэдээлээд тэмдэглэл бичнэ үү">📞 ${cs.days} хоносон — эзэнд залгах</span>` : '') +
+    (ts === 'done' ? '<span class="inpc-tag inpc-tag-ok">📝 Өнөөдөр бичсэн</span>' : ts === 'missing' ? '<span class="inpc-tag" title="Өнөөдрийн эмчилгээ хараахан бичигдээгүй">📝 Өнөөдөр бичээгүй</span>' : '') +
+    (tmr ? `<span class="inpc-tag inpc-tag-ok" title="${escHTML(tmr.text)}">🗓 Маргааш ✓</span>` : '');
   return `
     <div class="inpc ${due > 0 ? 'inpc-due' : ''}" data-id="${i.id}">
       <div class="inpc-top">
@@ -3495,6 +3597,7 @@ function _inpCardHTML(i) {
         ${inpExamNum(i) ? `<span class="inpc-tag inpc-tag-num">🔢 ${escHTML(inpExamNum(i))}</span>` : ''}
         <span class="inpc-tag ${d ? '' : 'inpc-tag-none'}">👨‍⚕️ ${escHTML(d ? d.name : (i.docName || 'Эмч заагаагүй'))}</span>
         <span class="inpc-tag ${i.location ? 'inpc-tag-loc' : 'inpc-tag-none'}">📍 ${escHTML(i.location || 'Байрлал заагаагүй')}</span>
+        ${watchTags}
       </div>
       <div class="inpc-diag">${escHTML(i.diagnosis || '—')}</div>
       <div class="inpc-foot">
@@ -3581,6 +3684,7 @@ function _renderInpOutView(list, F) {
 
 function renderInpatient() {
   ensureInpCardStyles();
+  ensureReviewStyles();
   ensureInpDrawer();
   const active = STATE.inps.filter(i => !i.discharged);
   $('#inp-sub').textContent = active.length + ' адуу хэвтэж байна';
@@ -3596,8 +3700,10 @@ function renderInpatient() {
     const selOut = STATE.selectedI && STATE.inps.find(x => String(x.id) === String(STATE.selectedI) && x.discharged);
     if (!selOut) closeInpDrawer(); else if (isInpDrawerOpen()) renderIDetail();
     const sum0 = $('#inp-summary'); if (sum0) sum0.innerHTML = '';
+    const ds0 = $('#inp-days-strip'); if (ds0) ds0.innerHTML = '';
     _renderInpOutView(list, F); return;
   }
+  _inpRenderDaysUI(active);
 
   // 📊 Тойм мөр
   const sum = $('#inp-summary');
@@ -3607,8 +3713,12 @@ function renderInpatient() {
     const locs = inpLocations(); const used = new Set(active.map(i => i.location).filter(Boolean));
     const byDoc = {}; active.forEach(i => { const d = inpDoctorOf(i); const k = d ? d.name : 'Эмч заагаагүй'; byDoc[k] = (byDoc[k] || 0) + 1; });
     const longN = active.filter(i => inpatientDays(i.admittedMs) > 20).length;
+    const callN = active.filter(i => inpCallState(i).due).length;
+    const noTreatN = active.filter(i => inpTreatStatus(i, todayStr()) === 'missing').length;
     sum.innerHTML = `
       <div class="inp-sum-card"><div class="inp-sum-n">${active.length}</div><div class="inp-sum-l">хэвтэж байна</div></div>
+      <div class="inp-sum-card ${callN ? 'inp-sum-warn' : ''}" style="cursor:pointer" onclick="setInpDaysF('call')" title="${callCfg().firstDay}+ хоносон, эзэнд нь мэдээлээгүй адуу"><div class="inp-sum-n">${callN}</div><div class="inp-sum-l">📞 эзэнд залгах</div></div>
+      <div class="inp-sum-card" style="cursor:pointer" onclick="setInpDaysF('notreat')" title="Өнөөдрийн эмчилгээ хараахан бичигдээгүй адуу"><div class="inp-sum-n">${noTreatN}</div><div class="inp-sum-l">📝 өнөөдөр бичээгүй</div></div>
       <div class="inp-sum-card"><div class="inp-sum-n">${used.size}<span class="muted">/${locs.length}</span></div><div class="inp-sum-l">байрлал ашиглалт</div></div>
       <div class="inp-sum-card ${dueN ? 'inp-sum-warn' : ''}"><div class="inp-sum-n">${dueN}</div><div class="inp-sum-l">дутуу төлбөртэй · ${fmtCompact ? fmtCompact(dueSum) : fmt(dueSum)}</div></div>
       <div class="inp-sum-card ${longN ? 'inp-sum-warn' : ''}"><div class="inp-sum-n">${longN}</div><div class="inp-sum-l">20+ хоног</div></div>
@@ -3635,6 +3745,12 @@ function renderInpatient() {
     list.innerHTML = filteredNote + locs.map(l => _inpGroupHTML('📍 ' + escHTML(l), byLoc[l] || [])).join('') +
       extraLocs.map(l => _inpGroupHTML('📍 ' + escHTML(l) + ' <span class="muted">(жагсаалтад байхгүй)</span>', filtered.filter(i => i.location === l))).join('') +
       ((byLoc.__none || []).length ? _inpGroupHTML('❔ Байрлал заагаагүй', byLoc.__none) : '');
+  } else if (INP_VIEW === 'days') {
+    // 📅 Хоногоор: «N хоног — K адуу» бүлгүүд (олон хоногтой нь дээрээ)
+    const byD = {}; filtered.forEach(i => { const d = inpatientDays(i.admittedMs); (byD[d] = byD[d] || []).push(i); });
+    const ds = Object.keys(byD).map(Number).sort((a, b) => b - a);
+    list.innerHTML = filteredNote + (ds.length ? ds.map(d => _inpGroupHTML('📅 ' + d + ' хоног', byD[d])).join('')
+      : '<div class="empty" style="grid-column:1/-1">Шүүлтэд тохирох адуу алга</div>');
   } else if (INP_VIEW === 'doc') {
     const byDoc = {}; filtered.forEach(i => { const d = inpDoctorOf(i); const k = d ? d.name : '__none'; (byDoc[k] = byDoc[k] || []).push(i); });
     const names = Object.keys(byDoc).filter(k => k !== '__none').sort((a, b) => byDoc[b].length - byDoc[a].length);
@@ -3915,8 +4031,13 @@ function renderIDetail() {
   // === TAB 1: INFO ===
   renderInpInfoTab(i);
 
+  // 📞 Эзэнд мэдээлсэн тэмдэглэл (Мэдээлэл таб)
+  try { renderInpCallBlock(i); } catch (e) { console.error('call block', e); }
+
   // === TAB 2: TREATMENT ===
   renderInpTreatTab(i);
+  // 🗓 Маргаашийн төлөвлөгөө (Эмчилгээ таб)
+  try { renderInpPlanBlock(i); } catch (e) { console.error('plan block', e); }
 
   // === TAB 3: FINANCE ===
   renderInpFinTab(i);
@@ -3938,15 +4059,16 @@ function renderInpInfoTab(i) {
       <div class="fld"><label>Орсон огноо</label><div class="bold">${escHTML(i.admittedDate)}${i.discharged ? ' → ' + escHTML(i.dischargedDate || '') : ''}</div></div>
       <div class="fld"><label>Хоног</label><div class="bold">${inpatientDays(i.admittedMs, i.dischargedMs)}</div></div>
     </div>
-    <div class="fld" style="margin-top:8px"><label>Анхны онош</label>
+    <div class="fld" style="margin-top:8px"><label>Анхны онош ${(() => { const ex = i.examId ? _dxExam(i.examId) : null; return ex ? dxBadgeHTML(ex, { small: true }) + (dxIsOpen(ex) ? ` <a href="#" style="font-size:11px" onclick="openDxModal('${escHTML(ex.id)}');return false;">хянах ›</a>` : '') : ''; })()}</label>
       <div style="background:var(--input);padding:10px;border-radius:8px;font-size:13px">${escHTML(i.diagnosis)}</div>
     </div>
   `;
 
-  // Day-by-day list (NO amounts)
+  // Day-by-day list (NO amounts) — эмчилгээний бичлэг + тухайн өдрийн төлөвлөгөө
   const wrap = $('#inp-summary-list');
   const logs = Array.isArray(i.log) ? i.log : [];
-  if (logs.length === 0) {
+  const plans = inpPlans(i);
+  if (logs.length === 0 && plans.length === 0) {
     wrap.innerHTML = '<div class="empty" style="padding:16px;font-size:12px">Эмчилгээний бичлэг алга</div>';
     return;
   }
@@ -3957,12 +4079,15 @@ function renderInpInfoTab(i) {
     if (!byDate[d]) byDate[d] = [];
     byDate[d].push(l);
   });
+  plans.forEach(p => { if (p.date && !byDate[p.date]) byDate[p.date] = []; });
   const dates = Object.keys(byDate).sort().reverse();
   wrap.innerHTML = dates.map(d => {
     const items = byDate[d];
+    const p = inpPlanFor(i, d);
     return `
       <div style="padding:10px;background:var(--input);border-radius:8px;margin-bottom:6px">
-        <div class="bold" style="font-size:13px;margin-bottom:6px">📅 ${escHTML(d)}</div>
+        <div class="bold" style="font-size:13px;margin-bottom:6px">📅 ${escHTML(d)}${d > todayStr() ? ' <span class="badge b-p">төлөвлөгөө</span>' : (!items.length ? ' <span class="badge b-r">эмчилгээ бичигдээгүй</span>' : '')}</div>
+        ${p ? `<div style="font-size:12px;margin-bottom:4px;color:var(--purple)"><b>🗓 Төлөвлөгөө:</b> <span style="white-space:pre-wrap">${escHTML(p.text)}</span> <span class="muted">— ${escHTML(p.editedBy || p.by || '')}</span></div>` : ''}
         ${items.map(l => `
           <div style="padding:6px 0;border-top:1px solid var(--border);font-size:12px">
             <div style="font-weight:700;margin-bottom:2px">👨‍⚕️ ${escHTML(l.docName||'—')}</div>
@@ -4819,7 +4944,7 @@ function printOwnerSheet(inpId) {
     <div style="flex:1;min-width:45mm"><b>Эмчлэгч эмч:</b> ${escHTML(i.docName || '—')}</div>
     <div style="flex:1;min-width:45mm"><b>Хэвтсэн:</b> ${escHTML(i.admittedDate || '—')} (${days} хоног)</div>
     <div style="flex:1;min-width:45mm"><b>Гарсан:</b> ${escHTML(i.dischargedDate || todayStr())}</div>
-    <div style="flex:1;min-width:45mm"><b>Онош:</b> ${escHTML(i.diagnosis || '—')}</div>
+    <div style="flex:1;min-width:45mm"><b>Онош:</b> ${(() => { const ex = i.examId ? _dxExam(i.examId) : null; return ex && dxIsOpen(ex) ? '<span style="display:inline-block;min-width:40mm;border-bottom:0.5pt solid #000">&nbsp;</span>' : escHTML(i.diagnosis || '—'); })()}</div>
   </div>
 
   <div style="font-weight:900;font-size:10.5pt;border-bottom:1pt solid #000;padding-bottom:1mm;margin-bottom:2mm">🏠 Гэрийн арчилгаа</div>
@@ -5596,8 +5721,10 @@ function renderFDetail() {
   }
   const due = getDueAmount(f);
   const paidAmt = getPaidAmount(f);
+  const fEx = f.examId ? _dxExam(f.examId) : null;
   $('#fin-detail-body').innerHTML = `
     ${f.examNum ? '<div style="background:var(--orange-soft);padding:8px 12px;border-radius:8px;margin-bottom:10px;font-weight:800;color:var(--orange-dark);font-size:14px">🔢 Үзлэгийн хуудасны дугаар: ' + escHTML(f.examNum) + '</div>' : ''}
+    ${fEx && dxStatusOf(fEx) && !isPlanned(fEx) ? `<div style="margin-bottom:10px;display:flex;gap:6px;align-items:center;flex-wrap:wrap">${dxBadgeHTML(fEx)}${dxIsOpen(fEx) ? '<span class="muted" style="font-size:11.5px">— батлагдсаны дараа үйлчлүүлэгчийн хуудсанд онош хэвлэгдэнэ</span>' : ''}</div>` : ''}
     <div class="fg r2">
       <div class="fld"><label>Адуу</label><div class="bold">${escHTML(f.horse)}</div></div>
       <div class="fld"><label>Эзэн</label><div class="bold">${escHTML(f.owner)}</div></div>
@@ -5900,6 +6027,13 @@ function printInvoice(id) {
   // Diagnosis / note
   const diag = ex && ex.diagnosis ? ex.diagnosis : '';
   const note = ex && ex.note ? ex.note : '';
+  // 🩺 Үйлчлүүлэгчид өгөх (баруун) хэсэгт онош ЗӨВХӨН ахлах эмч баталсны дараа гарна
+  const dxOk = !!(ex && dxIsApproved(ex) && diag);
+  const rightDxHTML = dxOk
+    ? `<div style="font-size:8.5pt;margin-bottom:1.5mm;line-height:1.4"><b>Онош:</b> <span style="white-space:pre-wrap">${escHTML(diag)}</span>
+        <div style="font-size:7pt;color:#444;margin-top:0.5mm">Баталсан ахлах эмч: ${escHTML(ex.dxApprovedBy || '')}</div></div>`
+    : `<div class="uz-field-row" style="margin-bottom:1.5mm"><span class="uz-lbl" style="font-weight:700">Онош:</span><span class="uz-ul"></span></div>`;
+  __printDxGuard = ex && dxIsOpen(ex) ? String(ex.id) : null;
 
   // Payment method checkboxes
   const method = (f.method || '').toLowerCase();
@@ -6114,6 +6248,9 @@ function printInvoice(id) {
       <span class="uz-ul"><b>${escHTML(f.horse||'')}</b></span>
     </div>
 
+    <!-- 🩺 Онош — ахлах эмч баталсны дараа -->
+    ${rightDxHTML}
+
     <!-- Advice / note area -->
     <div style="font-size:8pt;font-weight:700;margin-bottom:1mm">Эмчилгээ, зөвлөгөө</div>
     <div class="uz-right-note-area">${rightAdviceHTML}</div>
@@ -6168,7 +6305,23 @@ function printInvoice(id) {
     ? `<div style="font-size:12px;background:var(--input);padding:8px;border-radius:6px;white-space:pre-wrap">${escHTML(medsStr)}</div>`
     : `<div style="color:var(--muted);font-size:12px">Эм бүртгэгдээгүй</div>`;
 
-  $('#receipt-body').innerHTML = `
+  // 🩺 Оношийн төлөв — хэвлэхээс өмнө харагдана; ахлах эмч эндээс шууд батална
+  let dxBanner = '';
+  if (ex && !isPlanned(ex)) {
+    const s = dxStatusOf(ex), fid = escHTML(String(f.id)), eid = escHTML(String(ex.id));
+    const reopen = `function(){printInvoice('${fid}')}`;
+    if (s === 'approved') dxBanner = `<div style="background:var(--green-soft);color:var(--green);border-radius:10px;padding:9px 12px;font-size:12.5px;font-weight:700;margin-bottom:14px">✅ Онош батлагдсан · ${escHTML(ex.dxApprovedBy || '')} — үйлчлүүлэгчийн хэсэгт онош хэвлэгдэнэ.</div>`;
+    else if (s === 'pending' || s === 'returned') dxBanner = `<div style="background:${s === 'returned' ? 'var(--red-soft)' : 'var(--orange-soft)'};color:${s === 'returned' ? 'var(--red)' : 'var(--orange-dark)'};border-radius:10px;padding:9px 12px;font-size:12.5px;font-weight:700;margin-bottom:14px;line-height:1.5">
+        ${s === 'returned' ? '↩ Онош буцаагдсан' + (ex.dxReturnNote ? ': ' + escHTML(ex.dxReturnNote) : '') : '⏳ Онош ахлах эмчээр хянагдаж байна'} — <u>үйлчлүүлэгчид өгөх хэсэгт онош хэвлэгдэхгүй</u>.
+        <div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap">${canApproveDx()
+          ? `<button class="btn btn-sm btn-p" onclick="openDxModal('${eid}', ${reopen})">🩺 Хянах / батлах</button>`
+          : (canResubmitDx(ex) ? `<button class="btn btn-sm" onclick="openDxModal('${eid}', ${reopen})">${s === 'returned' ? '✏️ Онош засаж дахин илгээх' : '🩺 Онош харах'}</button>` : '')}
+          <span style="font-weight:600">Батлагч: ${escHTML(dxApproverNames().join(', ') || 'Ахлах эмч')}</span></div></div>`;
+    else if (diag) dxBanner = `<div style="background:var(--input);border-radius:10px;padding:9px 12px;font-size:12px;margin-bottom:14px">Энэ үзлэг онош батлах журам нэвтрэхээс өмнө хийгдсэн — үйлчлүүлэгчийн хэсэгт онош гарахгүй.
+        ${canApproveDx() ? `<button class="btn btn-xs btn-p" style="margin-left:6px" onclick="openDxModal('${eid}', ${reopen})">🩺 Батлах</button>` : `<button class="btn btn-xs" style="margin-left:6px" onclick="requestDxReview('${eid}');printInvoice('${fid}')">📤 Хянуулах</button>`}</div>`;
+  }
+
+  $('#receipt-body').innerHTML = dxBanner + `
     <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:18px;padding-bottom:14px;border-bottom:2px dashed var(--border)">
       <div>
         <div style="font-size:11px;color:var(--muted);font-weight:700;letter-spacing:1px">УУД ДУГААР</div>
@@ -6217,7 +6370,12 @@ function printInvoice(id) {
   openModal('receipt-modal');
 }
 
+let __printDxGuard = null; // хэвлэх гэж буй үзлэгийн онош батлагдаагүй бол id
 function printReceiptNow() {
+  if (__printDxGuard) {
+    const ex = _dxExam(__printDxGuard);
+    if (ex && dxIsOpen(ex) && !confirm('🩺 Онош ахлах эмчээр хараахан батлагдаагүй байна.\n\nҮйлчлүүлэгчид өгөх хэсэгт онош ХЭВЛЭГДЭХГҮЙ. Оношгүйгээр хэвлэх үү?\n\n(Батлагдсаны дараа дахин хэвлэвэл онош гарна.)')) return;
+  }
   window.print();
 }
 
@@ -8130,6 +8288,10 @@ const EXPORT_FIELDS = {
     ['anamnesis',    'Анамнез',          'anamnesis',       'Бүртгэлийн үед бичсэн түүх', "Case history recorded at reception"],
     ['@symptoms',    'Шинж тэмдэг',      'symptoms',        'Эмчийн сонгосон шинж тэмдгүүд (таслалаар)', "Symptoms selected by the vet (comma separated)"],
     ['diagnosis',    'Онош',             'diagnosis',       'Онош', "Diagnosis"],
+    ['@dxStatus',    'Онош батлалт',     'dx_review_status', 'Ахлах эмчийн хяналт: хянагдаж байна / батлагдсан / буцаагдсан (хоосон = журмаас өмнөх)', "Senior-vet diagnosis review: pending / approved / returned (blank = before the review rule)"],
+    ['dxApprovedBy', 'Онош баталсан',    'dx_approved_by',  'Оношийг баталсан ахлах эмч', "Senior vet who approved the diagnosis"],
+    ['@dxApprovedAt','Баталсан цаг',     'dx_approved_at',  'YYYY-MM-DD HH:MM', "Approval time"],
+    ['dxOriginal',   'Анхны онош (засахаас өмнө)', 'dx_original', 'Ахлах эмч засаж баталсан бол эмчийн анх бичсэн онош', "Vet's original diagnosis when the senior vet edited it"],
     ['note',         'Эмчийн тэмдэглэл', 'doctor_note',     'Эмчийн тэмдэглэл', "Veterinarian note"],
     ['temp',         'Температур',       'temperature',     '°C', "Body temperature (°C)"],
     ['pulse',        'Зүрхний цохилт',   'pulse',           'уд/мин', "Heart rate (bpm)"],
@@ -8361,7 +8523,7 @@ async function fbFetchAllData(onProgress) {
       servicePrices: STATE.servicePrices || {}, customServices: STATE.customServices || [],
       removedServices: STATE.removedServices || [], staffSchedule: STATE.staffSchedule || {},
       labSvcOn: STATE.labSvcOn || [], labSvcOff: STATE.labSvcOff || [],
-      bonusCfg: STATE.bonusCfg || null, examNumCfg: STATE.examNumCfg || null, inpLocations: STATE.inpLocations || null
+      bonusCfg: STATE.bonusCfg || null, examNumCfg: STATE.examNumCfg || null, inpLocations: STATE.inpLocations || null, customRoles: STATE.customRoles || [], callCfg: STATE.callCfg || null
     };
     return out;
   }
@@ -8410,6 +8572,8 @@ function exBuildRows(D, lang) {
     '@services': exList(e.services), '@meds': exList(e.meds),
     '@inpatient': exYN(!!e.inpatient, lang), '@bonusSkip': exYN(!!e.bonusSkip, lang),
     '@imageCount': Array.isArray(e.images) ? e.images.length : 0,
+    '@dxStatus': ({ pending: lang === 'en' ? 'Pending' : 'Хянагдаж байна', approved: lang === 'en' ? 'Approved' : 'Батлагдсан', returned: lang === 'en' ? 'Returned' : 'Буцаагдсан' })[e.dxStatus] || '',
+    '@dxApprovedAt': e.dxStatus === 'approved' ? tsStr(e.dxApprovedMs) : '',
     anamnesis: e.anamnesis || (typeof e.symptoms === 'string' ? e.symptoms : '')
   })));
 
@@ -9113,7 +9277,7 @@ function renderHistory() {
       const fin = finByExamId(e.id);
       const status = fin ? (fin.paid?'Төлсөн':'Хүлээгдэж буй') : '—';
       const cls = fin && fin.paid ? 'b-g' : 'b-o';
-      const canEdit = STATE.user && (STATE.user.role === 'Ерөнхий эмч' || STATE.user.role === 'Ахлах эмч' || STATE.user.role === 'Админ');
+      const canEdit = canEditData(); // ✏️ хэрэглэгчийн «Засах эрх» тугийг мөрдөнө
       const rowNum = pageStart + i + 1;
       const h = horseOf(e);
       const iabd = (h && h.iabd) ? h.iabd : '';
@@ -9201,6 +9365,7 @@ function renderAdmin() {
   try { renderBonusCfg(); } catch(_) {}
   try { renderExamNumCfg(); } catch(_) {}
   try { renderInpLocCfg(); } catch(_) {}
+  try { renderCallCfg(); } catch(_) {}
   try { renderExportSummary(); } catch(_) {}
   $('#a-url').value = STATE.syncURL;
   const list = $('#a-doc-list');
@@ -9272,8 +9437,10 @@ function renderDeletedExams() {
 
 // Огноо+цаг форматлагч (хэрэв байхгүй бол)
 function fmtDateTime(ms) {
+  if (!ms) return '';
   try {
     const dt = new Date(ms);
+    if (isNaN(dt.getTime())) return '';
     const p = n => String(n).padStart(2, '0');
     return `${dt.getFullYear()}/${p(dt.getMonth()+1)}/${p(dt.getDate())} ${p(dt.getHours())}:${p(dt.getMinutes())}`;
   } catch(e) { return ''; }
@@ -9526,7 +9693,7 @@ function renderUserList() {
       <div class="li-av">🔐</div>
       <div class="li-info">
         <div class="li-name">${escHTML(u.name)}</div>
-        <div class="li-sub">${escHTML(u.role)} · ${(u.pages||[]).length} хуудас${(u.pages||[]).includes('lab') ? (u.labEdit||u.role==='Админ' ? ' · 🧪 засах' : ' · 🧪 үзэх') : ''}</div>
+        <div class="li-sub">${escHTML(u.role)} · ${(u.pages||[]).length} хуудас${(u.pages||[]).includes('lab') ? (u.labEdit||u.role==='Админ' ? ' · 🧪 засах' : ' · 🧪 үзэх') : ''}${userCanApproveDx(u) ? ' · 🩺 онош батлах' : ''}${(u.role !== 'Админ' && (typeof u.editData === 'boolean' ? u.editData : EDIT_ROLES.includes(u.role))) ? ' · ✏️ засах' : ''}</div>
       </div>
       <div class="li-r"><button class="btn btn-xs" onclick="event.stopPropagation();openUserModal(${idx})">✏️</button></div>
     </div>
@@ -9539,16 +9706,19 @@ function openUserModal(idx) {
   if (!canManageUsers()) { toast('Танд хэрэглэгч удирдах эрх алга', 'err'); return; }
   _editUserIdx = (typeof idx === 'number') ? idx : null;
 
-  // Дүрийн select-ийг бөглөх
+  // Дүрийн select-ийг бөглөх (үндсэн + админ нэмсэн дүрүүд)
+  const editU = (_editUserIdx !== null) ? STATE.users[_editUserIdx] : null;
+  renderUserRoleSelect(editU ? editU.role : ALL_ROLES[0]);
   const roleSel = document.getElementById('u-role');
-  if (roleSel) roleSel.innerHTML = ALL_ROLES.map(r => '<option value="'+escHTML(r)+'">'+escHTML(r)+'</option>').join('');
+  const newRoleInp = document.getElementById('u-role-new');
+  if (newRoleInp) newRoleInp.value = '';
 
   const nameInp = document.getElementById('u-name');
   const pwInp = document.getElementById('u-pw');
   const delBtn = document.getElementById('u-del-btn');
 
-  if (_editUserIdx !== null && STATE.users[_editUserIdx]) {
-    const u = STATE.users[_editUserIdx];
+  if (editU) {
+    const u = editU;
     document.querySelector('#user-modal .mod-title').textContent = '🔐 Хэрэглэгч засах';
     nameInp.value = u.name || '';
     pwInp.value = ''; // Нууц үгийг хэзээ ч харуулахгүй — хоосон орхивол өөрчлөхгүй
@@ -9556,6 +9726,8 @@ function openUserModal(idx) {
     if (roleSel) roleSel.value = u.role || ALL_ROLES[0];
     renderUserPages(u.pages || pagesForRole(u.role));
     setLabEditToggle(!!u.labEdit);
+    setFlagToggle('u-dx-approve', typeof u.dxApprove === 'boolean' ? u.dxApprove : roleDefaultDxApprove(u.role));
+    setFlagToggle('u-edit-data', typeof u.editData === 'boolean' ? u.editData : EDIT_ROLES.includes(u.role));
     if (delBtn) delBtn.style.display = '';
   } else {
     document.querySelector('#user-modal .mod-title').textContent = '🔐 Хэрэглэгч нэмэх';
@@ -9564,10 +9736,88 @@ function openUserModal(idx) {
     if (roleSel) roleSel.value = ALL_ROLES[0];
     renderUserPages(pagesForRole(ALL_ROLES[0]));
     setLabEditToggle(false);
+    setFlagToggle('u-dx-approve', roleDefaultDxApprove(ALL_ROLES[0]));
+    setFlagToggle('u-edit-data', EDIT_ROLES.includes(ALL_ROLES[0]));
     if (delBtn) delBtn.style.display = 'none';
   }
   openModal('user-modal');
 }
+
+// ── 👥 Дүрийн жагсаалт (select) + админ нэмсэн дүрүүдийн чипс ─────────
+function renderUserRoleSelect(selected) {
+  const roleSel = document.getElementById('u-role');
+  if (roleSel) {
+    const roles = allRoles();
+    if (selected && !roles.includes(selected)) roles.push(selected);
+    roleSel.innerHTML = roles.map(r => '<option value="' + escHTML(r) + '">' + escHTML(r) + '</option>').join('');
+    if (selected) roleSel.value = selected;
+  }
+  const chips = document.getElementById('u-role-custom');
+  if (chips) {
+    const custom = Array.isArray(STATE.customRoles) ? STATE.customRoles : [];
+    chips.innerHTML = custom.length
+      ? '<span class="muted" style="font-size:11px">Нэмсэн дүрүүд:</span> ' + custom.map(r => {
+          const used = (STATE.users || []).filter(u => u.role === r).length;
+          return '<span class="badge b-p" style="display:inline-flex;align-items:center;gap:4px;font-size:11px;padding:3px 8px">' + escHTML(r) +
+            (used ? ' <span style="opacity:.7">· ' + used + '</span>' : ' <a href="#" title="Дүр устгах" data-role="' + escHTML(r) + '" style="color:var(--red);text-decoration:none;font-weight:900" onclick="removeCustomRole(this.dataset.role);return false;">✕</a>') + '</span>';
+        }).join(' ')
+      : '';
+  }
+}
+function addCustomRole() {
+  if (!canManageUsers()) { toast('Эрх алга', 'err'); return; }
+  const inp = document.getElementById('u-role-new');
+  const name = String((inp && inp.value) || '').trim().replace(/\s+/g, ' ');
+  if (!name) { toast('Шинэ дүрийн нэрийг бичнэ үү (ж: Менежер)', 'err'); if (inp) inp.focus(); return; }
+  if (name.length > 40) { toast('Дүрийн нэр хэт урт байна', 'err'); return; }
+  const exists = allRoles().find(r => r.toLowerCase() === name.toLowerCase());
+  if (exists) {
+    renderUserRoleSelect(exists); onUserRoleChange();
+    if (inp) inp.value = '';
+    toast('«' + exists + '» дүр аль хэдийн байна — сонголоо', 'ok'); return;
+  }
+  if (!Array.isArray(STATE.customRoles)) STATE.customRoles = [];
+  STATE.customRoles.push(name);
+  lsSet('mt_custom_roles', STATE.customRoles);
+  fbSaveClinicConfig();
+  writeLog('Шинэ дүр нэмсэн', '', name, '');
+  if (inp) inp.value = '';
+  renderUserRoleSelect(name);
+  onUserRoleChange();
+  toast('✅ «' + name + '» дүр нэмэгдлээ — хандах хуудсуудаа сонгоод хадгална уу', 'ok');
+}
+function removeCustomRole(name) {
+  if (!canManageUsers()) { toast('Эрх алга', 'err'); return; }
+  if ((STATE.users || []).some(u => u.role === name)) { toast('Энэ дүртэй хэрэглэгч байгаа тул устгах боломжгүй', 'err'); return; }
+  if (!confirm('«' + name + '» дүрийг жагсаалтаас хасах уу?')) return;
+  const roleSel = document.getElementById('u-role');
+  const cur = roleSel ? roleSel.value : '';
+  STATE.customRoles = (STATE.customRoles || []).filter(r => r !== name);
+  lsSet('mt_custom_roles', STATE.customRoles);
+  fbSaveClinicConfig();
+  writeLog('Дүр хассан', '', name, '');
+  renderUserRoleSelect(cur === name ? ALL_ROLES[0] : cur);
+  if (cur === name) onUserRoleChange();
+}
+
+// ── Хэрэглэгчийн тугууд: 🩺 онош батлах, ✏️ засах эрх ─────────────
+// Онош батлах анхдагч: «Ахлах эмч» дүртэй хүн (Өсөхбаяр, Сайнбилэг)
+function roleDefaultDxApprove(role) { return role === 'Ахлах эмч'; }
+const USER_FLAG_UI = {
+  'u-dx-approve': { on: '🩺 Онош батална', off: 'Онош батлахгүй', color: 'var(--purple)', soft: 'var(--purple-soft)' },
+  'u-edit-data':  { on: '✏️ Засах эрхтэй', off: '👁️ Зөвхөн үзэх', color: 'var(--green)', soft: 'var(--green-soft)' }
+};
+function setFlagToggle(id, on) {
+  const b = document.getElementById(id); const ui = USER_FLAG_UI[id];
+  if (!b || !ui) return;
+  b.dataset.on = on ? '1' : '0';
+  b.textContent = on ? ui.on : ui.off;
+  b.style.border = '1.5px solid ' + (on ? ui.color : 'var(--border)');
+  b.style.background = on ? ui.soft : '#fff';
+  b.style.color = on ? ui.color : 'var(--muted)';
+}
+function toggleFlag(id) { const b = document.getElementById(id); if (b) setFlagToggle(id, b.dataset.on !== '1'); }
+function _flagOn(id) { const b = document.getElementById(id); return !!(b && b.dataset.on === '1'); }
 
 // Хуудас бүрийг toggle хийх чекбокс товчнууд
 function renderUserPages(selectedPages) {
@@ -9613,6 +9863,8 @@ function onUserRoleChange() {
   const roleSel = document.getElementById('u-role');
   if (!roleSel) return;
   renderUserPages(pagesForRole(roleSel.value));
+  setFlagToggle('u-dx-approve', roleDefaultDxApprove(roleSel.value));
+  setFlagToggle('u-edit-data', EDIT_ROLES.includes(roleSel.value));
 }
 
 // u-pages дотроос сонгосон хуудсуудыг цуглуулах
@@ -9674,7 +9926,9 @@ function saveUser() {
     }
 
     const labEdit = !!(document.getElementById('u-lab-edit') && document.getElementById('u-lab-edit').dataset.on === '1');
-    const userObj = { name, pwHash, role, pages, labEdit, ms };
+    const dxApprove = _flagOn('u-dx-approve');
+    const editData = role === 'Админ' ? true : _flagOn('u-edit-data');
+    const userObj = { name, pwHash, role, pages, labEdit, dxApprove, editData, ms };
     if (_editUserIdx !== null && STATE.users[_editUserIdx]) {
       STATE.users[_editUserIdx] = userObj;
       writeLog('Хэрэглэгч заслаа', name, role);
@@ -9685,7 +9939,7 @@ function saveUser() {
 
     _scheduleLsSave('users');
     // Firestore-д pwHash хадгална — pw (plain text) хэзээ ч явахгүй
-    const userRec = { name, pwHash, role, pages, labEdit, ms, _updatedAt: ms, _writer: window.__fbDeviceId || 'unknown' };
+    const userRec = { name, pwHash, role, pages, labEdit, dxApprove, editData, ms, _updatedAt: ms, _writer: window.__fbDeviceId || 'unknown' };
     fbWriteDoc('users', safeDocId(name), userRec)
       .then(() => { try { flashSync(); } catch(e){} })
       .catch(err => toast('Firebase алдаа: ' + err.message, 'err'));
@@ -10003,6 +10257,15 @@ function saveEditExam() {
   e.services  = (STATE._editExamSvcs || []).map(s => ({ name: s.name, price: parseFloat(s.price) || 0 }));
   e.amount    = parseFloat(document.getElementById('ee-amount').value) || 0;
   e.ms        = nowMs();
+  // 🩺 Засварт онош өөрчлөгдвөл: батлагч засвал батлагдсан хэвээр (түүнийх болно),
+  // бусад хүн засвал дахин хянуулахаар (⏳) буцна — батлаагүй онош хэвлэгдэхгүй.
+  if ((before.diagnosis || '') !== (e.diagnosis || '') && dxStatusOf(e) && !isPlanned(e)) {
+    const me = STATE.user ? STATE.user.name : '';
+    if (canApproveDx()) { e.dxStatus = 'approved'; e.dxApprovedBy = me; e.dxApprovedMs = nowMs(); e.dxAuto = false; }
+    else { e.dxStatus = 'pending'; e.dxSubmittedMs = nowMs(); }
+    _dxPush(e, { ms: nowMs(), by: me, action: 'edit', text: e.diagnosis || '', prev: before.diagnosis || '' });
+    _dxSyncInp(e, before.diagnosis || '');
+  }
   const afterSvcStr = e.services.map(s=>s.name).join(', ');
   const changes = diffStr(before, e, [
     {k:'examNum',label:'Дугаар'},{k:'diagnosis',label:'Онош'},{k:'amount',label:'Дүн'}
@@ -10506,7 +10769,683 @@ function applySheetData(d) {
   return stats;
 }
 
+// ============================================================
+// 🩺 АХЛАХ ЭМЧИЙН ХЯНАЛТ (2026-10-05)
+//   1) Онош батлах — бусад эмчийн оношийг ахлах эмч (Өсөхбаяр, Сайнбилэг —
+//      «🩺 Онош батлах» эрхтэй хэрэглэгч) баталсны дараа л үйлчлүүлэгчид өгөх
+//      үзлэгийн хуудасны баруун хэсэгт онош хэвлэгдэнэ.
+//   2) Өдрийн эмчилгээ — эмч бүр байрлан адуундаа тухайн өдрийн эмчилгээгээ
+//      бичсэн эсэхийг ахлах эмч хянана.
+//   3) Эзэнд мэдээлэх — байрлан эмчлүүлж буй адуу 3 хоносон бол эзэнд нь
+//      залгаж ярьсан тэмдэглэлээ бичих сануулга.
+//   4) Маргаашийн эмчилгээний төлөвлөгөө — адуу бүрд.
+//   Өгөгдөл: exams.{dxStatus, dxApprovedBy, dxApprovedMs, dxAuto, dxReturnNote,
+//   dxReturnedBy, dxReturnedMs, dxOriginal, dxHistory[]}; inps.{calls[], plans[]};
+//   clinic_config.{customRoles, callCfg}. Шинэ collection үүсгээгүй.
+// ============================================================
 
+// ── Эрх ─────────────────────────────────────────────────────
+function userCanApproveDx(u) {
+  if (!u) return false;
+  if (typeof u.dxApprove === 'boolean') return u.dxApprove;
+  return roleDefaultDxApprove(u.role);
+}
+function canApproveDx() {
+  if (!STATE.user) return false;
+  return userCanApproveDx(_meUser() || { role: STATE.user.role });
+}
+// Үзлэгийн эмчийн нэр (docName) онош батлах эрхтэй хэрэглэгч мөн эсэх
+function isDxApproverName(name) {
+  if (!name) return false;
+  const u = getUsers()[name];
+  if (u) return userCanApproveDx(u);
+  if ((STATE.users || []).length) return false;
+  const d = (STATE.doctors || []).find(x => x.name === name); // хэрэглэгчийн жагсаалт хараахан ирээгүй үед
+  return !!(d && d.role === 'Ахлах эмч');
+}
+function dxApproverNames() { return (STATE.users || []).filter(userCanApproveDx).map(u => u.name); }
+function _isMyExam(e) { const n = STATE.user && STATE.user.name; return !!(n && e && (e.docName === n || e.assistDocName === n)); }
+// Онош засаж дахин илгээх эрх: үзлэгийн эмч өөрөө, засах эрхтэй хүн, батлагч
+function canResubmitDx(e) { return _isMyExam(e) || canEditData() || canApproveDx(); }
+
+// ── Оношийн төлөв ──────────────────────────────────────────
+// '' (хуучин үзлэг — систем нэвтрэхээс өмнөх), 'pending', 'approved', 'returned'
+function dxStatusOf(e) { return (e && e.dxStatus) || ''; }
+function dxIsApproved(e) { return dxStatusOf(e) === 'approved'; }
+function dxIsOpen(e) { const s = dxStatusOf(e); return !!e && !isPlanned(e) && (s === 'pending' || s === 'returned'); }
+function dxBadgeHTML(e, opts) {
+  opts = opts || {};
+  const s = dxStatusOf(e); const fs = opts.small ? 'font-size:10px;' : '';
+  if (s === 'approved') return `<span class="badge b-g" style="${fs}" title="${escHTML((e.dxAuto ? 'Ахлах эмчийн өөрийн үзлэг — автоматаар батлагдсан. ' : '') + 'Баталсан: ' + (e.dxApprovedBy || '') + ' · ' + fmtDateTime(e.dxApprovedMs))}">✅ Онош батлагдсан${opts.who !== false && e.dxApprovedBy ? ' · ' + escHTML(e.dxApprovedBy) : ''}</span>`;
+  if (s === 'pending') return `<span class="badge b-o" style="${fs}">⏳ Онош хянагдаж байна</span>`;
+  if (s === 'returned') return `<span class="badge b-r" style="${fs}" title="${escHTML(e.dxReturnNote || '')}">↩ Онош буцаагдсан${e.dxReturnedBy ? ' · ' + escHTML(e.dxReturnedBy) : ''}</span>`;
+  return opts.legacy ? `<span class="badge" style="${fs}" title="Энэ үзлэг онош батлах журам нэвтрэхээс өмнө хийгдсэн">Онош батлаагүй (хуучин)</span>` : '';
+}
+// Шинэ үзлэгт (finishExam / moveToInpatient) оношийн төлөвийг тогтооно:
+// ахлах эмч өөрөө (үндсэн эсвэл хамтрагч эмч) эсвэл ахлах эмч нэвтэрч дуусгасан бол автоматаар батлагдана.
+function dxInitFields(e) {
+  const me = (STATE.user && STATE.user.name) || '';
+  const now = nowMs();
+  // Зөвхөн үзлэгийн үндсэн / хамтрагч эмч нь ахлах эмч бол автоматаар батлагдана.
+  // (Нэвтэрсэн хэрэглэгчээр шийдвэл ахлах эмчийн нэрээр нэвтэрсэн нийтийн компьютер дээр
+  //  бусад эмчийн онош хяналтгүй батлагдах эрсдэлтэй — тийм үзлэгийг нэг товчоор батална.)
+  const by = [e.docName, e.assistDocName].find(n => isDxApproverName(n)) || '';
+  if (by) return { dxStatus: 'approved', dxApprovedBy: by, dxApprovedMs: now, dxAuto: true, dxHistory: [{ ms: now, by: me || by, action: 'auto', text: e.diagnosis || '' }] };
+  return { dxStatus: 'pending', dxSubmittedMs: now, dxHistory: [{ ms: now, by: me, action: 'submit', text: e.diagnosis || '' }] };
+}
+function _dxExam(id) { return (STATE.exams || []).find(x => String(x.id) === String(id)); }
+function _dxPush(e, entry) {
+  if (!Array.isArray(e.dxHistory)) e.dxHistory = [];
+  const clean = {}; Object.keys(entry).forEach(k => { if (entry[k] !== undefined && entry[k] !== null) clean[k] = entry[k]; }); // Firestore undefined хүлээж авдаггүй
+  e.dxHistory.push(clean);
+  if (e.dxHistory.length > 20) e.dxHistory = e.dxHistory.slice(-20);
+}
+// Онош өөрчлөгдвөл холбогдох байрлан эмчлүүлэлтийн «Анхны онош»-ийг мөн шинэчилнэ
+function _dxSyncInp(e, before) {
+  (STATE.inps || []).filter(i => String(i.examId) === String(e.id)).forEach(i => {
+    if (!i.diagnosis || i.diagnosis === before) { i.diagnosis = e.diagnosis; i.ms = nowMs(); fbSaveRecord('inps', i); }
+  });
+}
+function _dxAfterChange() {
+  saveAll();
+  try { updateBadges(); } catch (_) {}
+  try { if (STATE.activePage === 'review') renderReview(); } catch (_) {}
+  try { if (STATE.activePage === 'dashboard') renderDashboard(); } catch (_) {}
+}
+function approveDx(id, newText) {
+  if (!canApproveDx()) { toast('⛔ Онош батлах эрх ахлах эмчид (Өсөхбаяр, Сайнбилэг) байна', 'err'); return false; }
+  const e = _dxExam(id); if (!e) { toast('Үзлэг олдсонгүй', 'err'); return false; }
+  const me = STATE.user.name, now = nowMs();
+  const before = e.diagnosis || '';
+  const text = String(newText == null ? before : newText).trim();
+  if (!text) { toast('Онош хоосон байна — бичээд батална уу', 'err'); return false; }
+  const changed = text !== before;
+  if (changed && !e.dxOriginal) e.dxOriginal = before;
+  e.diagnosis = text;
+  e.dxStatus = 'approved'; e.dxApprovedBy = me; e.dxApprovedMs = now; e.dxAuto = false; e.dxReturnNote = '';
+  _dxPush(e, changed ? { ms: now, by: me, action: 'approve_edit', text, prev: before } : { ms: now, by: me, action: 'approve', text });
+  e.ms = now;
+  if (changed) _dxSyncInp(e, before);
+  fbSaveRecord('exams', e);
+  writeLog(changed ? 'Онош засаж баталсан' : 'Онош баталсан', e.id, e.horse + ' — ' + (e.docName || ''), changed ? ('«' + before + '» → «' + text + '»') : ('Онош: ' + text), e.examNum);
+  delete REVIEW_DRAFT[String(e.id)];
+  _dxAfterChange();
+  toast('✅ Онош батлагдлаа' + (changed ? ' (засвартай)' : '') + ' — хуудсанд хэвлэгдэнэ', 'ok');
+  return true;
+}
+function returnDx(id, note) {
+  if (!canApproveDx()) { toast('⛔ Онош буцаах эрх ахлах эмчид байна', 'err'); return false; }
+  const e = _dxExam(id); if (!e) { toast('Үзлэг олдсонгүй', 'err'); return false; }
+  note = String(note || '').trim();
+  if (!note) { toast('Буцаах шалтгаанаа бичнэ үү (эмч засахад хэрэгтэй)', 'err'); return false; }
+  const me = STATE.user.name, now = nowMs();
+  e.dxStatus = 'returned'; e.dxReturnNote = note; e.dxReturnedBy = me; e.dxReturnedMs = now;
+  _dxPush(e, { ms: now, by: me, action: 'return', text: e.diagnosis || '', note });
+  e.ms = now;
+  fbSaveRecord('exams', e);
+  writeLog('Онош буцаасан', e.id, e.horse + ' — ' + (e.docName || ''), 'Шалтгаан: ' + note, e.examNum);
+  delete REVIEW_RET_DRAFT[String(e.id)]; delete REVIEW_DRAFT[String(e.id)];
+  _dxAfterChange();
+  toast('↩ Онош ' + (e.docName || 'эмч') + ' рүү буцаагдлаа', 'ok');
+  return true;
+}
+// Эмч оношоо засаж дахин илгээнэ (батлагч бол шууд батална)
+function resubmitDx(id, newText) {
+  const e = _dxExam(id); if (!e) { toast('Үзлэг олдсонгүй', 'err'); return false; }
+  if (canApproveDx()) return approveDx(id, newText);
+  if (!canResubmitDx(e)) { toast('⛔ Зөвхөн тухайн үзлэгийн эмч оношоо засна', 'err'); return false; }
+  const text = String(newText == null ? (e.diagnosis || '') : newText).trim();
+  if (!text) { toast('Онош оруулна уу', 'err'); return false; }
+  const me = STATE.user.name, now = nowMs(), before = e.diagnosis || '';
+  e.diagnosis = text; e.dxStatus = 'pending'; e.dxSubmittedMs = now;
+  _dxPush(e, { ms: now, by: me, action: 'resubmit', text, prev: before !== text ? before : null });
+  e.ms = now;
+  if (before !== text) _dxSyncInp(e, before);
+  fbSaveRecord('exams', e);
+  writeLog('Онош засаж дахин илгээсэн', e.id, e.horse + ' — ' + (e.docName || ''), before !== text ? ('«' + before + '» → «' + text + '»') : 'Өөрчлөлтгүй', e.examNum);
+  _dxAfterChange();
+  toast('📤 Онош ахлах эмчид дахин илгээгдлээ', 'ok');
+  return true;
+}
+// Хуучин (журамаас өмнөх) үзлэгийг хянуулахаар илгээх
+function requestDxReview(id) {
+  const e = _dxExam(id); if (!e) return;
+  if (dxStatusOf(e)) return;
+  if (canApproveDx()) { approveDx(id); return; }
+  e.dxStatus = 'pending'; e.dxSubmittedMs = nowMs(); e.ms = nowMs();
+  _dxPush(e, { ms: nowMs(), by: STATE.user ? STATE.user.name : '', action: 'submit', text: e.diagnosis || '' });
+  fbSaveRecord('exams', e);
+  writeLog('Онош хянуулахаар илгээсэн', e.id, e.horse + ' — ' + (e.docName || ''), '', e.examNum);
+  _dxAfterChange();
+  toast('📤 Ахлах эмчид илгээгдлээ', 'ok');
+}
+const DX_ACTION_LABEL = { auto: '✅ Автоматаар батлагдсан (ахлах эмч)', submit: '📤 Хянуулахаар илгээсэн', resubmit: '📤 Засаж дахин илгээсэн', approve: '✅ Баталсан', approve_edit: '✅ Засаж баталсан', return: '↩ Буцаасан', edit: '✏️ Үзлэг засварт онош өөрчилсөн' };
+function dxHistoryHTML(e) {
+  const h = Array.isArray(e.dxHistory) ? e.dxHistory : [];
+  if (!h.length) return '';
+  return '<div style="display:flex;flex-direction:column;gap:3px;margin-top:6px">' + h.slice().reverse().map(x => `
+    <div style="font-size:11.5px;background:var(--input);border-radius:6px;padding:5px 8px;line-height:1.45">
+      <b>${escHTML(DX_ACTION_LABEL[x.action] || x.action || '')}</b> · ${escHTML(x.by || '')} · <span class="muted">${escHTML(fmtDateTime(x.ms))}</span>
+      ${x.prev ? `<div class="muted">«${escHTML(x.prev)}» → «${escHTML(x.text || '')}»</div>` : ''}
+      ${x.note ? `<div style="color:var(--red)">Шалтгаан: ${escHTML(x.note)}</div>` : ''}
+    </div>`).join('') + '</div>';
+}
+
+// ── 🩺 Онош хянах цонх (үзлэгийн дэлгэрэнгүй, хэвлэх урьдчилсан харагдац, самбараас) ──
+let __dxModalId = null, __dxModalAfter = null;
+function ensureDxModal() {
+  if (document.getElementById('dx-modal')) return;
+  const m = document.createElement('div');
+  m.className = 'mod-bd'; m.id = 'dx-modal';
+  m.innerHTML = `<div class="mod" style="max-width:560px">
+    <div class="mod-t" id="dx-m-title">🩺 Онош хянах</div>
+    <div id="dx-m-body" style="max-height:62vh;overflow-y:auto"></div>
+    <div class="mod-actions" id="dx-m-actions"></div></div>`;
+  document.body.appendChild(m);
+}
+function openDxModal(id, after) {
+  const e = _dxExam(id); if (!e) { toast('Үзлэг олдсонгүй', 'err'); return; }
+  ensureDxModal(); __dxModalId = String(e.id); __dxModalAfter = after || null;
+  const appr = canApproveDx(), s = dxStatusOf(e);
+  const canFix = !appr && canResubmitDx(e) && s !== 'approved';
+  const an = examAnamnesis(e);
+  const vit = [e.temp ? 'T ' + e.temp : '', e.pulse ? 'P ' + e.pulse : '', e.resp ? 'R ' + e.resp : '', e.wt ? 'Жин ' + e.wt : ''].filter(Boolean).join(' · ');
+  $('#dx-m-title').innerHTML = `🩺 Онош хянах — ${escHTML(e.horse || '')} ${e.examNum ? '<span class="badge b-o">' + escHTML(e.examNum) + '</span>' : ''}`;
+  $('#dx-m-body').innerHTML = `
+    <div class="row" style="gap:6px;flex-wrap:wrap;margin-bottom:8px">${dxBadgeHTML(e, { legacy: true })}</div>
+    <div style="font-size:12.5px;line-height:1.6;margin-bottom:8px">
+      👨‍⚕️ <b>${escHTML(e.docName || '—')}</b>${e.assistDocName ? ' · хамт: ' + escHTML(e.assistDocName) : ''} · 📅 ${escHTML(e.date || '')} ${escHTML(e.time || '')}<br>
+      👤 ${escHTML(e.owner || '')}${e.phone ? ' · ' + escHTML(e.phone) : ''}${vit ? '<br>🌡 ' + escHTML(vit) : ''}
+    </div>
+    ${s === 'returned' && e.dxReturnNote ? `<div style="background:var(--red-soft);color:var(--red);border-radius:8px;padding:8px 10px;font-size:12.5px;margin-bottom:8px">↩ <b>${escHTML(e.dxReturnedBy || '')}</b> буцаасан: ${escHTML(e.dxReturnNote)}</div>` : ''}
+    ${an.text || an.symptoms.length ? `<div class="fld" style="margin-bottom:8px"><label>📝 Анамнез</label><div style="background:var(--input);padding:8px 10px;border-radius:8px;font-size:12.5px;white-space:pre-wrap">${escHTML([an.text, an.symptoms.join(', ')].filter(Boolean).join(' · '))}</div></div>` : ''}
+    ${(e.services || []).length ? `<div style="font-size:12px;margin-bottom:6px"><b>Үйлчилгээ:</b> ${escHTML((e.services || []).map(x => x.name).join(', '))}</div>` : ''}
+    ${(Array.isArray(e.meds) && e.meds.length) ? `<div style="font-size:12px;margin-bottom:6px"><b>Эм:</b> ${escHTML(e.meds.map(m => (m.name || m) + (m.note ? ' — ' + m.note : '')).join(', '))}</div>` : ''}
+    ${e.note ? `<div style="font-size:12px;margin-bottom:8px;white-space:pre-wrap"><b>Зөвлөгөө:</b> ${escHTML(e.note)}</div>` : ''}
+    <div class="fld"><label>🩺 Онош ${appr ? '<span class="muted" style="font-weight:600;text-transform:none">— шаардлагатай бол засаад батална</span>' : ''}</label>
+      ${(appr || canFix) ? `<textarea class="inp" id="dx-m-text" rows="3">${escHTML(e.diagnosis || '')}</textarea>` : `<div style="background:var(--input);padding:10px;border-radius:8px;font-size:13px">${escHTML(e.diagnosis || '—')}</div>`}
+      ${e.dxOriginal && e.dxOriginal !== e.diagnosis ? `<div class="muted" style="font-size:11px;margin-top:4px">Эмчийн анх бичсэн: «${escHTML(e.dxOriginal)}»</div>` : ''}
+    </div>
+    ${appr ? `<div class="fld" style="margin-top:8px"><label>↩ Буцаах шалтгаан <span class="muted" style="font-weight:600;text-transform:none">— зөвхөн буцаах үед</span></label><input class="inp" id="dx-m-note" placeholder="ж: Шинжилгээний хариугаар оношоо тодруулна уу"></div>` : ''}
+    ${!appr && !canFix && s !== 'approved' ? `<div class="muted" style="font-size:12px;margin-top:8px">Батлагч: ${escHTML(dxApproverNames().join(', ') || 'Ахлах эмч')}</div>` : ''}
+    ${Array.isArray(e.dxHistory) && e.dxHistory.length ? '<div class="fld" style="margin-top:10px"><label>🧭 Түүх</label>' + dxHistoryHTML(e) + '</div>' : ''}`;
+  const btns = ['<button class="btn btn-sm" onclick="closeModal(\'dx-modal\')">Хаах</button>'];
+  if (appr) {
+    btns.push(`<button class="btn btn-sm btn-r" onclick="_dxModalReturn()">↩ Буцаах</button>`);
+    btns.push(`<button class="btn btn-sm btn-p" onclick="_dxModalApprove()">✅ ${s === 'approved' ? 'Засвар хадгалах' : 'Батлах'}</button>`);
+  } else if (canFix) {
+    btns.push(`<button class="btn btn-sm btn-p" onclick="_dxModalResubmit()">📤 ${s === 'returned' ? 'Засаж дахин илгээх' : (s ? 'Хадгалах' : 'Хянуулахаар илгээх')}</button>`);
+  }
+  $('#dx-m-actions').innerHTML = btns.join('');
+  openModal('dx-modal');
+}
+function _dxModalDone() { closeModal('dx-modal'); const f = __dxModalAfter; __dxModalAfter = null; if (typeof f === 'function') { try { f(); } catch (e) { console.error(e); } } }
+function _dxModalApprove() { const t = $('#dx-m-text'); if (approveDx(__dxModalId, t ? t.value : null)) _dxModalDone(); }
+function _dxModalReturn() { const n = $('#dx-m-note'); if (returnDx(__dxModalId, n ? n.value : '')) _dxModalDone(); }
+function _dxModalResubmit() { const t = $('#dx-m-text'); if (resubmitDx(__dxModalId, t ? t.value : null)) _dxModalDone(); }
+
+// ── 📞 Эзэнд мэдээлэх сануулга ────────────────────────────────
+// Анхдагч: 3 хоносон үед нэг удаа. Тохиргоонд «дараа нь N хоног тутам» давтаж болно.
+const CALL_DEFAULT = { firstDay: 3, repeatDays: 0 };
+function callCfg() { return Object.assign({}, CALL_DEFAULT, STATE.callCfg || {}); }
+const CALL_STATUS = { talked: '✅ Ярьсан', noanswer: '📵 Утсаа аваагүй', msg: '✉️ Мессеж үлдээсэн' };
+function inpCalls(i) { return (Array.isArray(i && i.calls) ? i.calls : []).filter(c => c && !c.deleted); }
+function _admDayStart(i) {
+  const a = new Date(parseFloat(i.admittedMs) || dateStrToMs(i.admittedDate) || Date.now());
+  return new Date(a.getFullYear(), a.getMonth(), a.getDate()).getTime();
+}
+function inpCallState(i) {
+  if (!i || i.discharged) return { due: false };
+  const C = callCfg();
+  const first = Math.max(1, parseInt(C.firstDay, 10) || 3), rep = Math.max(0, parseInt(C.repeatDays, 10) || 0);
+  const days = inpatientDays(i.admittedMs);
+  if (days < first) return { due: false, days, nextDay: first };
+  const m = rep > 0 ? first + Math.floor((days - first) / rep) * rep : first;
+  const fromMs = _admDayStart(i) + (m - 1) * 86400000; // тэр хоногийн өдрийн 00:00-оос хойших яриа тооцогдоно
+  const calls = inpCalls(i);
+  const talked = calls.filter(c => c.status === 'talked' && (parseFloat(c.ms) || 0) >= fromMs);
+  const attempts = calls.filter(c => c.status !== 'talked' && (parseFloat(c.ms) || 0) >= fromMs);
+  return { due: !talked.length, days, milestone: m, fromMs, lastTalk: talked[talked.length - 1] || null, attempts: attempts.length, nextDay: rep > 0 ? m + rep : null };
+}
+function callDueList() { return (STATE.inps || []).filter(i => !i.discharged && inpCallState(i).due); }
+function _myInp(i) { const me = currentUserDoctor(); const d = inpDoctorOf(i); return !!(me && d && String(d.id) === String(me.id)); }
+function addInpCall() {
+  const i = STATE.inps.find(x => String(x.id) === String(STATE.selectedI)); if (!i) return;
+  const status = ($('#inp-call-status') || {}).value || 'talked';
+  const note = String(($('#inp-call-note') || {}).value || '').trim();
+  if (status === 'talked' && !note) { toast('Эзэнтэй юу ярьсанаа товч бичнэ үү', 'err'); const n = $('#inp-call-note'); if (n) n.focus(); return; }
+  const now = nowMs(), d = new Date(now);
+  const c = { id: uid(), ms: now, date: localDateStr(d), time: String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0'),
+    by: (STATE.user && STATE.user.name) || '', status, note, day: inpatientDays(i.admittedMs) };
+  if (!Array.isArray(i.calls)) i.calls = [];
+  i.calls.push(c); i.ms = now;
+  saveAll(); fbSaveRecord('inps', i);
+  writeLog('Эзэнд залгасан тэмдэглэл', i.id, i.horse + ' — ' + (i.owner || ''), CALL_STATUS[status] + (note ? ' · ' + note : '') + ' · ' + c.day + ' хоног', inpExamNum(i));
+  if ($('#inp-call-note')) $('#inp-call-note').value = '';
+  renderIDetail(); try { renderInpatient(); } catch (_) {} try { updateBadges(); } catch (_) {}
+  toast(status === 'talked' ? '📞 Ярьсан тэмдэглэл хадгалагдлаа' : '📞 Оролдлого бүртгэгдлээ — сануулга хэвээр', 'ok');
+}
+function deleteInpCall(callId) {
+  const i = STATE.inps.find(x => String(x.id) === String(STATE.selectedI)); if (!i) return;
+  const c = (i.calls || []).find(x => String(x.id) === String(callId)); if (!c) return;
+  if (!(canEditData() || (STATE.user && c.by === STATE.user.name))) { toast('⛔ Зөвхөн бичсэн хүн эсвэл засах эрхтэй хүн устгана', 'err'); return; }
+  if (!confirm('Энэ тэмдэглэлийг устгах уу?')) return;
+  c.deleted = true; c.deletedBy = STATE.user.name; c.deletedMs = nowMs(); i.ms = nowMs(); // массив хоосроход sync хамгаалалт дарахаас сэргийлж зөөлөн устгана
+  saveAll(); fbSaveRecord('inps', i);
+  writeLog('Эзэнд залгасан тэмдэглэл устгав', i.id, i.horse, c.note || '');
+  renderIDetail(); try { renderInpatient(); } catch (_) {}
+}
+function renderInpCallBlock(i) {
+  const box = $('#inp-call-list'), alertEl = $('#inp-call-alert'), wrap = $('#inp-call-card');
+  if (!box) return;
+  if (wrap) wrap.classList.toggle('hidden', !!i.discharged && !inpCalls(i).length);
+  const st = inpCallState(i);
+  if (alertEl) {
+    alertEl.innerHTML = st.due
+      ? `<div style="background:var(--red-soft);color:var(--red);border-radius:10px;padding:9px 12px;font-size:13px;font-weight:700;line-height:1.5">
+          🔔 Энэ адуу <b>${st.days} хоносон</b> — эзэн <b>${escHTML(i.owner || '')}</b>-д залгаж эмчилгээний явцыг мэдээлээд доор тэмдэглэлээ бичнэ үү.
+          ${i.phone ? `<div style="margin-top:6px"><a class="btn btn-sm" href="tel:${escHTML(String(i.phone).replace(/[^0-9+]/g, ''))}" style="text-decoration:none">📞 ${escHTML(i.phone)} руу залгах</a></div>` : ''}
+          ${st.attempts ? `<div style="font-weight:600;font-size:12px;margin-top:4px">${st.attempts} удаа оролдсон, холбогдоогүй</div>` : ''}</div>`
+      : (!i.discharged && st.lastTalk ? `<div style="background:var(--green-soft);color:var(--green);border-radius:10px;padding:8px 12px;font-size:12.5px;font-weight:700">✅ ${st.milestone} хоногийн мэдээллийг өгсөн · ${escHTML(st.lastTalk.by || '')} · ${escHTML(st.lastTalk.date || '')} ${escHTML(st.lastTalk.time || '')}${st.nextDay ? ' · дараагийн сануулга ' + st.nextDay + ' хоноход' : ''}</div>`
+        : (!i.discharged && st.nextDay && st.days < st.nextDay && !st.milestone ? `<div class="muted" style="font-size:12px">🔔 ${st.nextDay} хоноход эзэнд мэдээлэх сануулга гарна (одоо ${st.days} хоног).</div>` : ''));
+  }
+  const calls = inpCalls(i).slice().sort((a, b) => (b.ms || 0) - (a.ms || 0));
+  box.innerHTML = calls.length ? calls.map(c => `
+    <div style="background:var(--input);border-radius:8px;padding:8px 10px;margin-bottom:6px;font-size:12.5px;line-height:1.5">
+      <div class="row" style="justify-content:space-between;gap:6px;flex-wrap:wrap">
+        <span><b>${escHTML(CALL_STATUS[c.status] || c.status || '')}</b> · ${escHTML(c.by || '')} · <span class="muted">${escHTML(c.date || '')} ${escHTML(c.time || '')}${c.day ? ' · ' + c.day + ' хоног' : ''}</span></span>
+        ${(canEditData() || (STATE.user && c.by === STATE.user.name)) ? `<button class="btn btn-r btn-xs" onclick="deleteInpCall('${escHTML(c.id)}')">✕</button>` : ''}
+      </div>
+      ${c.note ? `<div style="white-space:pre-wrap;margin-top:3px">${escHTML(c.note)}</div>` : ''}
+    </div>`).join('') : '<div class="muted" style="font-size:12px;padding:4px 0">Эзэнтэй холбогдсон тэмдэглэл алга</div>';
+  const form = $('#inp-call-form'); if (form) form.classList.toggle('hidden', !!i.discharged);
+  // Өөр адуу сонгогдвол өмнөх адууны бичиж эхэлсэн тэмдэглэлийг арилгана (буруу адуунд хадгалагдахаас сэргийлнэ)
+  const nEl = $('#inp-call-note'), sEl = $('#inp-call-status');
+  if (nEl && nEl.dataset.inpId !== String(i.id)) { nEl.value = ''; nEl.dataset.inpId = String(i.id); if (sEl) sEl.value = 'talked'; }
+}
+
+// ── 🗓 Маргаашийн эмчилгээний төлөвлөгөө ───────────────────────
+function addDaysStr(dateStr, n) { const d = new Date((dateStr || todayStr()) + 'T12:00:00'); d.setDate(d.getDate() + n); return localDateStr(d); }
+function inpPlans(i) { return (Array.isArray(i && i.plans) ? i.plans : []).filter(p => p && !p.deleted); }
+function inpPlanFor(i, date) { const ps = inpPlans(i).filter(p => p.date === date); return ps[ps.length - 1] || null; }
+function saveInpPlan() {
+  const i = STATE.inps.find(x => String(x.id) === String(STATE.selectedI)); if (!i) return;
+  const date = ($('#inp-plan-date') || {}).value || addDaysStr(todayStr(), 1);
+  const text = String(($('#inp-plan-text') || {}).value || '').trim();
+  const me = (STATE.user && STATE.user.name) || '', now = nowMs();
+  const ex = inpPlanFor(i, date);
+  if (!text) {
+    if (ex && confirm(date + '-ны төлөвлөгөөг устгах уу?')) {
+      ex.deleted = true; ex.deletedBy = me; ex.deletedMs = now; i.ms = now;
+      saveAll(); fbSaveRecord('inps', i); renderInpPlanBlock(i, true); toast('Төлөвлөгөө устгагдлаа', 'ok');
+    } else if (!ex) toast('Төлөвлөгөөгөө бичнэ үү', 'err');
+    return;
+  }
+  if (ex) { if (ex.text === text) { toast('Өөрчлөлт алга', 'ok'); return; } ex.text = text; ex.editedBy = me; ex.editedMs = now; }
+  else { if (!Array.isArray(i.plans)) i.plans = []; i.plans.push({ id: uid(), date, text, by: me, ms: now }); }
+  i.ms = now;
+  saveAll(); fbSaveRecord('inps', i);
+  writeLog('Эмчилгээний төлөвлөгөө', i.id, i.horse, date + ': ' + text.slice(0, 120), inpExamNum(i));
+  renderInpPlanBlock(i, true);
+  try { renderInpInfoTab(i); } catch (_) {}
+  toast('🗓 ' + date + '-ны төлөвлөгөө хадгалагдлаа', 'ok');
+}
+// Өнөөдрийн (өчигдөр бичсэн) төлөвлөгөөг эмчилгээний маягтын «Хийсэн эмчилгээ» талбарт татна
+function usePlanInForm(date) {
+  const i = STATE.inps.find(x => String(x.id) === String(STATE.selectedI)); if (!i) return;
+  const p = inpPlanFor(i, date || (($('#inp-log-date') || {}).value) || todayStr()); if (!p) { toast('Энэ өдрийн төлөвлөгөө алга', 'err'); return; }
+  const n = $('#inp-note'); if (!n) return;
+  n.value = n.value.trim() ? n.value.trim() + '\n' + p.text : p.text;
+  n.focus(); toast('⤵ Төлөвлөгөө маягтад татагдлаа — хийсэн зүйлээ засаад хадгална уу', 'ok');
+}
+function renderInpPlanBlock(i, force) {
+  const todayBox = $('#inp-plan-today'), dEl = $('#inp-plan-date'), tEl = $('#inp-plan-text'), card = $('#inp-plan-card');
+  if (!todayBox) return;
+  if (card) card.classList.toggle('hidden', !!i.discharged);
+  const logDate = (($('#inp-log-date') || {}).value) || todayStr();
+  const tp = inpPlanFor(i, logDate);
+  todayBox.innerHTML = tp
+    ? `<div style="background:var(--gold-soft,#f6efdc);border-radius:10px;padding:9px 12px;font-size:12.5px;line-height:1.5;margin-bottom:8px">
+        <div class="row" style="justify-content:space-between;gap:6px;flex-wrap:wrap"><b>📌 ${escHTML(logDate)}-ны төлөвлөгөө</b><button class="btn btn-xs" type="button" onclick="usePlanInForm('${escHTML(logDate)}')">⤵ Маягтад татах</button></div>
+        <div style="white-space:pre-wrap;margin-top:4px">${escHTML(tp.text)}</div>
+        <div class="muted" style="font-size:11px;margin-top:3px">${escHTML(tp.editedBy || tp.by || '')} · ${escHTML(fmtDateTime(tp.editedMs || tp.ms))}</div></div>`
+    : '';
+  // Маргаашийн төлөвлөгөөний маягт — адуу солигдох/огноо солигдох үед л дүүргэнэ (бичиж буй текстийг sync дарахгүй)
+  if (dEl && tEl) {
+    const key = String(i.id);
+    if (force || dEl.dataset.inpId !== key || !dEl.value) {
+      dEl.value = addDaysStr(todayStr(), 1); dEl.dataset.inpId = key; dEl.min = todayStr();
+      const p = inpPlanFor(i, dEl.value); tEl.value = p ? p.text : '';
+    }
+  }
+}
+function onInpLogDateChange() {
+  const i = STATE.inps.find(x => String(x.id) === String(STATE.selectedI)); if (i) renderInpPlanBlock(i);
+}
+function onInpPlanDateChange() {
+  const i = STATE.inps.find(x => String(x.id) === String(STATE.selectedI)); if (!i) return;
+  const p = inpPlanFor(i, $('#inp-plan-date').value); $('#inp-plan-text').value = p ? p.text : '';
+}
+
+// ── 📝 Өдрийн эмчилгээ — бичигдсэн эсэх ───────────────────────
+function inpLogsOn(i, date) { return (Array.isArray(i.log) ? i.log : []).filter(l => (l.date || '').slice(0, 10) === date); }
+function inpInHospitalOn(i, date) {
+  if (!i || !i.admittedDate || date < i.admittedDate) return false;
+  if (i.discharged) return !!i.dischargedDate && date <= i.dischargedDate;
+  return date <= todayStr();
+}
+// 'done' бичсэн · 'missing' бичээгүй · 'adm' орсон өдөр (үзлэгээр бүртгэгдсэн) · 'out' гарсан өдөр · 'none' хэвтээгүй
+function inpTreatStatus(i, date) {
+  if (!inpInHospitalOn(i, date)) return 'none';
+  if (inpLogsOn(i, date).length) return 'done';
+  if (date === i.admittedDate) return 'adm';
+  if (i.discharged && date === i.dischargedDate) return 'out';
+  return 'missing';
+}
+
+// ============================================================
+// 🩺 АХЛАХ ЭМЧИЙН ХЯНАЛТ — хуудас
+// ============================================================
+const RV = { tab: 'dx', dxDoc: '', dxShow: 'open', tDate: '', tMode: 'day', tDoc: '' };
+const REVIEW_DRAFT = {}, REVIEW_RET_DRAFT = {}; // sync-ээр дахин зурахад бичсэн текст алга болохгүй
+// Ноорог нь аль оношоос эхэлснийг санана — эмч өөр төхөөрөмжөөс засаж дахин илгээвэл хуучин ноорог хүчингүй
+function _rvDraftSet(id, text) { const e = _dxExam(id); REVIEW_DRAFT[String(id)] = { base: e ? (e.diagnosis || '') : '', text: String(text) }; }
+function _rvDraftText(id) { const d = REVIEW_DRAFT[String(id)], e = _dxExam(id); return (d && e && d.base === (e.diagnosis || '')) ? d.text : null; }
+function setReviewTab(t) { RV.tab = t; renderReview(); }
+function dxOpenList() { return (STATE.exams || []).filter(dxIsOpen); }
+function renderReview() {
+  ensureReviewStyles();
+  const body = $('#rv-body'); if (!body) return;
+  const open = dxOpenList();
+  const pendN = open.filter(e => e.dxStatus === 'pending').length;
+  const today = todayStr();
+  const act = (STATE.inps || []).filter(i => !i.discharged);
+  const missN = act.filter(i => inpTreatStatus(i, today) === 'missing').length;
+  const callN = callDueList().length;
+  const setN = (id, n, cls) => { const el = $('#' + id); if (el) el.innerHTML = n ? '<span class="badge ' + cls + '" style="margin-left:4px">' + n + '</span>' : ''; };
+  setN('rv-n-dx', pendN, 'b-o'); setN('rv-n-treat', missN, 'b-r'); setN('rv-n-call', callN, 'b-r');
+  $$('.tab[data-rvtab]').forEach(x => x.classList.toggle('active', x.dataset.rvtab === RV.tab));
+  if (RV.tab === 'treat') body.innerHTML = _rvTreatHTML();
+  else if (RV.tab === 'call') body.innerHTML = _rvCallHTML();
+  else body.innerHTML = _rvDxHTML(open);
+}
+function ensureReviewStyles() {
+  if (document.getElementById('rv-styles')) return;
+  const st = document.createElement('style'); st.id = 'rv-styles';
+  st.textContent = `
+  .rv-card{background:var(--card,#fff);border:1px solid var(--border,#e9e6f0);border-left:4px solid var(--orange,#e0862a);border-radius:12px;padding:12px 14px;margin-bottom:10px}
+  .rv-card.rv-ret{border-left-color:var(--red,#b8332b)} .rv-card.rv-ok{border-left-color:var(--green,#2f9e6f)}
+  .rv-h{display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;align-items:flex-start}
+  .rv-meta{font-size:12px;color:var(--muted,#8a8398);line-height:1.5}
+  .rv-sec{font-size:12.5px;line-height:1.5;margin-top:6px}
+  .rv-act{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;align-items:center}
+  .rv-act .inp{flex:1;min-width:160px}
+  .rv-doc{background:var(--card,#fff);border:1px solid var(--border,#e9e6f0);border-radius:12px;padding:10px 12px;margin-bottom:10px}
+  .rv-doc-h{display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;font-weight:800;font-size:13.5px}
+  .rv-bar{height:7px;border-radius:5px;background:var(--red-soft,#fbeae8);overflow:hidden;margin:6px 0 8px}
+  .rv-bar>div{height:100%;background:var(--green,#2f9e6f)}
+  .rv-row{display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;padding:6px 8px;border-radius:8px;font-size:12.5px;margin-bottom:4px;background:var(--input,#faf9fc)}
+  .rv-row.miss{background:var(--red-soft,#fbeae8)}
+  .rv-mx{border-collapse:collapse;font-size:12px;width:100%}
+  .rv-mx th,.rv-mx td{border:1px solid var(--border,#e9e6f0);padding:4px 6px;text-align:center;white-space:nowrap}
+  .rv-mx td.l{text-align:left;white-space:normal;min-width:120px}
+  .rv-c-done{background:var(--green-soft,#e6f6ee);color:var(--green,#2f9e6f);font-weight:800}
+  .rv-c-missing{background:var(--red-soft,#fbeae8);color:var(--red,#b8332b);font-weight:800}
+  .rv-c-adm,.rv-c-out{color:var(--muted,#8a8398)}
+  .rv-ctl{display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;margin-bottom:10px}
+  .rv-ctl .fld{margin:0}
+  .d-alerts{display:flex;flex-direction:column;gap:8px;margin-bottom:12px}
+  .d-alert{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;border-radius:12px;padding:10px 14px;font-size:13px;font-weight:700;cursor:pointer;border:1px solid transparent}
+  .d-alert-r{background:var(--red-soft,#fbeae8);color:var(--red,#b8332b);border-color:#ecc3bf}
+  .d-alert-o{background:var(--orange-soft,#fcf3e0);color:var(--orange-dark,#b57708);border-color:#f0d9a8}
+  .d-alert-p{background:var(--purple-soft,#efeaf9);color:var(--purple,#7d4596);border-color:#dccdee}
+  .d-alert small{font-weight:600;opacity:.85}
+  .inpc-tag.inpc-tag-call{background:var(--red-soft,#fbeae8);color:var(--red,#b8332b);border-color:#ecc3bf;font-weight:800}
+  .inpc-tag.inpc-tag-ok{background:var(--green-soft,#e6f6ee);color:var(--green,#2f9e6f);border-color:#bfe3cf}
+  .inp-days-strip{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:10px;font-size:12px}
+  .inp-days-chip{border:1px solid var(--border,#e9e6f0);background:var(--card,#fff);border-radius:20px;padding:4px 10px;font-weight:700;cursor:pointer;font-family:inherit;font-size:12px;color:var(--text)}
+  .inp-days-chip b{color:var(--purple,#7d4596)}
+  .inp-days-chip.on{background:var(--purple,#7d4596);border-color:var(--purple,#7d4596);color:#fff}
+  .inp-days-chip.on b{color:#fff}
+  .inp-days-chip.warn{border-color:#ecc3bf;background:var(--red-soft,#fbeae8);color:var(--red,#b8332b)}
+  `;
+  document.head.appendChild(st);
+}
+// ── Таб 1: Онош батлах ──
+function _rvDxHTML(open) {
+  const appr = canApproveDx();
+  const docs = [...new Set(open.map(e => e.docName).filter(Boolean))].sort();
+  let list = RV.dxShow === 'open' ? open : [];
+  if (RV.dxShow === 'open' && RV.dxDoc) list = list.filter(e => e.docName === RV.dxDoc || e.assistDocName === RV.dxDoc);
+  list = list.slice().sort((a, b) => (a.dxStatus === 'returned') - (b.dxStatus === 'returned') || (parseFloat(a.dxSubmittedMs || a.ms) || 0) - (parseFloat(b.dxSubmittedMs || b.ms) || 0));
+  const since = nowMs() - 7 * 86400000;
+  const done = (STATE.exams || []).filter(e => dxIsApproved(e) && (parseFloat(e.dxApprovedMs) || 0) >= since && (RV.dxShow === 'auto' ? e.dxAuto : !e.dxAuto))
+    .filter(e => !RV.dxDoc || e.docName === RV.dxDoc || e.dxApprovedBy === RV.dxDoc)
+    .sort((a, b) => (b.dxApprovedMs || 0) - (a.dxApprovedMs || 0));
+  const head = `
+    <div style="background:var(--purple-soft);color:var(--purple);border-radius:10px;padding:9px 12px;font-size:12.5px;line-height:1.5;margin-bottom:10px">
+      Эмч үзлэгээ дуусгахад онош <b>⏳ хянагдаж байна</b> төлөвтэй болно. Ахлах эмч (<b>${escHTML(dxApproverNames().join(', ') || 'Өсөхбаяр, Сайнбилэг')}</b>) баталсны дараа л үйлчлүүлэгчид өгөх хуудсанд онош хэвлэгдэнэ. Ахлах эмчийн өөрийн үзлэг автоматаар батлагдана.
+      ${appr ? '' : '<br><b>Танд онош батлах эрх алга — зөвхөн харна.</b>'}
+    </div>
+    <div class="rv-ctl">
+      <div class="fld"><label>Харах</label><select class="inp" onchange="RV.dxShow=this.value;renderReview()">
+        <option value="open" ${RV.dxShow === 'open' ? 'selected' : ''}>⏳ Батлах хүлээгдэж буй (${open.length})</option>
+        <option value="done" ${RV.dxShow === 'done' ? 'selected' : ''}>✅ Сүүлийн 7 хоногт баталсан</option>
+        <option value="auto" ${RV.dxShow === 'auto' ? 'selected' : ''}>⚙️ Ахлах эмчийн өөрийн (автомат) — 7 хоног</option></select></div>
+      <div class="fld"><label>Эмч</label><select class="inp" onchange="RV.dxDoc=this.value;renderReview()">
+        <option value="">Бүх эмч</option>${[...new Set([...docs, ...(STATE.doctors || []).map(d => d.name)])].map(n => `<option ${n === RV.dxDoc ? 'selected' : ''}>${escHTML(n)}</option>`).join('')}</select></div>
+    </div>`;
+  if (RV.dxShow !== 'open') {
+    return head + (done.length ? `<div style="overflow-x:auto"><table class="rv-mx"><thead><tr><th>Огноо</th><th>Дугаар</th><th>Адуу</th><th>Эмч</th><th>Онош</th><th>Баталсан</th><th></th></tr></thead><tbody>${done.map(e => `
+      <tr><td>${escHTML(e.date || '')}</td><td>${escHTML(e.examNum || '')}</td><td class="l">${escHTML(e.horse || '')}<div class="muted" style="font-size:11px">${escHTML(e.owner || '')}</div></td><td>${escHTML(e.docName || '')}</td>
+      <td class="l">${escHTML(e.diagnosis || '')}${e.dxOriginal && e.dxOriginal !== e.diagnosis ? '<div class="muted" style="font-size:11px">анх: ' + escHTML(e.dxOriginal) + '</div>' : ''}</td>
+      <td>${escHTML(e.dxApprovedBy || '')}<div class="muted" style="font-size:11px">${escHTML(fmtDateTime(e.dxApprovedMs))}</div></td>
+      <td><button class="btn btn-xs" onclick="openDxModal('${escHTML(e.id)}')">🔍</button></td></tr>`).join('')}</tbody></table></div>`
+      : '<div class="empty"><div class="empty-em">✅</div>Энэ хугацаанд баталсан онош алга</div>');
+  }
+  if (!list.length) return head + '<div class="empty"><div class="empty-em">🎉</div>Батлах онош алга — бүгд хянагдсан</div>';
+  return head + list.map(e => {
+    const id = String(e.id), ret = e.dxStatus === 'returned';
+    const an = examAnamnesis(e);
+    const vit = [e.temp ? 'T ' + e.temp : '', e.pulse ? 'P ' + e.pulse : '', e.resp ? 'R ' + e.resp : '', e.wt ? 'Жин ' + e.wt : ''].filter(Boolean).join(' · ');
+    const fin = finByExamId(e.id);
+    const dt = _rvDraftText(id); if (dt == null) delete REVIEW_DRAFT[id];
+    const draft = dt != null ? dt : (e.diagnosis || '');
+    const rdraft = REVIEW_RET_DRAFT[id] || '';
+    const waitH = Math.max(0, Math.round((nowMs() - (parseFloat(e.dxSubmittedMs || e.ms) || nowMs())) / 3600000));
+    return `<div class="rv-card ${ret ? 'rv-ret' : ''}">
+      <div class="rv-h">
+        <div><b style="font-size:14px">${escHTML(e.horse || '')}</b> ${e.examNum ? '<span class="badge b-o">' + escHTML(e.examNum) + '</span>' : ''} ${e.inpatient ? '<span class="badge b-p">🏥 Байрлан</span>' : ''}
+          <div class="rv-meta">👨‍⚕️ <b style="color:var(--text)">${escHTML(e.docName || '—')}</b>${e.assistDocName ? ' · хамт ' + escHTML(e.assistDocName) : ''} · 📅 ${escHTML(e.date || '')} ${escHTML(e.time || '')} · 👤 ${escHTML(e.owner || '')}${e.phone ? ' · ' + escHTML(e.phone) : ''}</div></div>
+        <div style="text-align:right">${dxBadgeHTML(e)}<div class="muted" style="font-size:11px;margin-top:3px">${waitH < 1 ? 'дөнгөж сая' : waitH + ' цаг хүлээж байна'}</div></div>
+      </div>
+      ${ret && e.dxReturnNote ? `<div class="rv-sec" style="color:var(--red)">↩ <b>${escHTML(e.dxReturnedBy || '')}</b>: ${escHTML(e.dxReturnNote)} <span class="muted">— эмч засаж дахин илгээхийг хүлээж байна</span></div>` : ''}
+      ${an.text || an.symptoms.length ? `<div class="rv-sec"><b>Анамнез:</b> ${escHTML([an.text, an.symptoms.join(', ')].filter(Boolean).join(' · '))}</div>` : ''}
+      ${vit ? `<div class="rv-sec"><b>Үзүүлэлт:</b> ${escHTML(vit)}</div>` : ''}
+      ${(e.services || []).length ? `<div class="rv-sec"><b>Үйлчилгээ:</b> ${escHTML(e.services.map(x => x.name).join(', '))}</div>` : ''}
+      ${(Array.isArray(e.meds) && e.meds.length) ? `<div class="rv-sec"><b>Эм:</b> ${escHTML(e.meds.map(m => (m.name || m) + (m.note ? ' — ' + m.note : '')).join(', '))}</div>` : ''}
+      ${e.note ? `<div class="rv-sec" style="white-space:pre-wrap"><b>Зөвлөгөө:</b> ${escHTML(e.note)}</div>` : ''}
+      <div class="rv-sec"><b>🩺 Онош</b>${appr ? ' <span class="muted" style="font-size:11px">— засаад батлаж болно</span>' : ''}</div>
+      ${appr ? `<textarea class="inp" rows="2" style="margin-top:4px" oninput="_rvDraftSet('${id}', this.value)">${escHTML(draft)}</textarea>`
+             : `<div style="background:var(--input);padding:8px 10px;border-radius:8px;font-size:13px;margin-top:4px">${escHTML(e.diagnosis || '—')}</div>`}
+      <div class="rv-act">
+        ${appr ? `<button class="btn btn-sm btn-p" onclick="approveDx('${id}', _rvDraftText('${id}'))">✅ Батлах</button>
+          <input class="inp" placeholder="Буцаах шалтгаан…" value="${escHTML(rdraft)}" oninput="REVIEW_RET_DRAFT['${id}']=this.value" onkeydown="if(event.key==='Enter'){event.preventDefault();returnDx('${id}', this.value);}">
+          <button class="btn btn-sm btn-r" onclick="returnDx('${id}', REVIEW_RET_DRAFT['${id}'] || '')">↩ Буцаах</button>` : ''}
+        <button class="btn btn-sm" onclick="openExamDetail('${id}')">📋 Дэлгэрэнгүй</button>
+        ${fin ? `<button class="btn btn-sm" onclick="printInvoice('${escHTML(fin.id)}')">🖨 Хуудас</button>` : ''}
+      </div>
+    </div>`;
+  }).join('');
+}
+// ── Таб 2: Өдрийн эмчилгээ ──
+function _rvTreatHTML() {
+  const today = todayStr();
+  const date = RV.tDate || today;
+  const mode = RV.tMode;
+  const inps = (STATE.inps || []).filter(i => mode === 'week'
+    ? [0, 1, 2, 3, 4, 5, 6].some(k => inpInHospitalOn(i, addDaysStr(date, -k)))
+    : inpInHospitalOn(i, date));
+  const byDoc = {};
+  inps.forEach(i => { const d = inpDoctorOf(i); const k = d ? d.name : '__none'; (byDoc[k] = byDoc[k] || []).push(i); });
+  let names = Object.keys(byDoc).sort((a, b) => a === '__none' ? 1 : b === '__none' ? -1 : a.localeCompare(b));
+  if (RV.tDoc) names = names.filter(n => n === RV.tDoc);
+  const ctl = `
+    <div style="background:var(--purple-soft);color:var(--purple);border-radius:10px;padding:9px 12px;font-size:12.5px;line-height:1.5;margin-bottom:10px">
+      Байрлан эмчлүүлж буй адуу бүрд эмчлэгч эмч <b>өдөр бүр</b> «📋 Эмчилгээний бүртгэл»-д тухайн өдрийн эмчилгээгээ бичих ёстой. Орсон өдөр нь үзлэгээр бүртгэгддэг тул «🆕» гэж тусгаарлана. Маргаашийн төлөвлөгөө бичсэн эсэх мөн харагдана.
+    </div>
+    <div class="rv-ctl">
+      <div class="fld"><label>Огноо</label><input class="inp" type="date" value="${escHTML(date)}" max="${today}" onchange="RV.tDate=this.value;renderReview()"></div>
+      <div class="fld"><label>Харагдац</label><select class="inp" onchange="RV.tMode=this.value;renderReview()">
+        <option value="day" ${mode === 'day' ? 'selected' : ''}>Нэг өдөр</option><option value="week" ${mode === 'week' ? 'selected' : ''}>Сүүлийн 7 хоног (хүснэгт)</option></select></div>
+      <div class="fld"><label>Эмчлэгч эмч</label><select class="inp" onchange="RV.tDoc=this.value;renderReview()">
+        <option value="">Бүх эмч</option>${Object.keys(byDoc).filter(n => n !== '__none').sort().map(n => `<option ${n === RV.tDoc ? 'selected' : ''}>${escHTML(n)}</option>`).join('')}${byDoc.__none ? `<option value="__none" ${RV.tDoc === '__none' ? 'selected' : ''}>Эмч заагаагүй</option>` : ''}</select></div>
+      <button class="btn btn-sm" onclick="RV.tDate='';renderReview()">Өнөөдөр</button>
+      <button class="btn btn-sm" onclick="RV.tDate=addDaysStr('${escHTML(date)}',-1);renderReview()">‹ Өмнөх өдөр</button>
+    </div>`;
+  if (!inps.length) return ctl + '<div class="empty"><div class="empty-em">🏥</div>Энэ өдөр байрлан эмчлүүлж буй адуу алга</div>';
+  const label = n => n === '__none' ? '❔ Эмч заагаагүй' : '👨‍⚕️ ' + escHTML(n);
+  if (mode === 'week') {
+    const days = [6, 5, 4, 3, 2, 1, 0].map(k => addDaysStr(date, -k));
+    const sym = { done: '✓', missing: '✗', adm: '🆕', out: '🚪', none: '' };
+    const rows = names.map(n => {
+      const items = byDoc[n];
+      const miss = items.reduce((a, i) => a + days.filter(d => inpTreatStatus(i, d) === 'missing').length, 0);
+      return `<tr><td class="l" colspan="${days.length + 1}" style="background:var(--gold-soft,#f6efdc);font-weight:800">${label(n)} <span class="muted" style="font-weight:600">· ${items.length} адуу${miss ? ' · <span style="color:var(--red)">' + miss + ' өдөр бичээгүй</span>' : ''}</span></td></tr>` +
+        items.map(i => `<tr><td class="l"><a href="#" onclick="openInpHorse('${escHTML(i.id)}','treat');return false;">${escHTML(i.horse || '')}</a><div class="muted" style="font-size:10.5px">${escHTML(i.owner || '')}${i.discharged ? ' · 🚪 гарсан' : ''}</div></td>` +
+          days.map(d => { const s = inpTreatStatus(i, d); const ls = inpLogsOn(i, d); return `<td class="rv-c-${s}" title="${escHTML(ls.map(l => l.docName).join(', '))}">${sym[s]}${ls.length > 1 ? '<sup>' + ls.length + '</sup>' : ''}</td>`; }).join('') + '</tr>').join('');
+    }).join('');
+    return ctl + `<div style="overflow-x:auto"><table class="rv-mx"><thead><tr><th style="text-align:left">Адуу</th>${days.map(d => `<th>${escHTML(d.slice(5))}</th>`).join('')}</tr></thead><tbody>${rows}</tbody></table></div>
+      <div class="muted" style="font-size:11.5px;margin-top:6px">✓ бичсэн · ✗ бичээгүй · 🆕 орсон өдөр · 🚪 гарсан өдөр. Адууны нэр дээр дарж эмчилгээний бүртгэлийг нээнэ.</div>`;
+  }
+  const tomorrow = addDaysStr(date, 1);
+  const blocks = names.map(n => {
+    const items = byDoc[n];
+    const req = items.filter(i => ['done', 'missing'].includes(inpTreatStatus(i, date)));
+    const doneN = req.filter(i => inpTreatStatus(i, date) === 'done').length;
+    const pct = req.length ? Math.round(doneN / req.length * 100) : 100;
+    const order = { missing: 0, adm: 1, out: 2, done: 3 };
+    const rows = items.slice().sort((a, b) => order[inpTreatStatus(a, date)] - order[inpTreatStatus(b, date)]).map(i => {
+      const s = inpTreatStatus(i, date), ls = inpLogsOn(i, date);
+      const plan = !i.discharged ? inpPlanFor(i, tomorrow) : null;
+      const st = s === 'done' ? `<span class="badge b-g">✓ Бичсэн · ${escHTML([...new Set(ls.map(l => l.docName))].join(', '))}</span>`
+        : s === 'missing' ? '<span class="badge b-r">✗ Бичээгүй</span>' : s === 'adm' ? '<span class="badge">🆕 Орсон өдөр</span>' : '<span class="badge">🚪 Гарсан өдөр</span>';
+      return `<div class="rv-row ${s === 'missing' ? 'miss' : ''}">
+        <span><a href="#" onclick="openInpHorse('${escHTML(i.id)}','treat');return false;"><b>${escHTML(i.horse || '')}</b></a> <span class="muted">· ${escHTML(i.owner || '')} · ${inpatientDays(i.admittedMs, i.dischargedMs)} хоног${i.location ? ' · 📍 ' + escHTML(i.location) : ''}</span></span>
+        <span class="row" style="gap:4px;flex-wrap:wrap">${st}${!i.discharged && date === today ? (plan ? '<span class="badge b-p" title="' + escHTML(plan.text) + '">🗓 Маргаашийн төлөвлөгөө ✓</span>' : '<span class="badge" style="opacity:.75">🗓 Төлөвлөгөө —</span>') : ''}</span></div>`;
+    }).join('');
+    return `<div class="rv-doc"><div class="rv-doc-h"><span>${label(n)}</span><span style="font-size:12.5px;color:${doneN === req.length ? 'var(--green)' : 'var(--red)'}">${doneN}/${req.length} бичсэн</span></div>
+      <div class="rv-bar"><div style="width:${pct}%"></div></div>${rows}</div>`;
+  }).join('');
+  const allReq = inps.filter(i => ['done', 'missing'].includes(inpTreatStatus(i, date)));
+  const allMiss = allReq.filter(i => inpTreatStatus(i, date) === 'missing').length;
+  return ctl + `<div class="inp-summary" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">
+      <div class="inp-sum-card" style="flex:1;min-width:120px;background:var(--input);border:1px solid var(--border);border-radius:10px;padding:8px 10px"><div style="font-size:20px;font-weight:900">${allReq.length - allMiss}/${allReq.length}</div><div class="muted" style="font-size:11px">${escHTML(date)}-нд эмчилгээ бичигдсэн</div></div>
+      <div class="inp-sum-card" style="flex:1;min-width:120px;background:${allMiss ? 'var(--red-soft)' : 'var(--green-soft)'};border-radius:10px;padding:8px 10px"><div style="font-size:20px;font-weight:900">${allMiss}</div><div class="muted" style="font-size:11px">бичигдээгүй адуу</div></div>
+    </div>` + blocks;
+}
+// ── Таб 3: Эзэнд мэдээлэх ──
+function _rvCallHTML() {
+  const due = callDueList().sort((a, b) => (a.admittedMs || 0) - (b.admittedMs || 0));
+  const C = callCfg();
+  const recent = [];
+  (STATE.inps || []).forEach(i => inpCalls(i).forEach(c => { if ((c.ms || 0) >= nowMs() - 7 * 86400000) recent.push({ i, c }); }));
+  recent.sort((a, b) => (b.c.ms || 0) - (a.c.ms || 0));
+  const byDoc = {}; due.forEach(i => { const d = inpDoctorOf(i); const k = d ? d.name : 'Эмч заагаагүй'; (byDoc[k] = byDoc[k] || []).push(i); });
+  return `<div style="background:var(--purple-soft);color:var(--purple);border-radius:10px;padding:9px 12px;font-size:12.5px;line-height:1.5;margin-bottom:10px">
+      Байрлан эмчлүүлж буй адуу <b>${C.firstDay} хоноход</b>${C.repeatDays > 0 ? ', дараа нь <b>' + C.repeatDays + ' хоног тутам</b>' : ''} эмчлэгч эмч эзэнд нь залгаж эмчилгээний явцыг мэдээлээд «📞 Эзэнд мэдээлсэн тэмдэглэл»-д бичнэ. «Ярьсан» гэж бичмэгц сануулга арилна. (Тохиргоо → «📞 Эзэнд мэдээлэх сануулга»)
+    </div>
+    <div class="ch">🔔 Залгах ёстой — ${due.length} адуу</div>
+    ${due.length ? Object.keys(byDoc).sort().map(n => `<div class="rv-doc"><div class="rv-doc-h"><span>👨‍⚕️ ${escHTML(n)}</span><span class="badge b-r">${byDoc[n].length}</span></div>${byDoc[n].map(i => {
+      const st = inpCallState(i);
+      return `<div class="rv-row miss"><span><b>${escHTML(i.horse || '')}</b> <span class="muted">· ${st.days} хоног · 👤 ${escHTML(i.owner || '')}${i.phone ? ' · <a href="tel:' + escHTML(String(i.phone).replace(/[^0-9+]/g, '')) + '">📞 ' + escHTML(i.phone) + '</a>' : ''}${st.attempts ? ' · ' + st.attempts + ' удаа холбогдоогүй' : ''}</span></span>
+        <button class="btn btn-xs btn-p" onclick="openInpHorse('${escHTML(i.id)}','info')">📞 Тэмдэглэл бичих</button></div>`; }).join('')}</div>`).join('')
+      : '<div class="empty"><div class="empty-em">✅</div>Залгах сануулгатай адуу алга</div>'}
+    <div class="ch" style="margin-top:14px">🗒 Сүүлийн 7 хоногийн тэмдэглэл</div>
+    ${recent.length ? recent.slice(0, 80).map(({ i, c }) => `<div class="rv-row"><span><b>${escHTML(i.horse || '')}</b> <span class="muted">· ${escHTML(i.owner || '')}</span> — ${escHTML(CALL_STATUS[c.status] || '')} · ${escHTML(c.by || '')} · <span class="muted">${escHTML(c.date || '')} ${escHTML(c.time || '')}</span>${c.note ? '<div style="font-size:12px;white-space:pre-wrap">' + escHTML(c.note) + '</div>' : ''}</span></div>`).join('')
+      : '<div class="muted" style="font-size:12px">Тэмдэглэл алга</div>'}`;
+}
+// Байрлан эмчлүүлэх адууг (өөр хуудаснаас) шууд нээх
+function openInpHorse(inpId, tab) {
+  const i = (STATE.inps || []).find(x => String(x.id) === String(inpId));
+  if (!i) { toast('Бичлэг олдсонгүй', 'err'); return; }
+  if (!canAccess('inpatient')) { toast('Байрлан эмчлүүлэх хуудсанд хандах эрх алга', 'err'); return; }
+  if (i.discharged) { openDischargedCard(inpId, tab); return; }
+  if (INP_VIEW === 'out') INP_VIEW = 'cards';
+  STATE.selectedI = String(i.id);
+  if (STATE.activePage !== 'inpatient') nav('inpatient'); else renderInpatient();
+  renderIDetail(); openInpDrawer();
+  const t = tab || 'info';
+  $$('.tab[data-itab]').forEach(x => x.classList.toggle('active', x.dataset.itab === t));
+  $$('.itab').forEach(x => x.classList.toggle('hidden', x.dataset.itab !== t));
+  if (t === 'info') setTimeout(() => { const c = $('#inp-call-card'); if (c && inpCallState(i).due && c.scrollIntoView) c.scrollIntoView({ behavior: 'smooth', block: 'start' }); }, 250);
+}
+
+// ── 🔔 Хяналтын самбарын сануулгууд ──────────────────────────
+function renderDashAlerts() {
+  ensureReviewStyles();
+  const box = $('#d-alerts'); if (!box || !STATE.user) return;
+  const out = [];
+  const me = STATE.user.name;
+  const open = dxOpenList();
+  if (canApproveDx()) {
+    const p = open.filter(e => e.dxStatus === 'pending');
+    if (p.length) out.push(`<div class="d-alert d-alert-o" onclick="RV.tab='dx';RV.dxShow='open';nav('review')"><span>🩺 Батлах хүлээгдэж буй онош: <b>${p.length}</b> <small>· ${escHTML([...new Set(p.map(e => e.docName))].join(', '))}</small></span><span>Хянах ›</span></div>`);
+  }
+  const mineRet = open.filter(e => e.dxStatus === 'returned' && _isMyExam(e));
+  if (mineRet.length) out.push(`<div class="d-alert d-alert-r" onclick="openDxModal('${escHTML(mineRet[0].id)}')"><span>↩ Ахлах эмч таны <b>${mineRet.length}</b> оношийг буцаасан <small>· ${escHTML(mineRet.map(e => e.horse + (e.dxReturnNote ? ': ' + e.dxReturnNote : '')).join(' · ').slice(0, 160))}</small></span><span>Засах ›</span></div>`);
+  const minePend = open.filter(e => e.dxStatus === 'pending' && _isMyExam(e) && !canApproveDx());
+  if (minePend.length) out.push(`<div class="d-alert d-alert-p" onclick="openDxModal('${escHTML(minePend[0].id)}')"><span>⏳ Таны <b>${minePend.length}</b> онош ахлах эмчээр хянагдаж байна <small>· батлагдсаны дараа хуудсанд онош хэвлэгдэнэ</small></span><span>›</span></div>`);
+  if (canAccess('inpatient')) {
+    const due = callDueList();
+    if (due.length) {
+      const mine = due.filter(_myInp);
+      out.push(`<div class="d-alert d-alert-r" onclick="INP_VIEW='cards';INP_DAYS_F='call';nav('inpatient')"><span>📞 ${callCfg().firstDay}+ хоносон, эзэнд нь мэдээлээгүй адуу: <b>${due.length}</b>${mine.length ? ' <small>· таных ' + mine.length + ': ' + escHTML(mine.map(i => i.horse).join(', ').slice(0, 120)) + '</small>' : ''}</span><span>Залгах ›</span></div>`);
+    }
+  }
+  if (canAccess('review') && (canApproveDx() || ['Ерөнхий эмч', 'Админ', 'Менежер'].includes(STATE.user.role))) {
+    const h = new Date().getHours();
+    const miss = (STATE.inps || []).filter(i => !i.discharged && inpTreatStatus(i, todayStr()) === 'missing');
+    if (miss.length && h >= 10) out.push(`<div class="d-alert d-alert-p" onclick="RV.tab='treat';RV.tDate='';RV.tMode='day';nav('review')"><span>📝 Өнөөдөр эмчилгээ бичигдээгүй адуу: <b>${miss.length}</b> <small>· ${escHTML([...new Set(miss.map(i => { const d = inpDoctorOf(i); return d ? d.name : 'эмчгүй'; }))].join(', '))}</small></span><span>Хянах ›</span></div>`);
+  }
+  box.innerHTML = out.length ? '<div class="d-alerts">' + out.join('') + '</div>' : '';
+}
+// Шинэ онош ирэх / 3 хоносон адуу гарах үед дэлгэцэн дээр мэдэгдэл (нэг сессэд нэг удаа)
+let __dxPendSeen = null, __callToastDone = false;
+function reviewNotify() {
+  if (!STATE.user || typeof __fbInitialLoadDone === 'undefined') return;
+  const pend = dxOpenList().filter(e => e.dxStatus === 'pending');
+  if (canApproveDx()) {
+    const ids = new Set(pend.map(e => String(e.id)));
+    if (__dxPendSeen && __fbInitialLoadDone) {
+      const fresh = pend.filter(e => !__dxPendSeen.has(String(e.id)));
+      if (fresh.length) toast('🩺 Батлах шинэ онош: ' + fresh.map(e => e.horse + ' (' + (e.docName || '') + ')').join(', ').slice(0, 120), 'ok');
+    }
+    if (__fbInitialLoadDone || !window.__fbReady) __dxPendSeen = ids;
+  }
+  if (!__callToastDone && (__fbInitialLoadDone || !window.__fbReady) && canAccess('inpatient')) {
+    __callToastDone = true;
+    const mine = callDueList().filter(_myInp);
+    if (mine.length) setTimeout(() => toast('📞 Таны ' + mine.length + ' адуу ' + callCfg().firstDay + '+ хоносон — эзэнд нь залгаж тэмдэглэл бичнэ үү: ' + mine.map(i => i.horse).join(', ').slice(0, 100), 'err'), 1500);
+  }
+}
+
+// ── ⚙️ Тохиргоо: эзэнд мэдээлэх сануулга ─────────────────────
+function renderCallCfg() {
+  const C = callCfg();
+  if ($('#call-cfg-first')) $('#call-cfg-first').value = C.firstDay;
+  if ($('#call-cfg-rep')) $('#call-cfg-rep').value = C.repeatDays;
+}
+function saveCallCfgFromForm() {
+  if (!canManageUsers()) { toast('⛔ Зөвхөн админ', 'err'); return; }
+  const first = parseInt(($('#call-cfg-first') || {}).value, 10), rep = parseInt(($('#call-cfg-rep') || {}).value, 10);
+  if (!(first >= 1 && first <= 60)) { toast('Хоног 1–60 хооронд байна', 'err'); return; }
+  STATE.callCfg = { firstDay: first, repeatDays: rep >= 0 && rep <= 60 ? rep : 0 };
+  lsSet('mt_call_cfg', STATE.callCfg);
+  fbSaveClinicConfig();
+  writeLog('Эзэнд мэдээлэх сануулгын тохиргоо', '', '', first + ' хоноход' + (STATE.callCfg.repeatDays ? ', ' + STATE.callCfg.repeatDays + ' хоног тутам' : ''));
+  toast('✅ Хадгалагдлаа', 'ok');
+}
 
 function bumpActivity() { /* no-op */ }
 
@@ -10628,6 +11567,7 @@ const PAGE_DEPS = {
   history:   ['exams', 'horses', 'fins', 'config'],
   report:    ['exams', 'fins', 'inps', 'doctors', 'horses', 'config'],
   planned:   ['trips', 'exams', 'horses', 'doctors', 'config'],
+  review:    ['exams', 'inps', 'fins', 'users', 'doctors', 'config'],
   admin:     ['users', 'staff', 'logs', 'deletedExams', 'doctors', 'config']
 };
 const __dirtyCols = new Set();
@@ -10769,6 +11709,8 @@ function fbSaveClinicConfig() {
     bonusCfg:        STATE.bonusCfg        || null,
     examNumCfg:      STATE.examNumCfg      || null,
     inpLocations:    Array.isArray(STATE.inpLocations) ? STATE.inpLocations : null,
+    customRoles:     Array.isArray(STATE.customRoles) ? STATE.customRoles : [],
+    callCfg:         STATE.callCfg || null,
     _updatedAt: ms,
     _writer: window.__fbDeviceId || 'unknown'
   });
@@ -10912,6 +11854,10 @@ function fbApplyRecord(colName, docData) {
       if (docData.examNumCfg && typeof docData.examNumCfg === 'object') { STATE.examNumCfg = docData.examNumCfg; lsSet('mt_examnum_cfg', STATE.examNumCfg); try { if (STATE.activePage === 'admin') renderExamNumCfg(); } catch(_) {} }
       // 📍 Байрлан эмчлүүлэх байрлалууд
       if (Array.isArray(docData.inpLocations)) { STATE.inpLocations = docData.inpLocations.slice(); lsSet('mt_inp_locations', STATE.inpLocations); try { if (STATE.activePage === 'admin') renderInpLocCfg(); } catch(_) {} }
+      // 👥 Админ нэмсэн дүрүүд
+      if (Array.isArray(docData.customRoles)) { STATE.customRoles = docData.customRoles.slice(); lsSet('mt_custom_roles', STATE.customRoles); try { populateLoginUsers(); } catch(_) {} }
+      // 📞 Эзэнд мэдээлэх сануулга
+      if (docData.callCfg && typeof docData.callCfg === 'object') { STATE.callCfg = docData.callCfg; lsSet('mt_call_cfg', STATE.callCfg); try { if (STATE.activePage === 'admin') renderCallCfg(); } catch(_) {} }
       // Шилжилтийн үе: нэгтгэсэн үр дүнг сервэрт нэг удаа буцаан бичиж
       // бүх төхөөрөмжийн тохиргоог нийлүүлнэ (дараа нь _localMs тэглэгдэхгүй).
       if (!_localMs && _localCount > 0) { try { fbSaveClinicConfig(); } catch(e){} }
@@ -11016,7 +11962,7 @@ function fbApplyRecord(colName, docData) {
       const localMs  = parseFloat(lc.ms) || parseFloat(lc._updatedAt) || parseFloat(lc.createdAt) || 0;
       if (remoteMs >= localMs) {
         // Remote шинэ — array талбаруудыг хамгаалж нэгтгэнэ
-        const ARRAY_FIELDS = ['prepayments','payments','log','services','meds','images','results','history'];
+        const ARRAY_FIELDS = ['prepayments','payments','log','services','meds','images','results','history','calls','plans','dxHistory'];
         ARRAY_FIELDS.forEach(f => {
           if ((!Array.isArray(r[f]) || r[f].length === 0) && Array.isArray(lc[f]) && lc[f].length) r[f] = lc[f];
         });
