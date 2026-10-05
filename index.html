@@ -646,7 +646,7 @@
           <div id="inp-discharged-bar" class="hidden" style="margin-top:14px;padding:10px 12px;border-radius:10px;background:var(--gold-soft,#f6efdc);font-size:12.5px"></div>
           <!-- Action buttons (always visible at bottom) -->
           <div class="row" id="inp-action-row" style="justify-content:flex-end;margin-top:14px;gap:6px;flex-wrap:wrap;padding-top:14px;border-top:1px solid var(--border)">
-            <button class="btn btn-sm" onclick="cancelInpatient()" title="Андуурч хэвтүүлсэн бол хүлээлт рүү буцаах">↩ Хүлээлт рүү буцаах</button>
+            <button class="btn btn-sm" id="inp-cancel-btn" onclick="cancelInpatient()" title="Андуурч хэвтүүлсэн бол хүлээлт рүү буцаах">↩ Хүлээлт рүү буцаах</button>
             <button class="btn btn-r btn-sm" onclick="dischargeInpatient()">🚪 Гаргах ба эцсийн төлбөр</button>
           </div>
         </div>
@@ -1714,7 +1714,7 @@
 
 <div id="print-area"></div>
 
-<script src="app.js?v=20261005b"></script>
+<script src="app.js?v=20261005c"></script>
 <script src="lab.js?v=20260917"></script>
 
 <!-- PWA: service worker бүртгэх, автомат шинэчлэлт, суулгах товч -->

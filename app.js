@@ -2353,6 +2353,15 @@ function openExamDetail(eid) {
     </div>`;
   }
 
+  if (!inp && !isPlanned(e) && canEditData()) {
+    const blk = examToInpBlock(e);
+    inpHTML = `<div class="fld" style="margin-top:12px"><label>🏥 Байрлан эмчлүүлэлт</label>
+      <div style="background:var(--input);padding:10px;border-radius:8px;font-size:12.5px">
+        ${blk ? '<span class="muted">' + escHTML(blk) + '</span>'
+              : `Адуу үнэндээ байрлан эмчлүүлэх байсан бол: <button class="btn btn-xs btn-p" style="margin-left:6px" onclick="openExamToInp('${escHTML(e.id)}')">🏥 Байрлан эмчилгээнд шилжүүлэх</button>
+                 <div class="muted" style="font-size:11px;margin-top:4px">Нэхэмжлэх давхардахгүй — төлсөн мөнгө урьдчилгаа болно.</div>`}
+      </div></div>`;
+  }
   const anam = examAnamnesis(e);
   $('#ex-detail-title').innerHTML = `📋 ${escHTML(e.horse)} ${e.examNum?'<span class="badge b-o" style="margin-left:6px">'+escHTML(e.examNum)+'</span>':''}${isPlanned(e) ? ' <span class="badge b-p" style="margin-left:4px">🗓️ Төлөвлөгөөт' + (e.tripLocation ? ' · ' + escHTML(e.tripLocation) : '') + '</span>' : ''}`;
   $('#ex-detail-body').innerHTML = `
@@ -4018,6 +4027,11 @@ function renderIDetail() {
     if (act) act.classList.remove('hidden');
     if (pre) pre.classList.remove('hidden');
   }
+  const cBtn = $('#inp-cancel-btn');
+  if (cBtn) {
+    cBtn.textContent = i.fromExam ? '↩ Үзлэг рүү буцаах' : '↩ Хүлээлт рүү буцаах';
+    cBtn.title = i.fromExam ? 'Түүхээс шилжүүлснийг цуцлаад анхны үзлэг, нэхэмжлэхийг сэргээнэ (эмчилгээ бичээгүй үед)' : 'Андуурч хэвтүүлсэн бол хүлээлт рүү буцаах';
+  }
 
   // Wire up tab switcher
   $$('.tab[data-itab]').forEach(t => {
@@ -4050,6 +4064,7 @@ function renderInpInfoTab(i) {
   const locOpts = '<option value="">— заагаагүй —</option>' + locs.map(l => `<option ${l === i.location ? 'selected' : ''}>${escHTML(l)}</option>`).join('');
   const num = inpExamNum(i);
   $('#inp-info-body').innerHTML = `
+    ${i.fromExam ? `<div style="background:var(--purple-soft);color:var(--purple);padding:8px 12px;border-radius:8px;margin-bottom:8px;font-size:12.5px;font-weight:700">🔁 Түүхээс үзлэгээс шилжүүлсэн · ${escHTML(i.fromExam.by || '')} · ${escHTML(fmtDateTime(i.fromExam.ms))}${i.fromExam.paid ? ' · ' + fmt(i.fromExam.paid) + ' урьдчилгаа болсон' : ''}</div>` : ''}
     <div style="background:var(--orange-soft);padding:8px 12px;border-radius:8px;margin-bottom:10px;font-weight:800;color:var(--orange-dark);font-size:14px">🔢 Үзлэгийн хуудасны дугаар: ${num ? escHTML(num) : '<span class="muted" style="font-weight:600">— олдсонгүй (үзлэг холбогдоогүй)</span>'}</div>
     <div class="fg r2">
       <div class="fld"><label>Эзэн</label><div class="bold">${escHTML(i.owner)}</div></div>
@@ -4593,6 +4608,8 @@ function deleteInpPrepay(idx) {
 function cancelInpatient() {
   const i = STATE.inps.find(x => String(x.id) === String(STATE.selectedI));
   if (!i) return;
+  // 🏥 Түүхээс шилжүүлсэн адуу: хүлээлт рүү БИШ — анхны үзлэг/нэхэмжлэхийг сэргээнэ (үзлэг устгагдахгүй)
+  if (i.fromExam) { revertInpToExam(i.id); return; }
   if (!confirm(
     'Энэ байрлагчийг хүлээлт рүү буцаах уу?\n\n' +
     'Байрлан эмчилгээний бичлэг бүрмөсөн арилна.\n' +
@@ -9329,7 +9346,7 @@ function renderHistory() {
       return `
         <tr data-eid="${escHTML(e.id)}" style="cursor:pointer">
           <td>${rowNum}</td>
-          <td>${e.examNum?'<span class="badge b-o" style="font-weight:800">'+escHTML(e.examNum)+'</span>':'—'}${kindBadge(e, true)}</td>
+          <td>${e.examNum?'<span class="badge b-o" style="font-weight:800">'+escHTML(e.examNum)+'</span>':'—'}${kindBadge(e, true)}${e.inpatient ? ' <span class="badge b-p" style="font-size:10px" title="Байрлан эмчилгээ">🏥</span>' : ''}</td>
           <td>${escHTML(e.date)}</td>
           <td>${iabd?escHTML(iabd):'<span class="muted">—</span>'}</td>
           <td class="h-diag" title="${escHTML(e.horse||'')}" style="max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escHTML(e.horse)}</td>
@@ -9338,7 +9355,7 @@ function renderHistory() {
           <td class="h-diag" title="${escHTML((e.diagnosis||'') + (anamLine ? '\nАнамнез: ' + anamLine : ''))}">${escHTML(e.diagnosis)}${anamLine ? '<div class="muted" style="font-size:10px;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">📝 ' + escHTML(anamLine) + '</div>' : ''}</td>
           ${seeFin ? '<td class="bold">'+fmt(e.amount)+'</td>' : ''}
           ${seeFin ? '<td><span class="badge '+cls+'">'+status+'</span></td>' : ''}
-          ${canEdit ? `<td><button class="btn btn-xs btn-sm" onclick="event.stopPropagation();openEditExam('${e.id}')">✏️</button></td>` : '<td></td>'}
+          ${canEdit ? `<td style="white-space:nowrap"><button class="btn btn-xs btn-sm" onclick="event.stopPropagation();openEditExam('${e.id}')">✏️</button>${(e.date >= addDaysStr(todayStr(), -30) && !examToInpBlock(e)) ? ` <button class="btn btn-xs btn-sm" title="Байрлан эмчилгээнд шилжүүлэх (сүүлийн 30 хоногийн үзлэг; хуучныг дэлгэрэнгүйгээс)" onclick="event.stopPropagation();openExamToInp('${e.id}')">🏥</button>` : ''}</td>` : '<td></td>'}
         </tr>
       `;
     }).join('');
@@ -11488,6 +11505,190 @@ function saveCallCfgFromForm() {
   fbSaveClinicConfig();
   writeLog('Эзэнд мэдээлэх сануулгын тохиргоо', '', '', first + ' хоноход' + (STATE.callCfg.repeatDays ? ', ' + STATE.callCfg.repeatDays + ' хоног тутам' : ''));
   toast('✅ Хадгалагдлаа', 'ok');
+}
+
+// ============================================================
+// 🏥 ҮЗЛЭГЭЭР ГАРГАСАН АДУУГ БАЙРЛАН ЭМЧИЛГЭЭНД ШИЛЖҮҮЛЭХ (2026-10-05-3)
+// Эмч «Үзлэг дуусгах» дарж нэхэмжлэх үүссэн боловч адуу үнэндээ байрлан
+// эмчлүүлэх байсан тохиолдолд Түүхээс шилжүүлнэ. Давхар нэхэмжлэл, мөнгө
+// алдагдахаас сэргийлж:
+//   • үзлэгийн нэхэмжлэх устгагдаж, үзлэгийн төлбөр байрлангийн эцсийн
+//     нэхэмжлэхэд (гарахад) initialAmount болж орно;
+//   • төлсөн мөнгө (огноо, хэлбэр хэвээр) урьдчилгаа болж шилжинэ («зээл» биш);
+//   • анхны нэхэмжлэхийн хуулбар inp.fromExam-д хадгалагдаж, эмчилгээ/нэмэлт
+//     урьдчилгаа бичигдээгүй бол «↩ Үзлэг рүү буцаах»-аар яг хэвээр нь сэргээнэ.
+// ============================================================
+function examInpOf(e) { return e ? (STATE.inps || []).find(i => String(i.examId) === String(e.id)) : null; }
+function _sameHorseActiveInp(e) {
+  return (STATE.inps || []).find(i => !i.discharged && String(i.examId) !== String(e.id) &&
+    ((e.horseId && i.horseId && String(i.horseId) === String(e.horseId)) ||
+     (String(i.horse || '').trim() === String(e.horse || '').trim() && String(i.owner || '').trim() === String(e.owner || '').trim())));
+}
+// Шилжүүлэх боломжгүй шалтгаан ('' = боломжтой)
+function examToInpBlock(e) {
+  if (!e) return 'Үзлэг олдсонгүй';
+  if (isPlanned(e)) return 'Төлөвлөгөөт (хээрийн) үзлэгийг байрлан эмчилгээнд шилжүүлэхгүй';
+  if (examInpOf(e)) return 'Энэ үзлэг аль хэдийн байрлан эмчилгээнд холбогдсон';
+  const act = _sameHorseActiveInp(e);
+  if (act) return '«' + (act.horse || '') + '» одоо байрлан эмчлүүлж байна (орсон: ' + (act.admittedDate || '') + ')';
+  if (!e.date) return 'Үзлэгийн огноо алга';
+  if (e.date > todayStr()) return 'Ирээдүйн огноотой үзлэг';
+  return '';
+}
+function canConvertExamToInp(e) { return !!e && canEditData() && !examToInpBlock(e); }
+// Нэхэмжлэхийн бодит төлбөрүүд (хуучин «paid» тугтай, payments-гүй бичлэгийг мөн тооцно)
+function _finRealPayments(f) {
+  const ps = getPayments(f);
+  if (!ps.length && f.paid === true && (parseFloat(f.amount) || 0) > 0)
+    return [{ amount: parseFloat(f.amount) || 0, method: f.method || 'бэлэн', date: f.paidDate || f.date || todayStr(), ms: parseFloat(f.paidMs) || 0 }];
+  return ps;
+}
+let __toInpExamId = null;
+function ensureToInpModal() {
+  if (document.getElementById('to-inp-modal')) return;
+  const m = document.createElement('div');
+  m.className = 'mod-bd'; m.id = 'to-inp-modal';
+  m.innerHTML = `<div class="mod" style="max-width:560px">
+    <div class="mod-t" id="ti-title">🏥 Байрлан эмчилгээнд шилжүүлэх</div>
+    <div id="ti-body" style="max-height:66vh;overflow-y:auto"></div>
+    <div class="mod-actions"><button class="btn btn-sm" onclick="closeModal('to-inp-modal')">Болих</button>
+      <button class="btn btn-sm btn-p" id="ti-ok" onclick="convertExamToInp()">🏥 Шилжүүлэх</button></div></div>`;
+  document.body.appendChild(m);
+}
+function openExamToInp(examId) {
+  const e = _dxExam(examId);
+  if (!canEditData()) { toast('⛔ Шилжүүлэх эрх: Ерөнхий эмч / Ахлах эмч / Админ (эсвэл «Засах эрх»-тэй)', 'err'); return; }
+  const block = examToInpBlock(e);
+  if (block) { toast('⛔ ' + block, 'err'); return; }
+  ensureToInpModal(); __toInpExamId = String(e.id);
+  const fins = (STATE.fins || []).filter(f => String(f.examId) === String(e.id));
+  const docOpts = (STATE.doctors || []).map(d => `<option value="${escHTML(d.id)}" ${String(d.id) === String(e.docId) || (!e.docId && d.name === e.docName) ? 'selected' : ''}>${escHTML(d.name)}</option>`).join('');
+  const locOpts = '<option value="">— заагаагүй —</option>' + inpLocations().map(l => `<option>${escHTML(l)}</option>`).join('');
+  $('#ti-title').innerHTML = `🏥 Байрлан эмчилгээнд шилжүүлэх — ${escHTML(e.horse || '')} ${e.examNum ? '<span class="badge b-o">' + escHTML(e.examNum) + '</span>' : ''}`;
+  $('#ti-body').innerHTML = `
+    <div style="font-size:12.5px;line-height:1.6;margin-bottom:10px">
+      👤 <b>${escHTML(e.owner || '')}</b>${e.phone ? ' · ' + escHTML(e.phone) : ''} · 📅 үзлэг ${escHTML(e.date || '')} ${escHTML(e.time || '')} · 👨‍⚕️ ${escHTML(e.docName || '—')}<br>
+      🩺 ${escHTML(e.diagnosis || '—')} ${dxBadgeHTML(e, { small: true })}
+    </div>
+    <div class="fg r3">
+      <div class="fld"><label>Орсон огноо</label><input class="inp" type="date" id="ti-date" value="${escHTML(e.date)}" min="${escHTML(e.date)}" max="${todayStr()}" oninput="_tiPreview()" onchange="_tiPreview()"></div>
+      <div class="fld"><label>Эмчлэгч эмч</label><select class="inp" id="ti-doc">${docOpts}</select></div>
+      <div class="fld"><label>📍 Байрлал</label><select class="inp" id="ti-loc">${locOpts}</select></div>
+    </div>
+    <div id="ti-prev" style="margin-top:10px"></div>
+    <div class="muted" style="font-size:11.5px;margin-top:8px;line-height:1.5">Орсон огноо анхдагчаар үзлэгийн өдөр — адуу тэр өдрөөс хойш хэвтэж байгаа бол өөрчлөхгүй. Шилжүүлсний дараа хоногийн төлбөр, эмчилгээ, гаргалт ердийнхтэй адил. Андуурсан бол эмчилгээ бичихээс өмнө адууны карт дээрх «↩ Үзлэг рүү буцаах»-аар яг хэвээр нь сэргээнэ.</div>`;
+  __tiFins = fins;
+  _tiPreview();
+  openModal('to-inp-modal');
+}
+let __tiFins = [];
+function _tiPreview() {
+  const e = _dxExam(__toInpExamId); const box = $('#ti-prev'); if (!e || !box) return;
+  const d = ($('#ti-date') || {}).value || e.date;
+  const ms = new Date(d + 'T' + ((d === e.date && e.time) ? e.time : '12:00')).getTime();
+  const days = inpatientDays(ms);
+  const fee = DEFAULT_DAILY_FEE;
+  const fins = __tiFins;
+  let paid = 0, credit = 0;
+  fins.forEach(f => _finRealPayments(f).forEach(p => { if (p.method === 'зээл') credit += parseFloat(p.amount) || 0; else paid += parseFloat(p.amount) || 0; }));
+  const finAmt = fins.reduce((a, f) => a + (parseFloat(f.amount) || 0), 0);
+  const okDate = d >= e.date && d <= todayStr();
+  const btn = $('#ti-ok'); if (btn) btn.disabled = !okDate;
+  box.innerHTML = `<div style="background:var(--input);border-radius:10px;padding:10px 12px;font-size:12.5px;line-height:1.7">
+    ${okDate ? '' : '<div style="color:var(--red);font-weight:800">⚠ Огноо үзлэгийн өдрөөс (' + escHTML(e.date) + ') өнөөдрийн хооронд байх ёстой</div>'}
+    <div>🏨 Өнөөдрийн байдлаар <b>${days} хоног</b> · хоногийн төлбөр ${days} × ${fmt(fee)} = <b>${fmt(days * fee)}</b> <span class="muted">(хоногийн үнийг дараа нь «Төлбөр тооцоо» табаас өөрчилж болно)</span></div>
+    <div>🩺 Үзлэгийн төлбөр <b>${fmt(parseFloat(e.amount) || 0)}</b> → байрлангийн эцсийн нэхэмжлэхэд орно</div>
+    ${fins.length
+      ? `<div>🧾 Одоогийн нэхэмжлэх ${fins.length > 1 ? fins.length + ' ширхэг ' : ''}<b>${fmt(finAmt)}</b> → <b>устгагдана</b> (давхар нэхэмжлэхгүй; хуулбар нь хадгалагдана)</div>
+         ${paid ? `<div style="color:var(--green);font-weight:700">💵 Төлсөн ${fmt(paid)} → урьдчилгаа болж шилжинэ (огноо, хэлбэр хэвээр — мөнгө алдагдахгүй)</div>` : '<div class="muted">💵 Төлбөр бүртгэгдээгүй</div>'}
+         ${credit ? `<div class="muted">«Зээл» гэж тэмдэглэсэн ${fmt(credit)} шилжихгүй — гарахад үлдэгдэлд тооцогдоно</div>` : ''}`
+      : '<div class="muted">🧾 Энэ үзлэгт нэхэмжлэх олдсонгүй — гарахад нэг нэхэмжлэх үүснэ</div>'}
+  </div>`;
+}
+function convertExamToInp() {
+  const e = _dxExam(__toInpExamId);
+  if (!canEditData()) { toast('⛔ Эрх алга', 'err'); return; }
+  const block = examToInpBlock(e); // өөр төхөөрөмжөөс энэ хооронд шилжүүлсэн эсэхийг дахин шалгана
+  if (block) { toast('⛔ ' + block, 'err'); closeModal('to-inp-modal'); return; }
+  const d = ($('#ti-date') || {}).value || e.date;
+  if (!(d >= e.date && d <= todayStr())) { toast('Орсон огноо буруу', 'err'); return; }
+  const admMs = new Date(d + 'T' + ((d === e.date && e.time) ? e.time : '12:00')).getTime();
+  const docId = ($('#ti-doc') || {}).value || e.docId || '';
+  const doc = (STATE.doctors || []).find(x => String(x.id) === String(docId));
+  const loc = ($('#ti-loc') || {}).value || '';
+  const fins = (STATE.fins || []).filter(f => String(f.examId) === String(e.id));
+  const me = (STATE.user && STATE.user.name) || '', now = nowMs();
+  // Төлбөр → урьдчилгаа (зээл биш)
+  const prepayments = [];
+  fins.forEach(f => _finRealPayments(f).forEach(p => {
+    if (p.method === 'зээл') return;
+    prepayments.push({ amount: parseFloat(p.amount) || 0, method: p.method || 'бэлэн', purpose: 'Үзлэгийн төлбөр (үзлэгээс шилжсэн)',
+      date: p.date || f.paidDate || f.date || todayStr(), ms: parseFloat(p.ms) || parseFloat(f.paidMs) || now, fromExamFin: String(f.id) });
+  }));
+  const paidSum = prepayments.reduce((a, p) => a + p.amount, 0);
+  if (!confirm('🏥 «' + e.horse + '»-г байрлан эмчилгээнд шилжүүлэх үү?\n\n' +
+      'Орсон огноо: ' + d + ' · ' + inpatientDays(admMs) + ' хоног\n' +
+      (fins.length ? 'Үзлэгийн нэхэмжлэх ' + fmt(fins.reduce((a, f) => a + (parseFloat(f.amount) || 0), 0)) + ' устгагдаж, гарахад нэг нэхэмжлэх үүснэ.\n' : '') +
+      (paidSum ? 'Төлсөн ' + fmt(paidSum) + ' → урьдчилгаа.\n' : '') +
+      '\nАндуурсан бол адууны карт дээрх «↩ Үзлэг рүү буцаах».')) return;
+  const snaps = fins.map(f => JSON.parse(JSON.stringify(f))); // undefined талбаргүй хуулбар
+  const inp = {
+    id: uid(), examId: e.id, horseId: e.horseId || '',
+    horse: e.horse || '', owner: e.owner || '', phone: e.phone || '',
+    diagnosis: e.diagnosis || '', examNum: e.examNum || '',
+    docId: doc ? doc.id : (e.docId || ''), docName: doc ? doc.name : (e.docName || ''),
+    location: loc, admittedMs: admMs, admittedDate: d, admittedBy: me,
+    initialAmount: parseFloat(e.amount) || 0,
+    services: Array.isArray(e.services) ? e.services.map(s => ({ name: s.name || '', price: parseFloat(s.price) || 0 })) : [],
+    meds: Array.isArray(e.meds) ? JSON.parse(JSON.stringify(e.meds)) : [],
+    log: [], prepayments, discharged: false,
+    fromExam: { ms: now, by: me, device: _deviceLabel(), examDate: e.date || '', fins: snaps, paid: paidSum },
+    ms: now
+  };
+  STATE.inps.push(inp);
+  // Үзлэгийн нэхэмжлэхийг устгана (хуулбар inp.fromExam.fins-д)
+  fins.forEach(f => { STATE.deletedIds.add(String(f.id)); fbDeleteDoc('fins', String(f.id)); });
+  const finIds = new Set(fins.map(f => String(f.id)));
+  STATE.fins = STATE.fins.filter(f => !finIds.has(String(f.id)));
+  e.inpatient = true; e.ms = now;
+  saveAll();
+  fbSaveRecord('inps', inp);
+  fbSaveRecord('exams', e);
+  writeLog('Үзлэгээс байрлан эмчилгээнд шилжүүлэв', inp.id, e.horse + ' — ' + (inp.docName || ''),
+    'Орсон: ' + d + ' · нэхэмжлэх ' + fins.length + ' устгав' + (paidSum ? ' · ' + fmt(paidSum) + ' урьдчилгаа болгов' : '') + ' · ' + _deviceLabel(), e.examNum);
+  closeModal('to-inp-modal');
+  try { closeModal('exam-detail-modal'); } catch (_) {}
+  updateBadges();
+  toast('🏥 ' + e.horse + ' байрлан эмчилгээнд шилжлээ', 'ok');
+  openInpHorse(inp.id, 'info');
+}
+// ↩ Шилжүүлгийг буцаах — эмчилгээ / нэмэлт урьдчилгаа бичигдээгүй үед
+function revertInpToExam(inpId) {
+  const i = (STATE.inps || []).find(x => String(x.id) === String(inpId || STATE.selectedI));
+  if (!i || !i.fromExam) return;
+  if (!canEditData()) { toast('⛔ Буцаах эрх алга', 'err'); return; }
+  if (i.discharged) { toast('Адуу гарсан байна — эхлээд «↩ Буцаан хэвтүүлэх»', 'err'); return; }
+  const logs = (Array.isArray(i.log) ? i.log : []).length;
+  const extraPre = getInpPrepayments(i).filter(p => !p.fromExamFin).length;
+  if (logs || extraPre) { toast('⛔ ' + (logs ? logs + ' эмчилгээний бичлэг' : '') + (logs && extraPre ? ', ' : '') + (extraPre ? extraPre + ' нэмэлт урьдчилгаа' : '') + ' бичигдсэн тул үзлэг рүү буцаах боломжгүй — «🚪 Гаргах»-аар тооцоог хаана уу', 'err'); return; }
+  const e = _dxExam(i.examId);
+  const snaps = Array.isArray(i.fromExam.fins) ? i.fromExam.fins : [];
+  if (!confirm('↩ «' + i.horse + '»-г байрлан эмчилгээнээс үзлэг рүү буцаах уу?\n\n' +
+      'Анхны нэхэмжлэх ' + snaps.length + ' ширхэг (' + fmt(snaps.reduce((a, f) => a + (parseFloat(f.amount) || 0), 0)) + ') төлбөрийн хамт сэргээгдэнэ.\n' +
+      'Байрлан эмчилгээний бичлэг устгагдана.')) return;
+  const now = nowMs();
+  // Устгасан id sync-д хориглогддог тул ШИНЭ id-тай сэргээнэ
+  const restored = snaps.map(s => Object.assign({}, s, { id: uid(), ms: now, restoredFrom: String(s.id) }));
+  restored.forEach(f => { STATE.fins.push(f); fbSaveRecord('fins', f); });
+  STATE.deletedIds.add(String(i.id)); fbDeleteDoc('inps', String(i.id));
+  STATE.inps = STATE.inps.filter(x => String(x.id) !== String(i.id));
+  if (e) { e.inpatient = false; e.ms = now; fbSaveRecord('exams', e); }
+  saveAll();
+  writeLog('Байрлан эмчилгээг үзлэг рүү буцаав', i.id, i.horse + ' — ' + (i.docName || ''), 'Нэхэмжлэх ' + restored.length + ' сэргээв · ' + _deviceLabel(), inpExamNum(i));
+  STATE.selectedI = null; closeInpDrawer();
+  updateBadges();
+  toast('↩ ' + i.horse + ' үзлэг рүү буцлаа — нэхэмжлэх сэргээгдлээ', 'ok');
+  renderInpatient();
 }
 
 function bumpActivity() { /* no-op */ }
