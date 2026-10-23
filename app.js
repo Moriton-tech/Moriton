@@ -979,6 +979,7 @@ function loadAll() {
   STATE.callCfg = lsGet('mt_call_cfg', null); // 📞 эзэнд мэдээлэх сануулга
   STATE.medCatalog = lsGet('mt_med_catalog', []); if (!Array.isArray(STATE.medCatalog)) STATE.medCatalog = []; // 💊 эмийн каталог (нэгжийн үнэ)
   STATE.employees = lsGet('mt_employees', []); if (!Array.isArray(STATE.employees)) STATE.employees = []; // 🕒 ажилтны жагсаалт (цагийн бүртгэл)
+  STATE.dailyCfg = lsGet('mt_daily_cfg', null); // 📋 өдрийн мэдээний тохиргоо (салбар, боловсруулсан)
   STATE.user = lsGet('mt_user', null);
   STATE.syncURL = ''; // Apps Script sync устгагдсан — Firebase ашиглана
   if (STATE.doctors.length === 0) STATE.doctors = [...DEFAULT_DOCS];
@@ -3496,10 +3497,11 @@ function setInpField(field, value) {
     const d = (STATE.doctors || []).find(x => String(x.id) === String(value));
     i.docId = d ? d.id : ''; i.docName = d ? d.name : (i.docName || '');
   } else if (field === 'location') i.location = value || '';
+  else if (field === 'severity') i.severity = value || ''; // 🔴🟠🟢 хүнд/дунд/хөнгөн (Өдрийн мэдээнд тоологдоно)
   i.ms = nowMs();
   saveAll(); fbSaveRecord('inps', i);
   writeLog('Байрлан эмчлүүлэх мэдээлэл засав', i.id, i.horse,
-    field === 'docId' ? 'Эмч: «' + (before.docName || '') + '» → «' + (i.docName || '') + '»' : 'Байрлал: «' + (before.location || '') + '» → «' + (i.location || '') + '»');
+    field === 'docId' ? 'Эмч: «' + (before.docName || '') + '» → «' + (i.docName || '') + '»' : field === 'severity' ? 'Зэрэглэл: «' + (i.severity || '—') + '»' : 'Байрлал: «' + (before.location || '') + '» → «' + (i.location || '') + '»');
   renderInpatient();
   toast('✅ Хадгалагдлаа', 'ok');
 }
@@ -4121,6 +4123,7 @@ function renderInpInfoTab(i) {
       <div class="fld"><label>📍 Байрлал</label><select class="inp" onchange="setInpField('location', this.value)">${locOpts}</select></div>
       <div class="fld"><label>Орсон огноо</label><div class="bold">${escHTML(i.admittedDate)}${i.discharged ? ' → ' + escHTML(i.dischargedDate || '') : ''}</div></div>
       <div class="fld"><label>Хоног</label><div class="bold">${inpatientDays(i.admittedMs, i.dischargedMs)}</div></div>
+      <div class="fld"><label>Зэрэглэл <span class="muted" style="font-weight:400;font-size:10px">(Өдрийн мэдээнд)</span></label><select class="inp" onchange="setInpField('severity', this.value)">${(typeof INP_SEVERITY !== 'undefined' ? INP_SEVERITY : [['', '—'], ['Хүнд', 'Хүнд'], ['Дунд', 'Дунд'], ['Хөнгөн', 'Хөнгөн']]).map(s => `<option value="${escHTML(s[0])}" ${(i.severity || '') === s[0] ? 'selected' : ''}>${escHTML(s[1])}</option>`).join('')}</select></div>
     </div>
     <div class="fld" style="margin-top:8px"><label>Анхны онош ${(() => { const ex = i.examId ? _dxExam(i.examId) : null; return ex ? dxBadgeHTML(ex, { small: true }) + (dxIsOpen(ex) ? ` <a href="#" style="font-size:11px" onclick="openDxModal('${escHTML(ex.id)}');return false;">хянах ›</a>` : '') : ''; })()}</label>
       <div style="background:var(--input);padding:10px;border-radius:8px;font-size:13px">${escHTML(i.diagnosis)}</div>
@@ -7219,6 +7222,8 @@ function renderKPIDocDetail(ranked, periodExams, periodInp, R, dayList) {
 // REPORT
 // ============================================================
 function initReport() {
+  // 📋 Өдрийн мэдээ карт
+  try { if (typeof renderDailyReport === 'function') renderDailyReport(); } catch (e) { console.error('daily report', e); }
   // Wire up tab switcher
   $$('.tab[data-rper]').forEach(t => {
     t.onclick = () => {
@@ -8641,7 +8646,7 @@ async function fbFetchAllData(onProgress) {
       removedServices: STATE.removedServices || [], staffSchedule: STATE.staffSchedule || {},
       labSvcOn: STATE.labSvcOn || [], labSvcOff: STATE.labSvcOff || [],
       bonusCfg: STATE.bonusCfg || null, examNumCfg: STATE.examNumCfg || null, inpLocations: STATE.inpLocations || null, customRoles: STATE.customRoles || [], callCfg: STATE.callCfg || null,
-      medCatalog: STATE.medCatalog || [], employees: STATE.employees || []
+      medCatalog: STATE.medCatalog || [], employees: STATE.employees || [], dailyCfg: STATE.dailyCfg || null
     };
     return out;
   }
@@ -11818,12 +11823,15 @@ document.addEventListener('DOMContentLoaded', () => {
 //   fins/{finId}             — санхүү бүр тусдаа document
 //   inps/{inpId}             — байрлагч бүр тусдаа document
 //   waiting/{waitId}         — хүлээлт бүр тусдаа document
-//   staff/{staffId}          — ажилтан бүр тусдаа document
+//   staff/{YYYY-MM-DD}       — өдрийн roster {active, duty} + 🕒 цагийн код {codes:{empId}} + 📋 өдрийн мэдээний гараар утга {daily}
+//   staff/ts-{YYYY-MM}       — 🕒 сарын мета (ажиллавал зохих өдөр, тайлбар)
 //   doctors/{doctorId}       — эмч бүр тусдаа document
 //   users/{userName}         — хэрэглэгч бүр тусдаа document
 //   logs/{logId}             — лог бүр тусдаа document
 //   deletedExams/{archId}    — устгасан үзлэг бүр тусдаа document
-//   clinic_config/main       — тохиргоо (servicePrices, customServices...)
+//   clinic_config/main       — тохиргоо (servicePrices, customServices, medCatalog 💊, employees 🕒, dailyCfg 📋...)
+//   labs: direct:true + finId — 🩸 адуугүй сорьц; fins: kind:'lab'
+//   inps: course[] 💊 курс, disp{} эмийн санчийн тэмдэглэгээ, severity, log[].slot
 // ============================================================
 
 // Firestore SDK функцүүд (firebase.js-ээс)
@@ -12019,6 +12027,7 @@ function fbSaveClinicConfig() {
     callCfg:         STATE.callCfg || null,
     medCatalog:      Array.isArray(STATE.medCatalog) ? STATE.medCatalog : [],
     employees:       Array.isArray(STATE.employees) ? STATE.employees : [],
+    dailyCfg:        STATE.dailyCfg || null,
     _updatedAt: ms,
     _writer: window.__fbDeviceId || 'unknown'
   });
@@ -12170,6 +12179,8 @@ function fbApplyRecord(colName, docData) {
       if (Array.isArray(docData.medCatalog)) { STATE.medCatalog = docData.medCatalog.slice(); lsSet('mt_med_catalog', STATE.medCatalog); try { if (STATE.activePage === 'pharmacy' && typeof renderPharmacy === 'function') renderPharmacy(); } catch(_) {} }
       // 🕒 Ажилтны жагсаалт (цагийн бүртгэл)
       if (Array.isArray(docData.employees)) { STATE.employees = docData.employees.slice(); lsSet('mt_employees', STATE.employees); try { if (STATE.activePage === 'timesheet' && typeof renderTimesheet === 'function') renderTimesheet(); } catch(_) {} }
+      // 📋 Өдрийн мэдээний тохиргоо
+      if (docData.dailyCfg && typeof docData.dailyCfg === 'object') { STATE.dailyCfg = docData.dailyCfg; lsSet('mt_daily_cfg', STATE.dailyCfg); }
       // Шилжилтийн үе: нэгтгэсэн үр дүнг сервэрт нэг удаа буцаан бичиж
       // бүх төхөөрөмжийн тохиргоог нийлүүлнэ (дараа нь _localMs тэглэгдэхгүй).
       if (!_localMs && _localCount > 0) { try { fbSaveClinicConfig(); } catch(e){} }

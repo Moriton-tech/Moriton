@@ -1021,6 +1021,9 @@
           <div class="ph-r"><select class="inp" id="rp-kind" style="width:auto;padding:6px 10px;font-size:12px" onchange="onKindFilterChange('rp-kind')"><option value="all">Бүх үзлэг</option><option value="clinic">Зөвхөн клиник</option><option value="planned">Зөвхөн төлөвлөгөөт (ТҮ)</option></select><span id="rp-fin-lock"></span></div>
         </div>
 
+        <!-- 📋 Өдрийн мэдээ (салбарын өдөр бүрийн мэдээ) — dailyreport.js зурна -->
+        <div class="card" id="dr-card"></div>
+
         <div class="card">
           <div class="tabs">
             <button class="tab active" data-rper="d">Өдөр</button>
@@ -1802,6 +1805,7 @@
 <script src="lab.js?v=20261023"></script>
 <script src="pharmacy.js?v=20261023"></script>
 <script src="timesheet.js?v=20261023"></script>
+<script src="dailyreport.js?v=20261023"></script>
 
 <!-- PWA: service worker бүртгэх, автомат шинэчлэлт, суулгах товч -->
 <script src="pwa.js?v=20260731"></script>
