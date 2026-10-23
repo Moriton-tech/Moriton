@@ -978,6 +978,7 @@ function loadAll() {
   STATE.customRoles = lsGet('mt_custom_roles', []); if (!Array.isArray(STATE.customRoles)) STATE.customRoles = []; // 👥 админ нэмсэн дүрүүд
   STATE.callCfg = lsGet('mt_call_cfg', null); // 📞 эзэнд мэдээлэх сануулга
   STATE.medCatalog = lsGet('mt_med_catalog', []); if (!Array.isArray(STATE.medCatalog)) STATE.medCatalog = []; // 💊 эмийн каталог (нэгжийн үнэ)
+  STATE.employees = lsGet('mt_employees', []); if (!Array.isArray(STATE.employees)) STATE.employees = []; // 🕒 ажилтны жагсаалт (цагийн бүртгэл)
   STATE.user = lsGet('mt_user', null);
   STATE.syncURL = ''; // Apps Script sync устгагдсан — Firebase ашиглана
   if (STATE.doctors.length === 0) STATE.doctors = [...DEFAULT_DOCS];
@@ -1287,6 +1288,7 @@ const ALL_PAGES = [
   { id: 'lab',       label: 'Шинжилгээ' },
   { id: 'review',    label: 'Ахлах эмчийн хяналт' },
   { id: 'pharmacy',  label: 'Эмийн сан' },
+  { id: 'timesheet', label: 'Цагийн бүртгэл' },
   { id: 'kpi',       label: 'KPI самбар' },
   { id: 'report',    label: 'Өдрийн тайлан' },
   { id: 'admin',     label: 'Системийн тохиргоо' }
@@ -1297,15 +1299,15 @@ const ALL_PAGES = [
 const ALL_ROLES = ['Ерөнхий эмч','Ахлах эмч','Малын их эмч','Дадлагажигч','Бүртгэлийн ажилтан','Санхүү','Эмийн санч','Менежер','Админ'];
 // Дүр шинээр сонгоход (тухайн дүртэй хэрэглэгч хараахан байхгүй үед) санал болгох хуудсууд
 const ROLE_DEFAULT_PAGES = {
-  'Ерөнхий эмч':        ['dashboard','register','waiting','exam','inpatient','planned','lab','review','pharmacy','finance','kpi','history','report','admin'],
-  'Ахлах эмч':          ['dashboard','register','waiting','exam','inpatient','planned','lab','review','pharmacy','finance','kpi','history','report'],
+  'Ерөнхий эмч':        ['dashboard','register','waiting','exam','inpatient','planned','lab','review','pharmacy','timesheet','finance','kpi','history','report','admin'],
+  'Ахлах эмч':          ['dashboard','register','waiting','exam','inpatient','planned','lab','review','pharmacy','timesheet','finance','kpi','history','report'],
   'Малын их эмч':       ['dashboard','register','waiting','exam','inpatient','lab','history'],
   'Дадлагажигч':        ['dashboard','waiting','exam','inpatient','lab','history'],
   'Бүртгэлийн ажилтан': ['dashboard','register','waiting','planned','history'],
-  'Санхүү':             ['dashboard','finance','history','report'],
+  'Санхүү':             ['dashboard','finance','timesheet','history','report'],
   'Эмийн санч':         ['dashboard','pharmacy','inpatient'],
-  'Менежер':            ['dashboard','inpatient','review','pharmacy','finance','kpi','history','report'],
-  'Админ':              ['dashboard','register','waiting','exam','inpatient','planned','lab','review','pharmacy','finance','kpi','history','report','admin']
+  'Менежер':            ['dashboard','inpatient','review','pharmacy','timesheet','finance','kpi','history','report'],
+  'Админ':              ['dashboard','register','waiting','exam','inpatient','planned','lab','review','pharmacy','timesheet','finance','kpi','history','report','admin']
 };
 // Бүх дүр: үндсэн + админ нэмсэн + одоо байгаа хэрэглэгчдийн дүр (жагсаалтаас гадуурх дүр алдагдахгүй)
 function allRoles() {
@@ -1405,6 +1407,8 @@ function canAccess(page) {
   if (page === 'review' && !pages.includes('review') && (canApproveDx() || ['Ерөнхий эмч', 'Админ'].includes(STATE.user.role))) return true;
   // 💊 Эмийн сан: Эмийн санч, Ерөнхий эмч, Ахлах эмч, Админ — хуучин хэрэглэгчдийн pages-д 'pharmacy' байхгүй ч орно
   if (page === 'pharmacy' && !pages.includes('pharmacy') && ['Эмийн санч', 'Ерөнхий эмч', 'Ахлах эмч', 'Админ'].includes(STATE.user.role)) return true;
+  // 🕒 Цагийн бүртгэл: Менежер, Ерөнхий эмч, Ахлах эмч, Санхүү, Админ
+  if (page === 'timesheet' && !pages.includes('timesheet') && ['Менежер', 'Ерөнхий эмч', 'Ахлах эмч', 'Санхүү', 'Админ'].includes(STATE.user.role)) return true;
   return pages.includes(page);
 }
 
@@ -1524,6 +1528,7 @@ function nav(p, opts) {
   if (p === 'lab' && typeof renderLab === 'function') renderLab();
   if (p === 'review') renderReview();
   if (p === 'pharmacy' && typeof renderPharmacy === 'function') renderPharmacy();
+  if (p === 'timesheet' && typeof renderTimesheet === 'function') renderTimesheet();
   if (p === 'admin') renderAdmin();
   // Reset scroll only on real navigation (not when re-rendering current page via sync)
   if (!opts.silent && !samePage) {
@@ -1989,6 +1994,9 @@ function getStaffData() {
   //   3) Хоосон
   const today = todayStr();
 
+  // 0) 🕒 Цагийн бүртгэлийн өнөөдрийн код (эмчтэй холбосон ажилтнууд) — байвал энэ эрхэмлэнэ
+  try { if (typeof tsDayStaffFromCodes === 'function') { const fromTs = tsDayStaffFromCodes(today); if (fromTs) return fromTs; } } catch (e) {}
+
   // 1) Сарын хувиараас өнөөдрийн өгөгдөл
   const fromSchedule = getDayStaffFromSchedule(today);
   if (fromSchedule && (fromSchedule.active.length || fromSchedule.duty.length)) {
@@ -2048,6 +2056,8 @@ function saveStaffData(data) {
     duty: data.duty || [],
     ms: nowMs()
   };
+  // 🕒 Цагийн бүртгэлийн кодуудыг (codes) дарахгүй хадгална
+  if (idx >= 0 && STATE.staff[idx] && STATE.staff[idx].codes) record.codes = STATE.staff[idx].codes;
   if (idx >= 0) STATE.staff[idx] = record;
   else STATE.staff.push(record);
   saveAll();
@@ -11863,6 +11873,7 @@ const PAGE_DEPS = {
   planned:   ['trips', 'exams', 'horses', 'doctors', 'config'],
   review:    ['exams', 'inps', 'fins', 'users', 'doctors', 'config'],
   pharmacy:  ['inps', 'exams', 'doctors', 'config'],
+  timesheet: ['staff', 'doctors', 'config'],
   admin:     ['users', 'staff', 'logs', 'deletedExams', 'doctors', 'config']
 };
 const __dirtyCols = new Set();

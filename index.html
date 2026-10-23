@@ -112,6 +112,7 @@
       <div class="sb-list">
         <div class="ni" data-page="finance"><div class="ni-icon">💰</div><div class="ni-label">Санхүү</div><span class="ni-badge b-g" id="bdg-f">0</span></div>
         <div class="ni" data-page="history"><div class="ni-icon">📋</div><div class="ni-label">Түүх</div></div>
+        <div class="ni" data-page="timesheet"><div class="ni-icon">🕒</div><div class="ni-label">Цагийн бүртгэл</div></div>
       </div>
       <div class="sb-section">Тайлан</div>
       <div class="sb-list">
@@ -152,6 +153,7 @@
       <div class="sb-list">
         <div class="ni" data-page="finance"><div class="ni-icon">💰</div><div class="ni-label">Санхүү</div><span class="ni-badge b-g" id="bdg-f2">0</span></div>
         <div class="ni" data-page="history"><div class="ni-icon">📋</div><div class="ni-label">Түүх</div></div>
+        <div class="ni" data-page="timesheet"><div class="ni-icon">🕒</div><div class="ni-label">Цагийн бүртгэл</div></div>
       </div>
       <div class="sb-section" style="color:var(--gold);opacity:0.85">Тайлан</div>
       <div class="sb-list">
@@ -656,6 +658,28 @@
             <button class="btn btn-r btn-sm" onclick="dischargeInpatient()">🚪 Гаргах ба эцсийн төлбөр</button>
           </div>
         </div>
+      </section>
+
+      <!-- ====== 🕒 ЦАГИЙН БҮРТГЭЛ ====== -->
+      <section class="page" id="page-timesheet">
+        <div class="ph">
+          <div class="ph-l">
+            <div class="ph-title">🕒 Цагийн бүртгэл</div>
+            <div class="ph-sub" id="ts-sub">—</div>
+          </div>
+          <div class="ph-r" style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
+            <input class="inp" type="month" id="ts-month" onchange="tsOnMonth(this.value)" style="max-width:160px">
+            <select class="inp" id="ts-range" onchange="tsOnRange(this.value)" style="max-width:170px">
+              <option value="full">Бүтэн сар</option><option value="h1">1–15 (эхний хагас)</option><option value="h2">16–сарын эцэс</option>
+            </select>
+          </div>
+        </div>
+        <div class="tabs" style="margin-bottom:10px">
+          <button class="tab active" data-tstab="grid">📅 Сарын хүснэгт</button>
+          <button class="tab" data-tstab="emps">👥 Ажилтнууд</button>
+        </div>
+        <div class="tstab" data-tstab="grid" id="ts-grid"></div>
+        <div class="tstab hidden" data-tstab="emps" id="ts-emps"></div>
       </section>
 
       <!-- ====== 💊 ЭМИЙН САН ====== -->
@@ -1777,6 +1801,7 @@
 <script src="app.js?v=20261023"></script>
 <script src="lab.js?v=20261023"></script>
 <script src="pharmacy.js?v=20261023"></script>
+<script src="timesheet.js?v=20261023"></script>
 
 <!-- PWA: service worker бүртгэх, автомат шинэчлэлт, суулгах товч -->
 <script src="pwa.js?v=20260731"></script>
