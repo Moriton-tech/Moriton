@@ -1611,3 +1611,9 @@ tbody tr:hover { background: #fafbfd; }
 @media (max-width: 1000px) {
   #page-planned .grid2 { grid-template-columns: 1fr !important; }
 }
+
+/* 🕒💊 Шинэ хуудсуудын толгой — утсан дээр удирдлагууд доор бүтэн мөрөнд */
+@media (max-width: 700px) {
+  #page-timesheet .ph-r, #page-pharmacy .ph-r, #page-lab .ph-r { width: 100%; flex-basis: 100%; }
+  #page-timesheet .ph-r .inp, #page-pharmacy .ph-r .inp, #page-lab .ph-r .inp { flex: 1 1 140px; max-width: none !important; min-width: 0 !important; }
+}
