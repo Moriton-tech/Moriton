@@ -5319,6 +5319,7 @@ function _finPagCtl(anchorEl, tab, totalPages, total) {
 // ── 🔎 Санхүүгийн шүүлт ───────────────────────────────────────────
 // Бичлэгийн эх сурвалж: клиник үзлэг / байрлан эмчилгээ / төлөвлөгөөт
 function finSourceOf(f) {
+  if (f && f.kind === 'lab') return 'lab'; // 🩸 адуугүй сорьцын шинжилгээ
   if (isPlanned(f)) return 'planned';
   if (/^Байрлан эмчилгээ/.test(String(f.services || ''))) return 'inpatient';
   const ex = f.examId ? recById('exams', f.examId) : null;
@@ -5363,7 +5364,7 @@ function _finFilterInfo(F, n, total) {
   const parts = [];
   if (F.from || F.to) parts.push((F.from || '…') + ' → ' + (F.to || '…'));
   if (F.doc) parts.push('Эмч: ' + F.doc);
-  if (F.kind && F.kind !== 'all') parts.push({ clinic: 'Клиник', inpatient: 'Байрлан эмчилгээ', planned: 'Төлөвлөгөөт' }[F.kind] || F.kind);
+  if (F.kind && F.kind !== 'all') parts.push({ clinic: 'Клиник', inpatient: 'Байрлан эмчилгээ', planned: 'Төлөвлөгөөт', lab: 'Шинжилгээ (сорьц)' }[F.kind] || F.kind);
   if (F.method) parts.push('Хэлбэр: ' + F.method);
   if (F.q) parts.push('«' + F.q + '»');
   const el = $('#f-filter-info'); if (el) el.textContent = parts.length ? 'Шүүлт: ' + parts.join(' · ') + ' — ' + n + ' / ' + total + ' бичлэг' : 'Шүүлтгүй — ' + total + ' бичлэг';
@@ -5451,7 +5452,7 @@ function _ledgerFins() { const F = _finFilter(); return (STATE.fins || []).filte
 function printFinLedger() {
   const L = buildFinLedger(_ledgerFins()); const F = _finFilter();
   const srcLbl = { clinic: 'Клиник', inpatient: 'Байрлан', planned: 'ТҮ' };
-  const filt = [F.from || F.to ? (F.from || '…') + ' → ' + (F.to || '…') : '', F.doc ? 'Эмч: ' + F.doc : '', F.kind !== 'all' ? ({ clinic: 'Клиник', inpatient: 'Байрлан эмчилгээ', planned: 'Төлөвлөгөөт' }[F.kind]) : ''].filter(Boolean).join(' · ');
+  const filt = [F.from || F.to ? (F.from || '…') + ' → ' + (F.to || '…') : '', F.doc ? 'Эмч: ' + F.doc : '', F.kind !== 'all' ? ({ clinic: 'Клиник', inpatient: 'Байрлан эмчилгээ', planned: 'Төлөвлөгөөт', lab: 'Шинжилгээ (сорьц)' }[F.kind]) : ''].filter(Boolean).join(' · ');
   $('#print-area').innerHTML = `
 <style>
   @page { size: A4 portrait; margin: 10mm; }

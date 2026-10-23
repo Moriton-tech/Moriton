@@ -198,6 +198,16 @@ function cancelLab(labId) {
   if (reason === null) return;
   l.cancelReason = reason || '';
   setLabStatus(labId, 'cancelled', reason || '');
+  // 🩸 Шууд сорьцын захиалга: төлөгдөөгүй нэхэмжлэхээс энэ шинжилгээний үнийг хасна
+  if (labIsDirect(l) && l.finId) {
+    const f = (STATE.fins || []).find(x => String(x.id) === String(l.finId));
+    if (f && !(typeof getPaidAmount === 'function' && getPaidAmount(f) > 0)) {
+      f.amount = Math.max(0, (parseFloat(f.amount) || 0) - (parseFloat(l.price) || 0));
+      f.services = (STATE.labs || []).filter(x => String(x.finId) === String(l.finId) && x.status !== 'cancelled').map(x => x.service).join(', ') || ('Цуцалсан: ' + l.service);
+      f.ms = nowMs(); saveAll(); try { fbSaveRecord('fins', f); } catch (e) {}
+      toast('Нэхэмжлэх ' + fmt(f.amount) + ' болж буурлаа', 'ok');
+    }
+  }
 }
 
 /* ── Хариуны тайлбар хадгалах ──────────────────────────────── */
@@ -370,7 +380,8 @@ function renderLab() {
         '<div class="li" style="cursor:pointer" onclick="openLabModal(\'' + l.id + '\')">' +
           '<div class="li-av">' + labSt(l.status).icon + '</div>' +
           '<div class="li-info">' +
-            '<div class="li-name">' + escHTML(l.horse || '—') + ' · <span style="font-weight:700;color:var(--muted)">' + escHTML(l.service || '') + '</span></div>' +
+            '<div class="li-name">' + escHTML(l.horse || '—') + ' · <span style="font-weight:700;color:var(--muted)">' + escHTML(l.service || '') + '</span>' +
+              (labIsDirect(l) ? ' <span class="badge b-o" style="font-size:10px" title="Адуу ирээгүй, сорьц шууд хүлээн авсан">🩸 ' + escHTML(l.sample || 'сорьц') + '</span>' : '') + '</div>' +
             '<div class="li-sub">' + escHTML(l.owner || '') + ' · ' + escHTML(l.docName || '') + ' · ' + escHTML(l.date || '') +
               (nRes ? ' · 🖼️ ' + nRes : '') +
               (late ? ' · <span style="color:var(--red);font-weight:800">' + days + ' хоног</span>' : '') +
@@ -438,7 +449,15 @@ function openLabModal(labId) {
   // Мэдээлэл
   const info = document.getElementById('lab-info');
   if (info) {
-    const rows = [
+    const rows = labIsDirect(l) ? [
+      ['Эзэн',           l.owner || '—'],
+      ['Утас',           l.phone || '—'],
+      ['Сорьц',          '🩸 ' + (l.sample || 'Цус') + ' — адуу ирээгүй, шууд хүлээн авсан'],
+      ['Хүлээн авсан',   l.receivedBy || l.docName || '—'],
+      ['Огноо',          l.date || '—'],
+      ['Тэмдэглэл',      l.note || '—'],
+      ['Үнэ',            fmt(l.price || 0) + ' (нэхэмжлэх Санхүүд)']
+    ] : [
       ['Эзэн',           l.owner || '—'],
       ['Утас',           l.phone || '—'],
       ['Эмч',            l.docName || '—'],
@@ -643,4 +662,127 @@ function renderLabPermList() {
         : '<span class="badge b-a">Зөвхөн үзэх</span>') + '</div>' +
     '</div>';
   }).join('');
+}
+
+/* ============================================================
+   🩸 СОРЬЦ ШУУД ХҮЛЭЭН АВАХ — адуу ирэхгүйгээр цус (сорьц) авчирсан үед
+   ------------------------------------------------------------
+   - Үзлэгийн хуудасны дугаар ЗАРЦУУЛАХГҮЙ, exams-д бичигдэхгүй.
+   - Сонгосон шинжилгээ бүрт labs бичлэг үүснэ (status: 'collected' —
+     сорьц гарт байгаа тул), direct:true, sample:'Цус' гэх мэт.
+   - Санхүүд нэг нэхэмжлэх (fins, kind:'lab') үүснэ — орлого/авлага алдагдахгүй.
+   - Бүртгэлтэй адуугаа хайж холбож болно (horseId), шинэ адуу бүртгэхгүй.
+   ============================================================ */
+const LAB_SAMPLE_TYPES = ['Цус', 'Ийлдэс', 'Шээс', 'Баас', 'Арьсны хусалт', 'Үс/дэл', 'Бусад'];
+let _labSampleHorseId = '';
+
+function canIntakeSample() {
+  if (!STATE.user || !canViewLab()) return false;
+  if (canEditLab()) return true;
+  if (typeof canEditData === 'function' && canEditData()) return true;
+  return ['Бүртгэлийн ажилтан', 'Санхүү', 'Менежер'].includes(STATE.user.role);
+}
+function labIsDirect(l) { return !!(l && l.direct); }
+
+function openLabSampleModal() {
+  if (!canIntakeSample()) { toast('⛔ Сорьц хүлээн авах эрх алга (Шинжилгээ засах эрх хэрэгтэй)', 'err'); return; }
+  _labSampleHorseId = '';
+  const svcs = getLabServices();
+  const set = (id, v) => { const el = document.getElementById(id); if (el) el.value = v; };
+  set('ls-owner', ''); set('ls-horse', ''); set('ls-phone', ''); set('ls-note', ''); set('ls-date', todayStr());
+  const st = document.getElementById('ls-sample'); if (st) st.innerHTML = LAB_SAMPLE_TYPES.map(s => '<option>' + s + '</option>').join('');
+  const link = document.getElementById('ls-horse-link'); if (link) link.innerHTML = '';
+  const wrap = document.getElementById('ls-tests');
+  if (wrap) {
+    wrap.innerHTML = svcs.length ? svcs.map((s, k) => {
+      const p = (typeof getSvcPrice === 'function') ? (getSvcPrice(s) || 0) : 0;
+      return '<label style="display:flex;align-items:center;gap:8px;background:var(--input);border-radius:8px;padding:7px 10px;cursor:pointer">' +
+        '<input type="checkbox" class="ls-test" data-name="' + escHTML(s) + '" data-price="' + p + '" onchange="labSampleRecalc()" style="width:16px;height:16px">' +
+        '<span style="flex:1;font-size:13px;font-weight:600">' + escHTML(s) + '</span>' +
+        '<input class="inp" type="number" min="0" value="' + p + '" data-k="' + k + '" oninput="labSampleRecalc()" style="width:110px;padding:4px 8px;font-size:12px;font-weight:700" title="Үнэ (гараар засаж болно)">' +
+      '</label>';
+    }).join('') : '<div class="muted" style="font-size:12px">Шинжилгээний үйлчилгээ олдсонгүй — Системийн тохиргоо → Шинжилгээний үйлчилгээ хэсгээс тохируулна.</div>';
+  }
+  labSampleRecalc();
+  openModal('lab-sample-modal');
+  setTimeout(() => { const o = document.getElementById('ls-owner'); if (o) o.focus(); }, 100);
+}
+function labSampleSelected() {
+  const out = [];
+  document.querySelectorAll('#ls-tests .ls-test').forEach(cb => {
+    if (!cb.checked) return;
+    const priceEl = cb.parentElement.querySelector('input[type=number]');
+    out.push({ name: cb.dataset.name, price: Math.max(0, parseFloat(priceEl ? priceEl.value : cb.dataset.price) || 0) });
+  });
+  return out;
+}
+function labSampleRecalc() {
+  const sel = labSampleSelected();
+  const total = sel.reduce((a, s) => a + s.price, 0);
+  const el = document.getElementById('ls-total'); if (el) el.textContent = sel.length + ' шинжилгээ · ' + fmt(total);
+}
+// Бүртгэлтэй адуу хайх (зүс / эзэн / утас) — холбовол horseId, утас автоматаар
+function onLabSampleHorseInput(v) {
+  const list = document.getElementById('ls-horse-list'); if (!list) return;
+  const q = String(v || '').trim().toLowerCase();
+  _labSampleHorseId = '';
+  if (q.length < 2) { list.classList.remove('show'); list.innerHTML = ''; return; }
+  const res = (STATE.horses || []).filter(h => h && ((h.name || '') + ' ' + (h.owner || '') + ' ' + (h.phone || '') + ' ' + (h.iabd || '')).toLowerCase().includes(q)).slice(0, 10);
+  if (!res.length) { list.classList.remove('show'); list.innerHTML = ''; return; }
+  list.innerHTML = res.map(h => '<div class="dd-i" data-id="' + escHTML(h.id) + '"><b>' + escHTML(h.name || '') + '</b> · ' + escHTML(h.owner || '') + ' <span class="muted" style="font-size:10.5px">' + escHTML(h.phone || '') + (h.iabd ? ' · ' + escHTML(h.iabd) : '') + '</span></div>').join('');
+  list.classList.add('show');
+  list.querySelectorAll('.dd-i').forEach(el => el.onmousedown = (ev) => { ev.preventDefault(); pickLabSampleHorse(el.dataset.id); });
+}
+function pickLabSampleHorse(id) {
+  const h = (STATE.horses || []).find(x => String(x.id) === String(id)); if (!h) return;
+  _labSampleHorseId = String(h.id);
+  const set = (id2, v) => { const el = document.getElementById(id2); if (el) el.value = v; };
+  set('ls-horse', h.name || ''); if (h.owner) set('ls-owner', h.owner); if (h.phone) set('ls-phone', h.phone);
+  const list = document.getElementById('ls-horse-list'); if (list) { list.classList.remove('show'); list.innerHTML = ''; }
+  const link = document.getElementById('ls-horse-link'); if (link) link.innerHTML = '🔗 Бүртгэлтэй адуутай холбогдлоо: <b>' + escHTML(h.name || '') + '</b> · ' + escHTML(h.owner || '');
+}
+function saveLabSample() {
+  if (!canIntakeSample()) { toast('⛔ Эрх алга', 'err'); return; }
+  const v = id => { const el = document.getElementById(id); return el ? String(el.value || '').trim() : ''; };
+  const owner = v('ls-owner'), horse = v('ls-horse') || 'Сорьц (адуугүй)', phone = v('ls-phone'), sample = v('ls-sample') || 'Цус', note = v('ls-note');
+  const date = v('ls-date') || todayStr();
+  const tests = labSampleSelected();
+  if (!owner) { toast('Эзний нэр оруулна уу', 'err'); return; }
+  if (!tests.length) { toast('Шинжилгээ сонгоно уу', 'err'); return; }
+  const me = (STATE.user && STATE.user.name) || '';
+  const ms = nowMs();
+  const total = tests.reduce((a, s) => a + s.price, 0);
+  const finId = uid();
+  if (!Array.isArray(STATE.labs)) STATE.labs = [];
+  const created = tests.map(s => {
+    const lab = {
+      id: uid(), examId: null, examNum: '', horseId: _labSampleHorseId || '', horse, owner, phone,
+      docId: '', docName: me, service: s.name, price: s.price, diagnosis: '', date,
+      direct: true, sample, finId, receivedBy: me, note,
+      status: 'collected',
+      history: [
+        { status: 'ordered', ms, user: me, note: 'Сорьц шууд хүлээн авсан (адуугүй) · ' + sample },
+        { status: 'collected', ms: ms + 1, user: me, note: 'Сорьц гарт байна' }
+      ],
+      results: [], resultNote: '', orderedMs: ms, doneMs: 0, ms
+    };
+    STATE.labs.push(lab);
+    try { fbSaveRecord('labs', lab); } catch (e) {}
+    return lab;
+  });
+  // 💰 Санхүүд нэхэмжлэх — kind:'lab' (Санхүүгийн шүүлтэд «Шинжилгээ (сорьц)»)
+  const fin = {
+    id: finId, kind: 'lab', labIds: created.map(l => l.id), examId: null, examNum: '',
+    horse, owner, phone, docName: me, amount: total,
+    services: tests.map(s => s.name).join(', '), sample,
+    paid: false, method: '', date, paidDate: '', paidMs: 0, ms
+  };
+  STATE.fins.push(fin);
+  try { fbSaveRecord('fins', fin); } catch (e) {}
+  saveAll();
+  try { writeLog('Сорьц хүлээн авав', finId, horse + ' — ' + owner, sample + ' · ' + tests.map(s => s.name).join(', ') + ' · ' + fmt(total)); } catch (e) {}
+  closeModal('lab-sample-modal');
+  updateBadges();
+  renderLab();
+  toast('🩸 Сорьц бүртгэгдлээ — ' + created.length + ' шинжилгээ, нэхэмжлэх ' + fmt(total) + ' Санхүүд үүслээ', 'ok');
 }

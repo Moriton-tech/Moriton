@@ -687,9 +687,10 @@
             <div class="ph-title">🧪 Шинжилгээ</div>
             <div class="ph-sub" id="lab-sub">0 хүлээгдэж буй</div>
           </div>
-          <div class="ph-r">
+          <div class="ph-r" style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
             <input class="inp" id="lab-search" placeholder="🔍 Адуу, эзэн, шинжилгээ, эмч..."
               oninput="onLabSearch(this.value)" style="min-width:230px">
+            <button class="btn btn-p btn-sm" type="button" onclick="openLabSampleModal()" title="Адуу ирэхгүйгээр цус/сорьц авчирсан үед — үзлэгийн дугаар зарцуулахгүй, Санхүүд нэхэмжлэх үүснэ">🩸 Сорьц хүлээн авах</button>
           </div>
         </div>
 
@@ -792,7 +793,7 @@
             <div class="fld"><label>Эмч</label><select class="inp" id="f-doc" onchange="onFinFilterChange()"><option value="">Бүх эмч</option></select></div>
             <div class="fld"><label>Төрөл</label>
               <select class="inp" id="f-kind" onchange="onKindFilterChange('f-kind')">
-                <option value="all">Бүгд</option><option value="clinic">Клиник үзлэг</option><option value="inpatient">Байрлан эмчилгээ</option><option value="planned">Төлөвлөгөөт (ТҮ)</option>
+                <option value="all">Бүгд</option><option value="clinic">Клиник үзлэг</option><option value="inpatient">Байрлан эмчилгээ</option><option value="planned">Төлөвлөгөөт (ТҮ)</option><option value="lab">🩸 Шинжилгээ (сорьц)</option>
               </select>
             </div>
             <div class="fld"><label>Төлбөрийн хэлбэр</label>
@@ -1346,6 +1347,37 @@
 </div>
 
 <!-- LAB (ШИНЖИЛГЭЭ) DETAIL MODAL -->
+<!-- 🩸 Сорьц шууд хүлээн авах (адуугүй) -->
+<div class="mod-bd" id="lab-sample-modal">
+  <div class="mod" style="max-width:640px">
+    <div class="mod-h">
+      <span class="mod-title">🩸 Сорьц хүлээн авах — адуу ирээгүй</span>
+      <button class="btn btn-r btn-xs" onclick="closeModal('lab-sample-modal')">✕</button>
+    </div>
+    <div class="mod-body">
+      <div style="background:var(--orange-soft);color:var(--orange-dark);padding:8px 12px;border-radius:8px;font-size:12px;font-weight:600;margin-bottom:10px">
+        Эзэн адуугаа авчрахгүйгээр цус (сорьц) авчирсан үед бүртгэнэ. Үзлэгийн хуудасны дугаар зарцуулахгүй; сонгосон шинжилгээ бүр захиалга болж «Сорьц авсан» төлөвтэй үүснэ; Санхүүд нэг нэхэмжлэх үүснэ.
+      </div>
+      <div class="fg r2">
+        <div class="fld"><label>Эзэн *</label><input class="inp" id="ls-owner" placeholder="Эзний нэр"></div>
+        <div class="fld"><label>Утас</label><input class="inp" id="ls-phone" placeholder="99112233"></div>
+        <div class="fld" style="position:relative"><label>Адуу (зүс) <span class="muted" style="font-weight:400;font-size:10px">— бүртгэлтэй бол хайж холбоно</span></label>
+          <div class="dd"><input class="inp" id="ls-horse" placeholder="Зүс / эзэн / утсаар хайх..." autocomplete="off" oninput="onLabSampleHorseInput(this.value)" onblur="setTimeout(()=>{const l=document.getElementById('ls-horse-list'); if(l) l.classList.remove('show');},150)"><div class="dd-list" id="ls-horse-list"></div></div>
+          <div class="muted" id="ls-horse-link" style="font-size:11px;margin-top:3px"></div></div>
+        <div class="fld"><label>Сорьцын төрөл</label><select class="inp" id="ls-sample"></select></div>
+        <div class="fld"><label>Хүлээн авсан огноо</label><input class="inp" type="date" id="ls-date"></div>
+        <div class="fld"><label>Тэмдэглэл</label><input class="inp" id="ls-note" placeholder="ж: 2 хоолой, өглөө авсан..."></div>
+      </div>
+      <div class="ch" style="margin-top:10px">🧪 Шинжилгээ сонгох <span class="ch-r" id="ls-total">0</span></div>
+      <div id="ls-tests" style="display:flex;flex-direction:column;gap:4px;max-height:260px;overflow-y:auto"></div>
+      <div class="row" style="justify-content:flex-end;gap:6px;margin-top:14px">
+        <button class="btn btn-sm" type="button" onclick="closeModal('lab-sample-modal')">Болих</button>
+        <button class="btn btn-p btn-sm" type="button" onclick="saveLabSample()">🩸 Бүртгэх ба нэхэмжлэх үүсгэх</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <div class="mod-bd" id="lab-modal">
   <div class="mod" style="max-width:720px">
     <div class="mod-h">
@@ -1743,7 +1775,7 @@
 <div id="print-area"></div>
 
 <script src="app.js?v=20261023"></script>
-<script src="lab.js?v=20260917"></script>
+<script src="lab.js?v=20261023"></script>
 <script src="pharmacy.js?v=20261023"></script>
 
 <!-- PWA: service worker бүртгэх, автомат шинэчлэлт, суулгах товч -->
