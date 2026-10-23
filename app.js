@@ -977,6 +977,7 @@ function loadAll() {
   STATE.inpLocations = lsGet('mt_inp_locations', null); // null = анхдагч жагсаалт
   STATE.customRoles = lsGet('mt_custom_roles', []); if (!Array.isArray(STATE.customRoles)) STATE.customRoles = []; // 👥 админ нэмсэн дүрүүд
   STATE.callCfg = lsGet('mt_call_cfg', null); // 📞 эзэнд мэдээлэх сануулга
+  STATE.medCatalog = lsGet('mt_med_catalog', []); if (!Array.isArray(STATE.medCatalog)) STATE.medCatalog = []; // 💊 эмийн каталог (нэгжийн үнэ)
   STATE.user = lsGet('mt_user', null);
   STATE.syncURL = ''; // Apps Script sync устгагдсан — Firebase ашиглана
   if (STATE.doctors.length === 0) STATE.doctors = [...DEFAULT_DOCS];
@@ -1258,7 +1259,7 @@ function populateLoginUsers() {
 // Админ Firebase Console-оос хэрэглэгч нэмнэ.
 // Нууц үгийг ХЭЗЭЭ ЧИД frontend код, localStorage-д plain text хадгалах ХОРИОТОЙ.
 const DEFAULT_USERS = [
-  { name: 'Наранбаатар',     pw: '',  role: 'Ерөнхий эмч',        pages: ['dashboard','register','waiting','exam','inpatient','planned','lab','finance','kpi','history','report','admin'] },
+  { name: 'Наранбаатар',     pw: '',  role: 'Ерөнхий эмч',        pages: ['dashboard','register','waiting','exam','inpatient','planned','lab','pharmacy','finance','kpi','history','report','admin'] },
   { name: 'Сайнбилэг',       pw: '',  role: 'Ахлах эмч',          pages: ['dashboard','register','waiting','exam','inpatient','planned','lab','finance','kpi','history','report'] },
   { name: 'Өсөхбаяр',        pw: '',  role: 'Ахлах эмч',          pages: ['dashboard','register','waiting','exam','inpatient','planned','lab','finance','kpi','history','report'] },
   { name: 'Даваахүү',        pw: '',  role: 'Малын их эмч',       pages: ['dashboard','register','waiting','exam','inpatient','lab','history'] },
@@ -1270,7 +1271,7 @@ const DEFAULT_USERS = [
   { name: 'Дадлагажигч',     pw: '',  role: 'Дадлагажигч',        pages: ['dashboard','waiting','exam','inpatient','lab','history'] },
   { name: 'Бүртгэл',         pw: '',  role: 'Бүртгэлийн ажилтан', pages: ['dashboard','register','waiting','planned','history'] },
   { name: 'Санхүү',          pw: '',  role: 'Санхүү',             pages: ['dashboard','finance','history','report'] },
-  { name: 'Админ',           pw: '',  role: 'Админ',              pages: ['dashboard','register','waiting','exam','inpatient','planned','lab','finance','kpi','history','report','admin'] }
+  { name: 'Админ',           pw: '',  role: 'Админ',              pages: ['dashboard','register','waiting','exam','inpatient','planned','lab','pharmacy','finance','kpi','history','report','admin'] }
 ];
 
 // Боломжит бүх хуудас (эрх тохируулахад ашиглана)
@@ -1285,6 +1286,7 @@ const ALL_PAGES = [
   { id: 'history',   label: 'Түүх' },
   { id: 'lab',       label: 'Шинжилгээ' },
   { id: 'review',    label: 'Ахлах эмчийн хяналт' },
+  { id: 'pharmacy',  label: 'Эмийн сан' },
   { id: 'kpi',       label: 'KPI самбар' },
   { id: 'report',    label: 'Өдрийн тайлан' },
   { id: 'admin',     label: 'Системийн тохиргоо' }
@@ -1292,17 +1294,18 @@ const ALL_PAGES = [
 
 // Боломжит дүрүүд — үндсэн жагсаалт. Админ «Нэвтрэх эрх» цонхноос шинэ дүр
 // (ж: Нярав, Жолооч) нэмж болно → STATE.customRoles (clinic_config-д хадгална).
-const ALL_ROLES = ['Ерөнхий эмч','Ахлах эмч','Малын их эмч','Дадлагажигч','Бүртгэлийн ажилтан','Санхүү','Менежер','Админ'];
+const ALL_ROLES = ['Ерөнхий эмч','Ахлах эмч','Малын их эмч','Дадлагажигч','Бүртгэлийн ажилтан','Санхүү','Эмийн санч','Менежер','Админ'];
 // Дүр шинээр сонгоход (тухайн дүртэй хэрэглэгч хараахан байхгүй үед) санал болгох хуудсууд
 const ROLE_DEFAULT_PAGES = {
-  'Ерөнхий эмч':        ['dashboard','register','waiting','exam','inpatient','planned','lab','review','finance','kpi','history','report','admin'],
-  'Ахлах эмч':          ['dashboard','register','waiting','exam','inpatient','planned','lab','review','finance','kpi','history','report'],
+  'Ерөнхий эмч':        ['dashboard','register','waiting','exam','inpatient','planned','lab','review','pharmacy','finance','kpi','history','report','admin'],
+  'Ахлах эмч':          ['dashboard','register','waiting','exam','inpatient','planned','lab','review','pharmacy','finance','kpi','history','report'],
   'Малын их эмч':       ['dashboard','register','waiting','exam','inpatient','lab','history'],
   'Дадлагажигч':        ['dashboard','waiting','exam','inpatient','lab','history'],
   'Бүртгэлийн ажилтан': ['dashboard','register','waiting','planned','history'],
   'Санхүү':             ['dashboard','finance','history','report'],
-  'Менежер':            ['dashboard','inpatient','review','finance','kpi','history','report'],
-  'Админ':              ['dashboard','register','waiting','exam','inpatient','planned','lab','review','finance','kpi','history','report','admin']
+  'Эмийн санч':         ['dashboard','pharmacy','inpatient'],
+  'Менежер':            ['dashboard','inpatient','review','pharmacy','finance','kpi','history','report'],
+  'Админ':              ['dashboard','register','waiting','exam','inpatient','planned','lab','review','pharmacy','finance','kpi','history','report','admin']
 };
 // Бүх дүр: үндсэн + админ нэмсэн + одоо байгаа хэрэглэгчдийн дүр (жагсаалтаас гадуурх дүр алдагдахгүй)
 function allRoles() {
@@ -1400,6 +1403,8 @@ function canAccess(page) {
   // 🩺 Ахлах эмчийн хяналт: онош батлах эрхтэй хүн (Өсөхбаяр, Сайнбилэг), Ерөнхий эмч, Админ —
   // хуудасны жагсаалтад тусгайлан нэмээгүй ч орно (хуучин хэрэглэгчдийн pages-д 'review' байхгүй)
   if (page === 'review' && !pages.includes('review') && (canApproveDx() || ['Ерөнхий эмч', 'Админ'].includes(STATE.user.role))) return true;
+  // 💊 Эмийн сан: Эмийн санч, Ерөнхий эмч, Ахлах эмч, Админ — хуучин хэрэглэгчдийн pages-д 'pharmacy' байхгүй ч орно
+  if (page === 'pharmacy' && !pages.includes('pharmacy') && ['Эмийн санч', 'Ерөнхий эмч', 'Ахлах эмч', 'Админ'].includes(STATE.user.role)) return true;
   return pages.includes(page);
 }
 
@@ -1518,6 +1523,7 @@ function nav(p, opts) {
   if (p === 'history') renderHistory();
   if (p === 'lab' && typeof renderLab === 'function') renderLab();
   if (p === 'review') renderReview();
+  if (p === 'pharmacy' && typeof renderPharmacy === 'function') renderPharmacy();
   if (p === 'admin') renderAdmin();
   // Reset scroll only on real navigation (not when re-rendering current page via sync)
   if (!opts.silent && !samePage) {
@@ -1545,6 +1551,10 @@ function softRefresh() {
   // 🩺 Хяналтын хуудсанд онош засаж / шалтгаан бичиж байх үед дахин зурахгүй
   const ae = document.activeElement;
   if (p === 'review' && ae && /^(TEXTAREA|INPUT)$/.test(ae.tagName) && ae.closest && ae.closest('#page-review') && ae.type !== 'date') { __refreshPending = true; renderRefreshChip(); return; }
+  // 💊 Эмийн сан: каталогийн маягт бөглөж байх үед дахин зурахгүй
+  if (p === 'pharmacy' && ae && /^(TEXTAREA|INPUT|SELECT)$/.test(ae.tagName) && ae.closest && ae.closest('#ph-catalog')) { __refreshPending = true; renderRefreshChip(); return; }
+  // 🕒 Цагийн бүртгэл: ажилтны маягт бөглөж байх үед дахин зурахгүй
+  if (p === 'timesheet' && ae && /^(TEXTAREA|INPUT|SELECT)$/.test(ae.tagName) && ae.closest && ae.closest('#ts-emp-form')) { __refreshPending = true; renderRefreshChip(); return; }
   __refreshPending = false; renderRefreshChip();
   // Save current scroll
   const main = $('#main');
@@ -1829,6 +1839,7 @@ function setupNav() {
 // HEADER & BADGES
 // ============================================================
 function updateBadges() {
+  try { if (typeof updatePharmBadge === 'function') updatePharmBadge(); } catch(e) {}
   // 🧪 Шинжилгээ — хүлээгдэж буй
   try {
     const labOpen = (STATE.labs || []).filter(x => x && x.status !== 'done' && x.status !== 'cancelled').length;
@@ -4075,6 +4086,8 @@ function renderIDetail() {
 
   // === TAB 2: TREATMENT ===
   renderInpTreatTab(i);
+  // 💊 Эмчилгээний курс (Эмчилгээ таб, маягтын дээр)
+  try { if (typeof renderInpCourseBlock === 'function') renderInpCourseBlock(i); } catch (e) { console.error('course block', e); }
   // 🗓 Маргаашийн төлөвлөгөө (Эмчилгээ таб)
   try { renderInpPlanBlock(i); } catch (e) { console.error('plan block', e); }
 
@@ -4165,6 +4178,8 @@ function renderInpTreatTab(i) {
   if (!INP_DRAFT._inpId || INP_DRAFT._inpId !== String(i.id)) {
     INP_DRAFT = { meds: [], services: [], _inpId: String(i.id) };
   }
+  // 💊 Курсийн эмийг сонгосон өдрийн маягтад автоматаар бэлтгэнэ (эмчийн гараар нэмснийг дардаггүй)
+  try { if (typeof inpPrefillDraftFromCourse === 'function' && INP_DRAFT._courseDate !== ((ld && ld.value) || todayStr())) inpPrefillDraftFromCourse(i, (ld && ld.value) || todayStr()); } catch (e) { console.error('course prefill', e); }
   renderInpDraftMeds();
   renderInpDraftServices();
   recomputeInpDayAmt();
@@ -4338,14 +4353,15 @@ function setupInpMedSearch() {
   inp.oninput = () => {
     const q = inp.value.toLowerCase().trim();
     if (!q) { list.classList.remove('show'); list.innerHTML = ''; return; }
-    const matches = MED_LIST.filter(m => m.toLowerCase().includes(q)).slice(0, 12);
+    // 💊 Каталогт байгаа эм эхэнд (нэгжийн үнэтэй), дараа нь MED_LIST
+    const matches = (typeof medSearchAll === 'function') ? medSearchAll(q, 12) : MED_LIST.filter(m => m.toLowerCase().includes(q)).slice(0, 12).map(n => ({ name: n }));
     if (matches.length === 0) { list.classList.remove('show'); list.innerHTML = ''; return; }
-    list.innerHTML = matches.map(m => `<div class="dd-i" data-m="${escHTML(m)}">${escHTML(m)}</div>`).join('');
+    list.innerHTML = matches.map(m => `<div class="dd-i" data-m="${escHTML(m.name)}">${escHTML(m.name)}${m.inCat ? ' <span class="muted" style="font-size:10.5px">· ' + fmt(m.price) + '/' + escHTML(m.unit || 'нэгж') + '</span>' : ''}</div>`).join('');
     list.classList.add('show');
     list.querySelectorAll('.dd-i').forEach(el => el.onclick = () => {
       const m = el.dataset.m;
-      if (!INP_DRAFT.meds.find(x => x.name === m)) INP_DRAFT.meds.push({ name: m, price: 0 });
-      renderInpDraftMeds();
+      if (typeof inpDraftAddMed === 'function') inpDraftAddMed(m);
+      else if (!INP_DRAFT.meds.find(x => x.name === m)) { INP_DRAFT.meds.push({ name: m, price: 0 }); renderInpDraftMeds(); }
       inp.value = '';
       list.classList.remove('show');
       list.innerHTML = '';
@@ -4358,6 +4374,8 @@ function renderInpDraftMeds() {
   const wrap = $('#inp-med-chips');
   if (!wrap) return;
   if (INP_DRAFT.meds.length === 0) { wrap.innerHTML = ''; return; }
+  // 💊 Мөр бүр: нэр · тоо (нэгж) · тайлбар · үнэ (= тоо × каталогийн нэгжийн үнэ, гараар засагдана)
+  if (typeof inpDraftMedRowHTML === 'function') { wrap.innerHTML = INP_DRAFT.meds.map((m, i) => inpDraftMedRowHTML(m, i)).join(''); return; }
   wrap.innerHTML = INP_DRAFT.meds.map((m, i) => `
     <div style="display:flex;align-items:center;gap:6px;background:var(--input);border-radius:8px;padding:6px 10px;margin-bottom:4px;flex-wrap:wrap">
       <span style="font-size:13px;font-weight:600;min-width:120px;flex-shrink:0">${escHTML(m.name)}</span>
@@ -4478,6 +4496,7 @@ function addInpLog() {
   const log = {
     id: uid(),
     date: date,
+    slot: ($('#inp-log-slot') || {}).value || '',   // ⏰ Өглөө/Өдөр/Орой/Шөнө (Өдрийн мэдээнд тоологдоно)
     docId: docId,
     docName: doc ? doc.name : '—',
     diagnosis: diag,
@@ -4501,6 +4520,7 @@ function addInpLog() {
   $('#inp-note').value = ''; $('#inp-diag').value = '';
   if ($('#inp-log-date')) $('#inp-log-date').value = i.discharged ? (i.dischargedDate || todayStr()) : todayStr();
   INP_DRAFT = { meds: [], services: [], _inpId: String(i.id) };
+  if ($('#inp-log-slot')) $('#inp-log-slot').value = '';
   // 🚪 Гарсан адуу бол нэхэмжлэхийг дахин бодно
   if (i.discharged) recomputeDischargedInvoice(i, 'эмчилгээ нэмэв ' + fmt(amount));
   renderIDetail();
@@ -4571,7 +4591,7 @@ function fillInpFormFromLog(src) {
   // Vitals (халуун/судас/жин)-ыг зориуд ХУУЛАХГҮЙ — өдөр бүр шинээр хэмжинэ
   INP_DRAFT = {
     services: Array.isArray(src.services) ? src.services.map(s => ({ name: s.name, price: parseFloat(s.price) || 0 })) : [],
-    meds: Array.isArray(src.meds) ? src.meds.map(m => ({ name: (m.name || m), note: m.note || '', price: parseFloat(m.price) || 0 })) : [],
+    meds: Array.isArray(src.meds) ? src.meds.map(m => ({ name: (m.name || m), note: m.note || '', price: parseFloat(m.price) || 0, qty: m.qty, unit: m.unit, unitPrice: m.unitPrice, courseId: m.courseId, dose: m.dose, perDay: m.perDay, manualPrice: !!m.manualPrice })) : [],
     _inpId: String(i.id)
   };
   renderInpDraftServices();
@@ -4716,6 +4736,7 @@ function dischargeInpatient() {
         </tbody>
       </table>
     </div>
+    ${typeof inpItemizedHTML === 'function' ? inpItemizedHTML(i) : ''}
     <div class="ch" style="margin-top:10px">💵 Урьдчилгаа төлбөр</div>
     ${prepayments.length === 0 ? '<div class="muted" style="font-size:12px">Урьдчилгаа төлөгдөөгүй</div>' : `
       <div style="display:flex;flex-direction:column;gap:4px">
@@ -8608,7 +8629,8 @@ async function fbFetchAllData(onProgress) {
       servicePrices: STATE.servicePrices || {}, customServices: STATE.customServices || [],
       removedServices: STATE.removedServices || [], staffSchedule: STATE.staffSchedule || {},
       labSvcOn: STATE.labSvcOn || [], labSvcOff: STATE.labSvcOff || [],
-      bonusCfg: STATE.bonusCfg || null, examNumCfg: STATE.examNumCfg || null, inpLocations: STATE.inpLocations || null, customRoles: STATE.customRoles || [], callCfg: STATE.callCfg || null
+      bonusCfg: STATE.bonusCfg || null, examNumCfg: STATE.examNumCfg || null, inpLocations: STATE.inpLocations || null, customRoles: STATE.customRoles || [], callCfg: STATE.callCfg || null,
+      medCatalog: STATE.medCatalog || [], employees: STATE.employees || []
     };
     return out;
   }
@@ -11205,7 +11227,9 @@ function renderInpPlanBlock(i, force) {
   }
 }
 function onInpLogDateChange() {
-  const i = STATE.inps.find(x => String(x.id) === String(STATE.selectedI)); if (i) renderInpPlanBlock(i);
+  const i = STATE.inps.find(x => String(x.id) === String(STATE.selectedI)); if (!i) return;
+  renderInpPlanBlock(i);
+  try { if (typeof inpPrefillDraftFromCourse === 'function') inpPrefillDraftFromCourse(i, ($('#inp-log-date') || {}).value || todayStr()); } catch (e) {}
 }
 function onInpPlanDateChange() {
   const i = STATE.inps.find(x => String(x.id) === String(STATE.selectedI)); if (!i) return;
@@ -11837,6 +11861,7 @@ const PAGE_DEPS = {
   report:    ['exams', 'fins', 'inps', 'doctors', 'horses', 'config'],
   planned:   ['trips', 'exams', 'horses', 'doctors', 'config'],
   review:    ['exams', 'inps', 'fins', 'users', 'doctors', 'config'],
+  pharmacy:  ['inps', 'exams', 'doctors', 'config'],
   admin:     ['users', 'staff', 'logs', 'deletedExams', 'doctors', 'config']
 };
 const __dirtyCols = new Set();
@@ -11980,6 +12005,8 @@ function fbSaveClinicConfig() {
     inpLocations:    Array.isArray(STATE.inpLocations) ? STATE.inpLocations : null,
     customRoles:     Array.isArray(STATE.customRoles) ? STATE.customRoles : [],
     callCfg:         STATE.callCfg || null,
+    medCatalog:      Array.isArray(STATE.medCatalog) ? STATE.medCatalog : [],
+    employees:       Array.isArray(STATE.employees) ? STATE.employees : [],
     _updatedAt: ms,
     _writer: window.__fbDeviceId || 'unknown'
   });
@@ -12127,6 +12154,10 @@ function fbApplyRecord(colName, docData) {
       if (Array.isArray(docData.customRoles)) { STATE.customRoles = docData.customRoles.slice(); lsSet('mt_custom_roles', STATE.customRoles); try { populateLoginUsers(); } catch(_) {} }
       // 📞 Эзэнд мэдээлэх сануулга
       if (docData.callCfg && typeof docData.callCfg === 'object') { STATE.callCfg = docData.callCfg; lsSet('mt_call_cfg', STATE.callCfg); try { if (STATE.activePage === 'admin') renderCallCfg(); } catch(_) {} }
+      // 💊 Эмийн каталог
+      if (Array.isArray(docData.medCatalog)) { STATE.medCatalog = docData.medCatalog.slice(); lsSet('mt_med_catalog', STATE.medCatalog); try { if (STATE.activePage === 'pharmacy' && typeof renderPharmacy === 'function') renderPharmacy(); } catch(_) {} }
+      // 🕒 Ажилтны жагсаалт (цагийн бүртгэл)
+      if (Array.isArray(docData.employees)) { STATE.employees = docData.employees.slice(); lsSet('mt_employees', STATE.employees); try { if (STATE.activePage === 'timesheet' && typeof renderTimesheet === 'function') renderTimesheet(); } catch(_) {} }
       // Шилжилтийн үе: нэгтгэсэн үр дүнг сервэрт нэг удаа буцаан бичиж
       // бүх төхөөрөмжийн тохиргоог нийлүүлнэ (дараа нь _localMs тэглэгдэхгүй).
       if (!_localMs && _localCount > 0) { try { fbSaveClinicConfig(); } catch(e){} }
