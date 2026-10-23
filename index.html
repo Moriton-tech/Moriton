@@ -455,7 +455,7 @@
             <div class="card">
               <div class="row" style="justify-content:flex-end">
                 <button class="btn" onclick="cancelExam()">← Буцах</button>
-                <button class="btn btn-n" onclick="moveToInpatient()">🏥 Хэвтүүлэх</button>
+                <button class="btn btn-n" onclick="moveToInpatient()">🏥 Байрлуулах</button>
               </div>
             </div>
           </div>
@@ -467,7 +467,7 @@
         <div class="ph">
           <div class="ph-l">
             <div class="ph-title">🏥 Байрлан эмчлүүлэх</div>
-            <div class="ph-sub" id="inp-sub">0 адуу хэвтэж байна</div>
+            <div class="ph-sub" id="inp-sub">0 адуу байрлаж байна</div>
           </div>
         </div>
 
@@ -479,7 +479,7 @@
               <button type="button" class="btn btn-xs inp-view-btn" data-view="loc" onclick="setInpView('loc')">📍 Байрлалаар</button>
               <button type="button" class="btn btn-xs inp-view-btn" data-view="doc" onclick="setInpView('doc')">👨‍⚕️ Эмчээр</button>
               <button type="button" class="btn btn-xs inp-view-btn" data-view="days" onclick="setInpView('days')" title="Хэдэн хоногтой адуу хэд байгааг бүлгээр">📅 Хоногоор</button>
-              <button type="button" class="btn btn-xs inp-view-btn" data-view="out" onclick="setInpView('out')" title="Гарсан адууд — хэн, хэзээ гаргасан; андуурсан бол буцаан хэвтүүлэх">🚪 Гарсан</button>
+              <button type="button" class="btn btn-xs inp-view-btn" data-view="out" onclick="setInpView('out')" title="Гарсан адууд — хэн, хэзээ гаргасан; андуурсан бол буцаан байрлуулах">🚪 Гарсан</button>
             </div>
           </div>
           <div id="inp-summary" class="inp-summary"></div>
@@ -488,7 +488,7 @@
             <div class="fld"><label>Эмч</label><select class="inp" id="inp-f-doc" onchange="renderInpatient()"></select></div>
             <div class="fld"><label>Байрлал</label><select class="inp" id="inp-f-loc" onchange="renderInpatient()"></select></div>
             <div class="fld"><label>📅 Хоног</label><select class="inp" id="inp-f-days" onchange="INP_DAYS_F=this.value;INP_PAGE=1;renderInpatient()"></select></div>
-            <div class="fld"><label>Хайх</label><input class="inp" id="inp-f-q" placeholder="Зүс / эзэн / утас / онош" oninput="renderInpatient()"></div>
+            <div class="fld"><label>Хайх</label><input class="inp" id="inp-f-q" placeholder="Бүх утгаар: зүс, эзэн, утас, онош, үзлэгийн №, эмч, эм, тэмдэглэл, огноо..." title="Хэд хэдэн үг бичвэл бүгдийг нь агуулсан адууг олно" oninput="renderInpatient()"></div>
             <div class="fld"><label>Эрэмбэ</label>
               <select class="inp" id="inp-f-sort" onchange="renderInpatient()">
                 <option value="days_desc">Хоног (их → бага)</option>
@@ -646,7 +646,7 @@
           <div id="inp-discharged-bar" class="hidden" style="margin-top:14px;padding:10px 12px;border-radius:10px;background:var(--gold-soft,#f6efdc);font-size:12.5px"></div>
           <!-- Action buttons (always visible at bottom) -->
           <div class="row" id="inp-action-row" style="justify-content:flex-end;margin-top:14px;gap:6px;flex-wrap:wrap;padding-top:14px;border-top:1px solid var(--border)">
-            <button class="btn btn-sm" id="inp-cancel-btn" onclick="cancelInpatient()" title="Андуурч хэвтүүлсэн бол хүлээлт рүү буцаах">↩ Хүлээлт рүү буцаах</button>
+            <button class="btn btn-sm" id="inp-cancel-btn" onclick="cancelInpatient()" title="Андуурч байрлуулсан бол хүлээлт рүү буцаах">↩ Хүлээлт рүү буцаах</button>
             <button class="btn btn-r btn-sm" onclick="dischargeInpatient()">🚪 Гаргах ба эцсийн төлбөр</button>
           </div>
         </div>
@@ -1389,7 +1389,7 @@
       <div class="fld"><label>✏️ Бичлэг засах эрх</label>
         <button type="button" id="u-edit-data" data-on="0" onclick="toggleFlag('u-edit-data')"
           style="padding:8px 14px;border-radius:8px;font-weight:800;font-size:12px;cursor:pointer;border:1.5px solid var(--border);background:#fff;color:var(--muted)">👁️ Зөвхөн үзэх</button>
-        <div class="muted" style="font-size:11px;margin-top:6px">Үзлэг, байрлан эмчлүүлэх (эмч/байрлал, гарсан огноо, буцаан хэвтүүлэх) засах. Анхдагч: Ерөнхий эмч, Ахлах эмч, Админ. Устгах эрх зөвхөн Админд.</div>
+        <div class="muted" style="font-size:11px;margin-top:6px">Үзлэг, байрлан эмчлүүлэх (эмч/байрлал, гарсан огноо, буцаан байрлуулах) засах. Анхдагч: Ерөнхий эмч, Ахлах эмч, Админ. Устгах эрх зөвхөн Админд.</div>
       </div>
     </div>
     <div class="mod-ft">
