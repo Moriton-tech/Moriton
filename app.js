@@ -5925,13 +5925,11 @@ function removeDraftPayment(i) {
   refreshPaymentModal();
 }
 
-function finalizePayment() {
-  const f = STATE.fins.find(x => String(x.id) === String(STATE.payTarget));
-  if (!f) return;
-  // Save payments back
-  f.payments = STATE.draftPayments.slice();
+// Төлбөрийн жагсаалтыг нэхэмжлэхэд хэрэглэж, paid/method/paidDate-ийг тооцно.
+// Модал (finalizePayment) болон Төлөвлөгөөт үзлэгийн нэг цонхны төлбөр хоёуланд нэг л логик.
+function applyPaymentsToFin(f, payments) {
+  f.payments = (payments || []).map(p => ({ ...p }));
   // Derive paid status & method for backwards compatibility
-  const paidAmt = getPaidAmount(f);
   if (isFullyPaid(f)) {
     f.paid = true;
     // Use last non-зээл method as primary
@@ -5948,6 +5946,12 @@ function finalizePayment() {
     else if (f.payments.length > 1) f.method = 'хосолсон';
     else f.method = '';
   }
+}
+
+function finalizePayment() {
+  const f = STATE.fins.find(x => String(x.id) === String(STATE.payTarget));
+  if (!f) return;
+  applyPaymentsToFin(f, STATE.draftPayments);
   saveAll();
   fbSaveRecord('fins', f);
   const linkedExam = STATE.exams.find(x => String(x.id) === String(f.examId));
@@ -5963,6 +5967,8 @@ function finalizePayment() {
   updateBadges();
   toast('💾 Хадгалагдлаа', 'ok');
   renderFinance();
+  // Төлөвлөгөөт үзлэгийн хуудаснаас төлбөр бүртгэсэн бол тэнд мөн шинэчилнэ
+  if (STATE.activePage === 'planned') renderPlanned();
 }
 
 // Legacy alias for any old caller
@@ -6058,7 +6064,8 @@ function downloadCSV(rows, name) {
   toast('⬇ Татагдлаа', 'ok');
 }
 
-function printInvoice(id) {
+// opts.direct — урьдчилан харуулах цонхгүйгээр шууд хэвлэх (Төлөвлөгөөт үзлэгийн «Хадгалаад хэвлэх»)
+function printInvoice(id, opts) {
   const f = STATE.fins.find(x => String(x.id) === String(id));
   if (!f) return;
   const ex = STATE.exams.find(x => String(x.id) === String(f.examId));
@@ -6105,16 +6112,18 @@ function printInvoice(id) {
   const diag = ex && ex.diagnosis ? ex.diagnosis : '';
   const note = ex && ex.note ? ex.note : '';
   // 🩺 Үйлчлүүлэгчид өгөх (баруун) хэсэгт онош ЗӨВХӨН ахлах эмч баталсны дараа гарна
-  const dxOk = !!(ex && dxIsApproved(ex) && diag);
+  // Төлөвлөгөөт үзлэг (ТҮ) нь оношийн хяналтын урсгалаас гадуур (dxIsOpen=false) бөгөөд газар дээр нь
+  // үйлчлүүлэгчид хуудсыг шууд өгдөг тул онош баталгаагүйгээр клиентийн хэсэгт хэвлэгдэнэ.
+  const dxOk = !!(ex && diag && (dxIsApproved(ex) || isPlanned(ex)));
   const rightDxHTML = dxOk
     ? `<div style="font-size:8.5pt;margin-bottom:1.5mm;line-height:1.4"><b>Онош:</b> <span style="white-space:pre-wrap">${escHTML(diag)}</span>
-        <div style="font-size:7pt;color:#444;margin-top:0.5mm">Баталсан ахлах эмч: ${escHTML(ex.dxApprovedBy || '')}</div></div>`
+        ${dxIsApproved(ex) ? `<div style="font-size:7pt;color:#444;margin-top:0.5mm">Баталсан ахлах эмч: ${escHTML(ex.dxApprovedBy || '')}</div>` : ''}</div>`
     : `<div class="uz-field-row" style="margin-bottom:1.5mm"><span class="uz-lbl" style="font-weight:700">Онош:</span><span class="uz-ul"></span></div>`;
   __printDxGuard = ex && dxIsOpen(ex) ? String(ex.id) : null;
 
   // Payment method checkboxes
   const method = (f.method || '').toLowerCase();
-  const chkPos   = method.includes('пос') || method.includes('pos')   ? '✓' : '';
+  const chkPos   = method.includes('пос') || method.includes('pos') || method.includes('карт') ? '✓' : '';
   const chkDans  = method.includes('данс')                             ? '✓' : '';
   const chkBelen = method.includes('бэлэн') || method.includes('cash') ? '✓' : '';
   const chkBusad = (!chkPos && !chkDans && !chkBelen && method) ? '✓' : '';
@@ -6364,6 +6373,7 @@ function printInvoice(id) {
 </div>`;
 
   $('#print-area').innerHTML = printHTML;
+  if (opts && opts.direct) { setTimeout(printReceiptNow, 150); return; }
 
   // ── Build rich modal preview (unchanged from before) ──
   const isPaidBadge = isPaid
@@ -8970,7 +8980,240 @@ function tripLabel(t) { return (t.date || '') + (t.endDate && t.endDate !== t.da
 function tripDocs(t) { const ids = Array.isArray(t.docIds) ? t.docIds : [t.docId, t.assistDocId]; return ids.filter(Boolean).map(id => (STATE.doctors || []).find(d => String(d.id) === String(id))).filter(Boolean); }
 function tripDocNames(t) { return tripDocs(t).map(d => d.name).join(', '); }
 
-function renderPlanned() {
+// ============================================================
+// 💡 АВТО САНАЛ (plx) — өмнөх үзлэгийн датанаас эм, тариа, зөвлөгөөг санал болгох
+// ------------------------------------------------------------
+// Эмч оношоо бичмэгц (эсвэл түгээмэл оношоос сонгомогц) тухайн онош дээр өмнө нь
+// хамгийн их хийгдсэн үйлчилгээ, хэрэглэсэн эм (тунгийн тэмдэглэлтэй), өгсөн
+// зөвлөгөөг чипээр гаргана — нэг товшоод нэмнэ. Юу ч өөрөө автоматаар орохгүй:
+// эмч бүрийг баталгаажуулна. Статистик нь «өмнө нь ихэвчлэн ингэсэн» гэсэн
+// давтамж болохоос эмчилгээний протокол биш.
+// Эх сурвалж: энэ оношийн ТҮ-ийн үзлэг PLX_MIN_N+ байвал зөвхөн тэр; үгүй бол
+// клиник ба ТҮ бүх үзлэг.
+// ============================================================
+const PLX_MIN_N = 3;
+let __plxCache = { ver: -1, n: -1, idx: null };
+let __plxHistRequested = false;
+let PLX_CUR = null; // сүүлд харуулсан санал: { res, items }
+
+function plxNorm(s) { return String(s == null ? '' : s).toLowerCase().replace(/[.,;:!?()«»"'`\/\\]/g, ' ').replace(/\s+/g, ' ').trim(); }
+function plxAdviceLines(note) { return String(note || '').split(/\r?\n/).map(s => s.replace(/^[•\-•\d.\)\s]+/, '').trim()).filter(Boolean); }
+function plxMedName(m) { return (m && typeof m === 'object') ? String(m.name || '').trim() : String(m || '').trim(); }
+function plxMedNote(m) { return (m && typeof m === 'object') ? String(m.note || '').trim() : ''; }
+function plxBucket() { return { n: 0, svc: new Map(), med: new Map(), adv: new Map() }; }
+function plxBump(map, key, extra) { let o = map.get(key); if (!o) { o = { c: 0, notes: new Map() }; map.set(key, o); } o.c++; if (extra) o.notes.set(extra, (o.notes.get(extra) || 0) + 1); }
+
+function plxAddToBucket(b, e) {
+  b.n++;
+  const seenS = new Set();
+  (Array.isArray(e.services) ? e.services : []).forEach(s => { const nm = String((s && s.name) || s || '').trim(); if (nm && !seenS.has(nm)) { seenS.add(nm); plxBump(b.svc, nm); } });
+  const seenM = new Set();
+  (Array.isArray(e.meds) ? e.meds : (typeof e.meds === 'string' ? e.meds.split(/\r?\n/) : [])).forEach(m => { const nm = plxMedName(m); if (nm && !seenM.has(nm)) { seenM.add(nm); plxBump(b.med, nm, plxMedNote(m)); } });
+  const seenA = new Set();
+  plxAdviceLines(e.note).forEach(l => { const k = plxNorm(l); if (k && !seenA.has(k)) { seenA.add(k); let o = b.adv.get(k); if (!o) { o = { c: 0, labels: new Map() }; b.adv.set(k, o); } o.c++; o.labels.set(l, (o.labels.get(l) || 0) + 1); } });
+}
+
+function plxIndex() {
+  const exams = STATE.exams || [];
+  if (__plxCache.idx && __plxCache.ver === __stateVer && __plxCache.n === exams.length) return __plxCache.idx;
+  const groups = new Map();
+  const globalAdv = new Map();
+  const st = { total: 0, withDiag: 0, planned: 0, withMeds: 0, medsWithDose: 0, withAdvice: 0, withSvc: 0, minDate: '', maxDate: '' };
+  for (const e of exams) {
+    if (!e) continue;
+    st.total++;
+    if (isPlanned(e)) st.planned++;
+    if (e.date) { if (!st.minDate || e.date < st.minDate) st.minDate = e.date; if (!st.maxDate || e.date > st.maxDate) st.maxDate = e.date; }
+    const meds = Array.isArray(e.meds) ? e.meds : [];
+    if (meds.length) { st.withMeds++; if (meds.some(m => plxMedNote(m))) st.medsWithDose++; }
+    const adv = plxAdviceLines(e.note);
+    if (adv.length) st.withAdvice++;
+    if (Array.isArray(e.services) && e.services.length) st.withSvc++;
+    adv.forEach(l => { const k = plxNorm(l); if (!k) return; let o = globalAdv.get(k); if (!o) { o = { c: 0, labels: new Map() }; globalAdv.set(k, o); } o.c++; o.labels.set(l, (o.labels.get(l) || 0) + 1); });
+    const key = plxNorm(e.diagnosis);
+    if (!key) continue;
+    st.withDiag++;
+    let g = groups.get(key);
+    if (!g) { g = { key, labels: new Map(), n: 0, np: 0, all: plxBucket(), pl: plxBucket() }; groups.set(key, g); }
+    g.n++; g.labels.set(String(e.diagnosis).trim(), (g.labels.get(String(e.diagnosis).trim()) || 0) + 1);
+    plxAddToBucket(g.all, e);
+    if (isPlanned(e)) { g.np++; plxAddToBucket(g.pl, e); }
+  }
+  groups.forEach(g => { let best = '', bc = 0; g.labels.forEach((c, l) => { if (c > bc) { bc = c; best = l; } }); g.label = best; });
+  const idx = { groups, globalAdv, st, list: [...groups.values()].sort((a, b) => b.n - a.n) };
+  __plxCache = { ver: __stateVer, n: exams.length, idx };
+  return idx;
+}
+
+function plxFind(diagText) {
+  const idx = plxIndex(); const k = plxNorm(diagText);
+  if (!k) return null;
+  let g = idx.groups.get(k);
+  if (!g && k.length >= 4) { // хагас таарал: бичсэн нь онош дотор эсвэл онош нь бичсэнд агуулагдана
+    let best = null;
+    idx.groups.forEach(x => { if (x.key.length >= 4 && (x.key.includes(k) || k.includes(x.key)) && (!best || x.n > best.n)) best = x; });
+    g = best;
+  }
+  if (!g || g.n < PLX_MIN_N) return null;
+  const usePl = g.np >= PLX_MIN_N;
+  return { group: g, bucket: usePl ? g.pl : g.all, src: usePl ? 'planned' : 'all', label: g.label };
+}
+
+function plxTopNote(o) { let note = '', nc = 0; o.notes.forEach((c, t) => { if (t && c > nc) { note = t; nc = c; } }); return note; }
+function plxItems(res) {
+  const b = res.bucket, n = b.n;
+  let known = null; try { known = new Set(getAllServices()); } catch (_) { }
+  const svcs = [...b.svc.entries()].filter(([nm]) => !known || known.has(nm)).map(([name, o]) => ({ name, c: o.c, pct: o.c / n })).sort((a, b2) => b2.c - a.c).slice(0, 8);
+  const meds = [...b.med.entries()].map(([name, o]) => ({ name, note: plxTopNote(o), c: o.c, pct: o.c / n })).sort((a, b2) => b2.c - a.c).slice(0, 8);
+  const adv = [...b.adv.entries()].map(([k, o]) => { let l = '', lc = 0; o.labels.forEach((c, t) => { if (c > lc) { lc = c; l = t; } }); return { key: k, line: l, c: o.c, pct: o.c / n }; }).sort((a, b2) => b2.c - a.c).slice(0, 8);
+  return { svcs, meds, adv, n };
+}
+
+// ── Одоогийн маягтын төлөв ──────────────────────────────────
+function plxHasSvc(name) { return PL_DRAFT.services.some(x => x.name === name); }
+function plxHasMed(name) { return PL_DRAFT.meds.some(x => x.name === name); }
+function plxNoteLines() { const el = $('#pl-e-note'); return plxAdviceLines(el ? el.value : ''); }
+function plxHasAdv(line) { const k = plxNorm(line); return plxNoteLines().some(l => plxNorm(l) === k); }
+function plxAddAdvice(line) {
+  const el = $('#pl-e-note'); if (!el || !line) return;
+  const lines = plxNoteLines(); if (lines.some(l => plxNorm(l) === plxNorm(line))) return;
+  lines.push(line); el.value = lines.join('\n');
+}
+function plxRemoveAdvice(line) {
+  const el = $('#pl-e-note'); if (!el) return;
+  el.value = plxNoteLines().filter(l => plxNorm(l) !== plxNorm(line)).join('\n');
+}
+function plxAddMed(name, note) {
+  name = String(name || '').trim(); if (!name) return;
+  const cur = PL_DRAFT.meds.find(x => x.name === name);
+  if (cur) { if (!cur.note && note) cur.note = note; } else PL_DRAFT.meds.push({ name, note: note || '' });
+}
+
+function plxToggle(kind, i) {
+  if (!PLX_CUR) return;
+  const it = PLX_CUR.items;
+  if (kind === 'svc') { const s = it.svcs[i]; if (!s) return; if (plxHasSvc(s.name)) PL_DRAFT.services = PL_DRAFT.services.filter(x => x.name !== s.name); else addPlSvc(s.name); renderPlSvcs(); }
+  else if (kind === 'med') { const m = it.meds[i]; if (!m) return; if (plxHasMed(m.name)) PL_DRAFT.meds = PL_DRAFT.meds.filter(x => x.name !== m.name); else plxAddMed(m.name, m.note); renderPlMeds(); }
+  else if (kind === 'adv') { const a = it.adv[i]; if (!a) return; if (plxHasAdv(a.line)) plxRemoveAdvice(a.line); else plxAddAdvice(a.line); }
+  renderPlSugg();
+}
+function plxApplyAll() {
+  if (!PLX_CUR) return;
+  const it = PLX_CUR.items; let n = 0;
+  it.svcs.filter(s => s.pct >= 0.5 && !plxHasSvc(s.name)).forEach(s => { addPlSvc(s.name); n++; });
+  it.meds.filter(m => m.pct >= 0.5).forEach(m => { if (!plxHasMed(m.name)) n++; plxAddMed(m.name, m.note); });
+  it.adv.filter(a => a.pct >= 0.4).slice(0, 4).forEach(a => { if (!plxHasAdv(a.line)) { plxAddAdvice(a.line); n++; } });
+  renderPlSvcs(); renderPlMeds(); renderPlSugg();
+  toast(n ? '✨ ' + n + ' зүйл нэмэгдлээ — тун, хэмжээг шалгана уу' : 'Нэмэх шинэ зүйл алга (≥50% давтамжтай)', n ? 'ok' : 'err');
+}
+function plxPickDiag(label) { const el = $('#pl-e-diag'); if (!el) return; el.value = label; renderPlSugg(); plxDiagHint(); }
+
+// ── Санал харуулах ──────────────────────────────────────────
+let __plxTimer = null, __plxTimer2 = null;
+function plxOnDiagInput() { clearTimeout(__plxTimer); __plxTimer = setTimeout(() => { renderPlSugg(); plxDiagHint(); }, 220); }
+// Бичиж байхад таарах онош (чип) — давтамжаар
+function plxDiagHint() {
+  const host = $('#pl-diag-hint'); if (!host) return;
+  const el = $('#pl-e-diag'); const q = plxNorm(el ? el.value : '');
+  if (!q || q.length < 2) { host.innerHTML = ''; return; }
+  const idx = plxIndex();
+  const hits = idx.list.filter(g => g.key !== q && g.key.includes(q)).slice(0, 6);
+  host.innerHTML = hits.map(g => `<button type="button" class="plx-chip" onclick="plxPickDiag(this.dataset.l)" data-l="${escHTML(g.label)}">${escHTML(g.label)} <span class="plx-n">${g.n}</span></button>`).join('');
+}
+function renderPlSugg() {
+  const host = $('#pl-sugg'); if (!host) return;
+  const el = $('#pl-e-diag'); const diag = el ? el.value.trim() : '';
+  const idx = plxIndex();
+  PLX_CUR = null;
+  const res = diag ? plxFind(diag) : null;
+  // Онош хоосон / санал олдоогүй → түгээмэл оношууд
+  if (!res) {
+    const top = idx.list.filter(g => g.n >= PLX_MIN_N).slice(0, 10);
+    host.innerHTML = top.length
+      ? `<div class="plx-box"><div class="plx-h">💡 ${diag ? 'Энэ оношид тохирох түүх олдсонгүй — ' : ''}Түгээмэл онош (товшоод сонго)</div><div class="plx-chips">${top.map(g => `<button type="button" class="plx-chip" onclick="plxPickDiag(this.dataset.l)" data-l="${escHTML(g.label)}">${escHTML(g.label)} <span class="plx-n">${g.n}</span></button>`).join('')}</div></div>`
+      : `<div class="plx-box plx-muted">💡 Санал гаргахад түүхэн дата хүрэлцэхгүй байна (оношийн давтамж ${PLX_MIN_N}-аас бага) — үзлэг шивэх тусам санал гарна.</div>`;
+    return;
+  }
+  const items = plxItems(res);
+  PLX_CUR = { res, items };
+  const pct = x => Math.round(x * 100) + '%';
+  const chip = (cls, on, i, text, p) => `<button type="button" class="plx-chip ${on ? 'on' : ''}" onclick="plxToggle('${cls}',${i})">${on ? '✓ ' : '+ '}${escHTML(text)} <span class="plx-n">${p}</span></button>`;
+  const row = (lbl, html) => html ? `<div class="plx-row"><span class="plx-lbl">${lbl}</span><div class="plx-chips">${html}</div></div>` : '';
+  host.innerHTML = `<div class="plx-box">
+    <div class="plx-h"><span>💡 «${escHTML(res.label)}» — өмнөх <b>${items.n}</b> ${res.src === 'planned' ? 'төлөвлөгөөт ' : ''}үзлэгийн дагуу</span>
+      <button type="button" class="btn btn-xs btn-p" onclick="plxApplyAll()">✨ Түгээмэлийг нөхөх</button></div>
+    ${row('Үйлчилгээ', items.svcs.map((s, i) => chip('svc', plxHasSvc(s.name), i, s.name, pct(s.pct))).join(''))}
+    ${row('Эм, тариа', items.meds.map((m, i) => chip('med', plxHasMed(m.name), i, m.name + (m.note ? ' — ' + m.note : ''), pct(m.pct))).join(''))}
+    ${row('Зөвлөгөө', items.adv.map((a, i) => chip('adv', plxHasAdv(a.line), i, a.line, pct(a.pct))).join(''))}
+    <div class="plx-foot">Өмнөх үзлэгийн давтамжаар санал болгож байна — тун, хэмжээг эмч өөрөө шалгаж баталгаажуулна.</div></div>`;
+}
+
+// Зөвлөгөөний түгээмэл хэллэг (онош сонгоогүй ч ашиглагдана)
+function renderPlAdvChips() {
+  const host = $('#pl-adv-chips'); if (!host) return;
+  const idx = plxIndex();
+  const top = [...idx.globalAdv.values()].map(o => { let l = '', lc = 0; o.labels.forEach((c, t) => { if (c > lc) { lc = c; l = t; } }); return { line: l, c: o.c }; }).filter(x => x.c >= PLX_MIN_N).sort((a, b) => b.c - a.c).slice(0, 8);
+  host.innerHTML = top.map(x => `<button type="button" class="plx-chip ${plxHasAdv(x.line) ? 'on' : ''}" onclick="plxToggleAdv(this.dataset.l)" data-l="${escHTML(x.line)}">${plxHasAdv(x.line) ? '✓ ' : '+ '}${escHTML(x.line.length > 48 ? x.line.slice(0, 46) + '…' : x.line)}</button>`).join('');
+}
+function plxToggleAdv(line) { if (plxHasAdv(line)) plxRemoveAdvice(line); else plxAddAdvice(line); renderPlAdvChips(); renderPlSugg(); }
+
+// ↻ Өмнөхтэй адил — энэ явцад сүүлд шивсэн үзлэгийн онош, үйлчилгээ, эм, зөвлөгөөг хуулна
+// (нэг эзний олон адуунд ижил эмчилгээ хийх үед). Адууны мэдээлэл, үзлэгийн дугаар, амин үзүүлэлт хуулагдахгүй.
+function plCopyPrev() {
+  const t = tripById(STATE.selectedTrip); if (!t) return;
+  const prev = tripExams(t.id).slice().sort((a, b) => (b.ms || 0) - (a.ms || 0))[0];
+  if (!prev) { toast('Энэ явцад өмнөх үзлэг алга', 'err'); return; }
+  const set = (id, v) => { const el = $('#' + id); if (el) el.value = v == null ? '' : v; };
+  set('pl-e-diag', prev.diagnosis); set('pl-e-anam', prev.anamnesis); set('pl-e-note', prev.note);
+  PL_DRAFT.symptoms = Array.isArray(prev.symptoms) ? prev.symptoms.slice() : [];
+  PL_DRAFT.services = (prev.services || []).map(s => ({ name: s.name, price: parseFloat(s.price) || getSvcPrice(s.name) || 0 }));
+  PL_DRAFT.meds = (prev.meds || []).map(m => ({ name: plxMedName(m), note: plxMedNote(m) })).filter(m => m.name);
+  PL_DRAFT.manualTotal = false;
+  renderPlSymptoms(); renderPlSvcs(); renderPlMeds(); renderPlSugg(); renderPlAdvChips(); plxDiagHint();
+  toast('↻ «' + (prev.horse || 'өмнөх') + '» үзлэгийн онош, үйлчилгээ, эм, зөвлөгөөг хууллаа — шалгана уу', 'ok');
+}
+
+// Түүхийг нэг жил хүртэл нэмж татна (цонх нь зөвхөн сүүлийн 120 хоног) — зөвхөн үзлэг, нэг удаа
+function plxEnsureHistory(force) {
+  if (__plxHistRequested && !force) return;
+  __plxHistRequested = true;
+  const d = new Date(); d.setDate(d.getDate() - 365);
+  ensureRange(localDateStr(d), LIVE_CUTOFF, ['exams']).then(added => {
+    if (added) { __plxCache.ver = -1; renderPlSugg(); renderPlAdvChips(); const a = $('#pl-analysis-body'); if (a && a.dataset.open === '1') plxRenderAnalysis(); toast('📚 Өмнөх үзлэгийн түүх нэмэгдлээ — санал сайжирлаа', 'ok'); }
+  }).catch(() => { });
+}
+
+// ── 📊 Датаны шинжилгээ (гараар бичих ажлыг хэр хэмжээнд бууруулж чадахыг харуулна) ──
+function plxAnalysisHTML() {
+  const idx = plxIndex(), st = idx.st;
+  const covered = idx.list.filter(g => g.n >= PLX_MIN_N).reduce((a, g) => a + g.n, 0);
+  const pc = (a, b) => b ? Math.round(a / b * 100) + '%' : '—';
+  const rows = idx.list.filter(g => g.n >= PLX_MIN_N).slice(0, 20).map(g => {
+    const res = plxFind(g.label); if (!res) return '';
+    const it = plxItems(res);
+    const s = it.svcs.slice(0, 2).map(x => x.name + ' ' + Math.round(x.pct * 100) + '%').join(', ');
+    const m = it.meds.slice(0, 2).map(x => x.name + (x.note ? ' (' + x.note + ')' : '') + ' ' + Math.round(x.pct * 100) + '%').join(', ');
+    const a = it.adv.slice(0, 1).map(x => x.line + ' ' + Math.round(x.pct * 100) + '%').join('');
+    return `<tr><td class="bold">${escHTML(g.label)}</td><td style="text-align:right">${g.n}</td><td style="text-align:right">${g.np}</td><td>${escHTML(s) || '—'}</td><td>${escHTML(m) || '—'}</td><td>${escHTML(a) || '—'}</td></tr>`;
+  }).join('');
+  return `<div class="stats" style="margin-bottom:10px">
+      <div class="stat"><div class="stat-l">Шинжилсэн үзлэг</div><div class="snum">${st.total}</div></div>
+      <div class="stat accent"><div class="stat-l">Онош бүхий</div><div class="snum">${pc(st.withDiag, st.total)}</div></div>
+      <div class="stat purple"><div class="stat-l">Санал гарах үзлэг</div><div class="snum">${pc(covered, st.withDiag)}</div></div>
+      <div class="stat green"><div class="stat-l">Эмийн тун бичсэн</div><div class="snum">${pc(st.medsWithDose, st.withMeds)}</div></div>
+    </div>
+    <div class="muted" style="font-size:12px;margin-bottom:8px">Хамрах хугацаа: ${escHTML(st.minDate || '—')} → ${escHTML(st.maxDate || '—')} · төлөвлөгөөт ${st.planned} · зөвлөгөө бичсэн ${pc(st.withAdvice, st.total)} · үйлчилгээтэй ${pc(st.withSvc, st.total)}.
+      «Санал гарах үзлэг» = оношийн давтамж ${PLX_MIN_N}+ бүхий үзлэгийн хувь (тухайн үзлэгт эм/зөвлөгөөг автоматаар санал болгож чадах хэмжээ). «Эмийн тун бичсэн» нам байвал тунг тусад нь бүтэцтэй талбар болгох нь зүйтэй.
+      <button class="btn btn-xs" onclick="plxEnsureHistory(true)">⏳ Түүх (1 жил) дахин татах</button></div>
+    <div class="tbl-wrap" style="overflow-x:auto"><table style="min-width:760px;font-size:12px">
+      <thead><tr><th>Онош</th><th style="text-align:right">Нийт</th><th style="text-align:right">ТҮ</th><th>Ихэвчлэн хийдэг үйлчилгээ</th><th>Ихэвчлэн хэрэглэдэг эм (тун)</th><th>Ихэвчлэн өгдөг зөвлөгөө</th></tr></thead>
+      <tbody>${rows || '<tr><td colspan="6" class="muted">Хангалттай давтамжтай онош алга</td></tr>'}</tbody></table></div>`;
+}
+function plxRenderAnalysis() { const b = $('#pl-analysis-body'); if (b) { b.innerHTML = plxAnalysisHTML(); b.dataset.open = '1'; } }
+
+function renderPlanned(fresh) {
+  // Өөр таблет үзлэг хадгалахад sync-ээр энэ хуудас дахин зурагддаг — бөглөж буй маягтыг алдахгүйн тулд хадгалж сэргээнэ
+  const snap = fresh ? null : plFormSnapshot();
   if (!Array.isArray(STATE.trips)) STATE.trips = [];
   // Эмчийн сонголтууд
   const docOpts = (sel, blank) => (blank ? '<option value="">— байхгүй —</option>' : '') + (STATE.doctors || []).map(d => `<option value="${escHTML(d.id)}" ${String(d.id) === String(sel) ? 'selected' : ''}>${escHTML(d.name)} (${escHTML(d.role || '')})</option>`).join('');
@@ -8991,6 +9234,28 @@ function renderPlanned() {
     </div>`;
   }).join('') : '<div class="empty"><div class="empty-em">🗓️</div>Явц бүртгээгүй байна — дээрх маягтаар шинэ явц үүсгэнэ үү</div>';
   renderTripDetail();
+  if (snap && snap.dirty && String(snap.tripId) === String(STATE.selectedTrip) && $('#pl-entry-card')) plFormRestore(snap);
+}
+
+// ── Бөглөж буй маягтыг sync дахин зурахад алдахгүй хамгаалах ──
+function plFormDirty() {
+  const g = id => (($('#' + id) || {}).value || '').trim();
+  if (['pl-e-horse', 'pl-e-diag', 'pl-e-anam', 'pl-e-note', 'pl-e-phone', 'pl-e-age', 'pl-e-temp', 'pl-e-pulse', 'pl-e-resp', 'pl-e-wt'].some(g)) return true;
+  return !!(PL_DRAFT.services.length || PL_DRAFT.meds.length || PL_DRAFT.symptoms.length || (PL_DRAFT.pay || []).length);
+}
+function plFormSnapshot() {
+  const card = $('#pl-entry-card'); if (!card) return null;
+  const vals = {}; card.querySelectorAll('[id^="pl-e-"]').forEach(el => { if (el.value !== undefined) vals[el.id] = el.value; });
+  const ae = document.activeElement;
+  return { tripId: card.dataset.trip, vals, draft: JSON.parse(JSON.stringify(PL_DRAFT)), dirty: plFormDirty(),
+    focus: ae && card.contains(ae) && ae.id ? ae.id : '', sel: ae && typeof ae.selectionStart === 'number' ? ae.selectionStart : null };
+}
+function plFormRestore(snap) {
+  Object.keys(snap.vals).forEach(id => { const el = $('#' + id); if (el) el.value = snap.vals[id]; });
+  PL_DRAFT = snap.draft;
+  renderPlSymptoms(); renderPlSvcs(); renderPlMeds(); plPayRender(); renderPlSugg(); renderPlAdvChips(); plxDiagHint();
+  const m = $('#pl-e-total-mode'); if (m) m.textContent = PL_DRAFT.manualTotal ? '(гараар)' : '(авто)';
+  if (snap.focus) { const f = $('#' + snap.focus); if (f) { f.focus(); try { if (snap.sel != null && f.setSelectionRange) f.setSelectionRange(snap.sel, snap.sel); } catch (_) { } } }
 }
 function selectTrip(id) { STATE.selectedTrip = id; renderPlanned(); }
 
@@ -9048,7 +9313,7 @@ function editTripField(field, val) {
 }
 
 // ── Явцын дэлгэрэнгүй + шивэх маягт ───────────────────────────
-let PL_DRAFT = { services: [], meds: [], symptoms: [], manualTotal: false };
+let PL_DRAFT = { services: [], meds: [], symptoms: [], pay: [], manualTotal: false, numAuto: true };
 let PL_STICKY = { tripId: null }; // аймаг/сум/эмч — дараагийн маягтад хэвээр
 function renderTripDetail() {
   const host = $('#pl-detail'); if (!host) return;
@@ -9057,6 +9322,7 @@ function renderTripDetail() {
   if (t.date && t.date < LIVE_CUTOFF) ensureRange(t.date, t.endDate || t.date).then(ok => { if (ok && STATE.activePage === 'planned') renderPlanned(); });
   const s = tripStats(t);
   const ex = tripExams(t.id).slice().sort((a, b) => (b.ms || 0) - (a.ms || 0));
+  const pay = plTripPay(ex);
   const closed = t.status === 'closed';
   const docOpts = (sel, blank) => (blank ? '<option value="">— байхгүй —</option>' : '') + (STATE.doctors || []).map(d => `<option value="${escHTML(d.id)}" ${String(d.id) === String(sel) ? 'selected' : ''}>${escHTML(d.name)}</option>`).join('');
   const tdocs = tripDocs(t);
@@ -9087,6 +9353,8 @@ function renderTripDetail() {
         <div class="stat accent"><div class="stat-l">📋 Үзлэг</div><div class="snum">${s.n}</div></div>
         <div class="stat purple"><div class="stat-l">💉 Үйлчилгээ</div><div class="snum">${s.services}</div></div>
         <div class="stat green"><div class="stat-l">💰 Нийт дүн</div><div class="snum">${fmtCompact(s.amount)}</div></div>
+        <div class="stat"><div class="stat-l">✅ Төлсөн</div><div class="snum">${fmtCompact(pay.paid)}</div></div>
+        <div class="stat accent"><div class="stat-l">⏳ Үлдэгдэл</div><div class="snum">${fmtCompact(pay.due)}</div></div>
       </div>
       ${Object.keys(byProv).length ? '<div class="row" style="gap:6px;flex-wrap:wrap;margin-top:8px">' + Object.keys(byProv).sort().map(k => '<span class="badge">' + escHTML(k) + ': <b>' + byProv[k] + '</b></span>').join('') + '</div>' : ''}
       <div class="fg r4" style="margin-top:10px">
@@ -9097,59 +9365,84 @@ function renderTripDetail() {
     </div>
 
     ${closed ? '<div class="card"><div class="muted">Явц хаагдсан тул шинэ үзлэг шивэхгүй. Шаардлагатай бол «Дахин нээх» дарна.</div></div>' : `
-    <div class="card" id="pl-entry-card">
-      <div class="ch">📝 Цаасан маягтаас шивэх <span class="ch-r muted" style="font-weight:600">Ctrl+Enter = хадгалаад дараагийнх</span></div>
+    <div class="card" id="pl-entry-card" data-trip="${escHTML(String(t.id))}">
+      <div class="ch">🩺 Газар дээрх үзлэг <span class="ch-r muted" style="font-weight:600">үзлэг → эмчилгээ → төлбөр → хэвлэх · Ctrl+Enter = хадгалах</span></div>
+
+      <div class="pl-sec">1 · Адуу, эзэн</div>
       <div class="fg r4">
-        <div class="fld"><label>Үзлэгийн хуудасны №</label><div class="row" style="gap:4px"><input class="inp" id="pl-e-num" placeholder="маягт дээрх дугаар" style="font-weight:800"><button class="btn btn-xs" type="button" title="Системийн дараагийн дугаар" onclick="$('#pl-e-num').value=nextExamNum()">авто</button></div></div>
-        <div class="fld"><label>Огноо</label><input class="inp" type="date" id="pl-e-date" value="${escHTML(t.date)}"></div>
+        <div class="fld"><label>Үзлэгийн хуудасны №</label><div class="row" style="gap:4px"><input class="inp" id="pl-e-num" placeholder="авто" style="font-weight:800" oninput="PL_DRAFT.numAuto=false"><button class="btn btn-xs" type="button" title="Системийн дараагийн дугаар" onclick="PL_DRAFT.numAuto=true;$('#pl-e-num').value=nextExamNum()">авто</button></div></div>
+        <div class="fld"><label>Огноо</label><input class="inp" type="date" id="pl-e-date" value="${escHTML(plDefaultDate(t))}"></div>
         <div class="fld"><label>Цаг</label><input class="inp" type="time" id="pl-e-time"></div>
-        <div class="fld"><label>Дүн <span class="muted" id="pl-e-total-mode" style="font-weight:600;text-transform:none">(авто)</span></label><div class="row" style="gap:4px"><input class="inp" type="number" id="pl-e-total" value="0" style="font-weight:900;background:var(--orange-soft);color:var(--orange-dark)" oninput="PL_DRAFT.manualTotal=true;$('#pl-e-total-mode').textContent='(гараар)'"><button class="btn btn-xs" type="button" title="Үйлчилгээний нийлбэрээр дахин тооцох" onclick="PL_DRAFT.manualTotal=false;updatePlTotal()">↺</button></div></div>
+        <div class="fld"><label>Аймаг</label><select class="inp" id="pl-e-prov">${provOpts(stickyProv)}</select></div>
       </div>
       <div class="fg r4" style="margin-top:8px">
-        <div class="fld"><label>Аймаг</label><select class="inp" id="pl-e-prov">${provOpts(stickyProv)}</select></div>
         <div class="fld"><label>Сум / байршил</label><input class="inp" id="pl-e-soum" value="${escHTML(stickySoum)}" placeholder="ж: Асгат"></div>
         <div class="fld"><label>Эмч</label><select class="inp" id="pl-e-doc">${teamOpts(PL_STICKY.tripId === t.id && PL_STICKY.docId ? PL_STICKY.docId : t.docId)}</select></div>
         <div class="fld"><label>Хамтрагч эмч</label><select class="inp" id="pl-e-asst">${teamOpts(PL_STICKY.tripId === t.id && PL_STICKY.asstId !== undefined ? PL_STICKY.asstId : t.assistDocId, true)}</select></div>
+        <div class="fld"><label>Зүс (нэр) *</label><input class="inp" id="pl-e-horse" placeholder="ж: Хээр" list="pl-horse-dl" autocomplete="off"><datalist id="pl-horse-dl"></datalist></div>
       </div>
       <div class="fg r4" style="margin-top:8px">
-        <div class="fld"><label>Зүс (нэр) *</label><input class="inp" id="pl-e-horse" placeholder="ж: Хээр" list="pl-horse-dl" autocomplete="off"><datalist id="pl-horse-dl"></datalist></div>
         <div class="fld"><label>Нас</label><input class="inp" id="pl-e-age" placeholder="ж: 5"></div>
         <div class="fld"><label>Эзэн</label><input class="inp" id="pl-e-owner" value="${escHTML(stickyOwner)}" placeholder="сонголттой"></div>
-        <div class="fld"><label>Утас</label><input class="inp" id="pl-e-phone"></div>
+        <div class="fld"><label>Утас</label><input class="inp" id="pl-e-phone" inputmode="tel"></div>
+        <div class="fld"><label>Жин (кг)</label><input class="inp" type="number" id="pl-e-wt"></div>
       </div>
-      <div class="fg r2" style="margin-top:8px">
-        <div class="fld"><label>Анамнез (маягтын дээд хэсэг)</label><textarea class="inp" id="pl-e-anam" rows="2"></textarea></div>
-        <div class="fld"><label>Онош *</label><textarea class="inp" id="pl-e-diag" rows="2"></textarea></div>
-      </div>
-      <div class="fld" style="margin-top:8px"><label>Шинж тэмдэг</label><div class="row" id="pl-e-symptoms" style="gap:6px;flex-wrap:wrap"></div></div>
-      <div class="fg r4" style="margin-top:8px">
+
+      <div class="pl-sec">2 · Үзлэг, онош</div>
+      <div class="fg r4">
         <div class="fld"><label>Темп (°C)</label><input class="inp" type="number" step="0.1" id="pl-e-temp"></div>
         <div class="fld"><label>Зүрх (уд/мин)</label><input class="inp" type="number" id="pl-e-pulse"></div>
         <div class="fld"><label>Амьсгал</label><input class="inp" type="number" id="pl-e-resp"></div>
-        <div class="fld"><label>Жин (кг)</label><input class="inp" type="number" id="pl-e-wt"></div>
+        <div class="fld"></div>
       </div>
-      <div class="fg r2" style="margin-top:10px">
+      <div class="fld" style="margin-top:8px"><label>Шинж тэмдэг</label><div class="row" id="pl-e-symptoms" style="gap:6px;flex-wrap:wrap"></div></div>
+      <div class="fg r2" style="margin-top:8px">
+        <div class="fld"><label>Анамнез</label><textarea class="inp" id="pl-e-anam" rows="2"></textarea></div>
+        <div class="fld"><label>Онош *</label><textarea class="inp" id="pl-e-diag" rows="2" placeholder="бичиж эхлэхэд өмнөх оношууд санал болно"></textarea><div class="plx-chips" id="pl-diag-hint" style="margin-top:4px"></div></div>
+      </div>
+      <div id="pl-sugg" style="margin-top:8px"></div>
+
+      <div class="pl-sec">3 · Эмчилгээ, эм, зөвлөгөө</div>
+      <div class="fg r2">
         <div>
           <div class="fld"><label>Үйлчилгээ</label><div class="dd"><input class="inp" id="pl-svc-search" placeholder="🔍 Үйлчилгээ хайж нэмэх..." autocomplete="off"><div class="dd-list" id="pl-svc-dd"></div></div></div>
           <div id="pl-svc-selected" style="margin-top:6px"></div>
         </div>
         <div>
-          <div class="fld"><label>Эм</label><div class="dd"><input class="inp" id="pl-med-search" placeholder="Эм хайж нэмэх..." autocomplete="off"><div class="dd-list" id="pl-med-dd"></div></div></div>
+          <div class="fld"><label>Эм, тариа (тун, заавар)</label><div class="dd"><input class="inp" id="pl-med-search" placeholder="Эм хайж нэмэх..." autocomplete="off"><div class="dd-list" id="pl-med-dd"></div></div></div>
           <div id="pl-med-chips" style="margin-top:6px"></div>
         </div>
       </div>
-      <div class="fld" style="margin-top:8px"><label>Эмчийн тэмдэглэл / зөвлөгөө</label><textarea class="inp" id="pl-e-note" rows="2"></textarea></div>
-      <div class="row" style="justify-content:flex-end;gap:8px;margin-top:12px;padding-top:12px;border-top:1px solid var(--border)">
+      <div class="fld" style="margin-top:8px"><label>Эмчийн зөвлөгөө <span class="muted" style="font-weight:600;text-transform:none">(мөр бүр нэг зөвлөгөө — үйлчлүүлэгчийн хуудсанд жагсаалтаар гарна)</span></label><textarea class="inp" id="pl-e-note" rows="3"></textarea><div class="plx-chips" id="pl-adv-chips" style="margin-top:4px"></div></div>
+
+      <div class="pl-sec">4 · Төлбөр</div>
+      <div class="pl-pay">
+        <div class="fg r3">
+          <div class="fld"><label>Нийт дүн <span class="muted" id="pl-e-total-mode" style="font-weight:600;text-transform:none">(авто)</span></label><div class="row" style="gap:4px"><input class="inp" type="number" id="pl-e-total" value="0" style="font-weight:900;background:var(--orange-soft);color:var(--orange-dark)" oninput="PL_DRAFT.manualTotal=true;$('#pl-e-total-mode').textContent='(гараар)';plPayRender()"><button class="btn btn-xs" type="button" title="Үйлчилгээний нийлбэрээр дахин тооцох" onclick="PL_DRAFT.manualTotal=false;updatePlTotal()">↺</button></div></div>
+          <div class="fld"><label>Төлсөн</label><div class="pl-big" id="pl-paid" style="color:var(--green)">₮0</div></div>
+          <div class="fld"><label>Үлдэгдэл</label><div class="pl-big" id="pl-due" style="color:var(--orange-dark)">₮0</div></div>
+        </div>
+        <div class="row" style="gap:6px;flex-wrap:wrap;margin-top:8px;align-items:center">
+          <input class="inp" type="number" id="pl-pay-amt" placeholder="дүн (хоосон = үлдэгдэл бүгд)" style="width:190px">
+          ${PL_PAY_METHODS.map(m => `<button type="button" class="btn pl-pay-btn" onclick="plPayAdd('${m[0]}')">${m[1]}</button>`).join('')}
+        </div>
+        <div id="pl-pay-list" style="margin-top:6px"></div>
+      </div>
+
+      <div class="pl-actions">
         <button class="btn" onclick="clearPlannedForm()">Цэвэрлэх</button>
-        <button class="btn btn-g" onclick="savePlannedExam()">💾 Хадгалаад дараагийнх</button>
+        <button class="btn" onclick="plCopyPrev()" title="Энэ явцад сүүлд шивсэн үзлэгийн онош, үйлчилгээ, эм, зөвлөгөөг хуулна">↻ Өмнөхтэй адил</button>
+        <span style="flex:1"></span>
+        <button class="btn" id="pl-save-btn" onclick="savePlannedExam()">💾 Хадгалах</button>
+        <button class="btn btn-g" id="pl-save-print-btn" onclick="savePlannedExam({print:true})">💾🖨 Хадгалаад хэвлэх</button>
       </div>
     </div>`}
 
     <div class="card">
       <div class="ch">📋 Энэ явцад шивсэн үзлэгүүд <span class="ch-r">${ex.length}</span></div>
       ${ex.length ? `<div class="tbl-wrap" style="overflow-x:auto"><table style="min-width:820px;font-size:12px">
-        <thead><tr><th>#</th><th>Дугаар</th><th>Огноо</th><th>Аймаг / сум</th><th>Зүс</th><th>Эзэн</th><th>Онош</th><th>Үйлчилгээ</th><th>Эмч</th><th style="text-align:right">Дүн</th><th></th></tr></thead>
-        <tbody>${ex.map((e, i) => `<tr>
+        <thead><tr><th>#</th><th>Дугаар</th><th>Огноо</th><th>Аймаг / сум</th><th>Зүс</th><th>Эзэн</th><th>Онош</th><th>Үйлчилгээ</th><th>Эмч</th><th style="text-align:right">Дүн</th><th>Төлбөр</th><th></th></tr></thead>
+        <tbody>${ex.map((e, i) => { const fin = finByExamId(e.id); return `<tr>
           <td class="muted">${ex.length - i}</td>
           <td class="bold" style="cursor:pointer" onclick="openExamDetail('${escHTML(String(e.id))}')">${escHTML(e.examNum || '—')}</td>
           <td>${escHTML(e.date || '')}</td>
@@ -9160,15 +9453,34 @@ function renderTripDetail() {
           <td style="white-space:normal;font-size:11px">${escHTML((e.services || []).map(s => s.name).join(', '))}</td>
           <td style="font-size:11px">${escHTML(e.docName || '')}${e.assistDocName ? '<div class="muted" style="font-size:10px">+ ' + escHTML(e.assistDocName) + '</div>' : ''}</td>
           <td class="bold" style="text-align:right;white-space:nowrap">${fmt(e.amount || 0)}</td>
-          <td style="white-space:nowrap"><button class="btn btn-xs" onclick="openEditExam('${escHTML(String(e.id))}')" title="Засах">✏️</button> ${canDelete() ? `<button class="btn btn-xs btn-r" onclick="deleteExam('${escHTML(String(e.id))}');setTimeout(renderPlanned,50)" title="Устгах">✕</button>` : ''}</td>
-        </tr>`).join('')}</tbody></table></div>` : '<div class="muted" style="font-size:12px">Үзлэг шивээгүй байна</div>'}
-    </div>`;
+          <td style="white-space:nowrap">${plPayBadge(fin)}</td>
+          <td style="white-space:nowrap">${fin ? `<button class="btn btn-xs btn-g" onclick="markPaid('${escHTML(String(fin.id))}')" title="Төлбөр бүртгэх">💰</button> <button class="btn btn-xs" onclick="printInvoice('${escHTML(String(fin.id))}')" title="Үзлэгийн хуудас хэвлэх">🖨</button> ` : ''}<button class="btn btn-xs" onclick="openEditExam('${escHTML(String(e.id))}')" title="Засах">✏️</button> ${canDelete() ? `<button class="btn btn-xs btn-r" onclick="deleteExam('${escHTML(String(e.id))}');setTimeout(renderPlanned,50)" title="Устгах">✕</button>` : ''}</td>
+        </tr>`; }).join('')}</tbody></table></div>` : '<div class="muted" style="font-size:12px">Үзлэг шивээгүй байна</div>'}
+    </div>
+
+    <details class="card" id="pl-analysis" ontoggle="if(this.open)plxRenderAnalysis()">
+      <summary style="cursor:pointer;font-weight:800">📊 Датаны шинжилгээ — гараар бичих ажлыг хэр бууруулж байна <span class="muted" style="font-weight:600">(онош → эм, тариа, зөвлөгөө)</span></summary>
+      <div id="pl-analysis-body" style="margin-top:10px"></div>
+    </details>`;
   if (!closed) setupPlannedForm();
 }
 
+// Газар дээр ажиллах тул огноо нь явцын хугацаанд багтаж байвал өнөөдөр, үгүй бол явцын эхлэх өдөр
+function plDefaultDate(t) { const d = todayStr(); return (t.date && d >= t.date && d <= (t.endDate || t.date)) ? d : (t.date || d); }
+function plNowTime() { const d = new Date(); return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0'); }
+
 function setupPlannedForm() {
-  PL_DRAFT = { services: [], meds: [], symptoms: [], manualTotal: false };
-  renderPlSymptoms(); renderPlSvcs(); renderPlMeds();
+  // Дугаар: өмнөх үзлэгт гараар бичсэн бол (цаасан маягтын дараалал) +1, үгүй бол системийн авто дугаар
+  const stickyHere = PL_STICKY.tripId === STATE.selectedTrip;
+  const numAuto = !(stickyHere && PL_STICKY.numAuto === false);
+  PL_DRAFT = { services: [], meds: [], symptoms: [], pay: [], manualTotal: false, numAuto };
+  if (numAuto) { const ne = $('#pl-e-num'); if (ne && !ne.value) ne.value = nextExamNum(); }
+  const te = $('#pl-e-time'); if (te && !te.value) te.value = plNowTime();
+  renderPlSymptoms(); renderPlSvcs(); renderPlMeds(); plPayRender();
+  // 💡 Түүхэн датанаас санал
+  plxEnsureHistory(); renderPlSugg(); renderPlAdvChips();
+  const dg = $('#pl-e-diag'); if (dg) dg.oninput = plxOnDiagInput;
+  const nt = $('#pl-e-note'); if (nt) nt.oninput = () => { clearTimeout(__plxTimer2); __plxTimer2 = setTimeout(() => { renderPlSugg(); renderPlAdvChips(); }, 300); };
   // адууны зүсний санал (сүүлийн бүртгэлүүд)
   const dl = $('#pl-horse-dl');
   if (dl) { const names = [...new Set((STATE.horses || []).map(h => h.name).filter(Boolean))].slice(-300); dl.innerHTML = names.map(n => `<option value="${escHTML(n)}">`).join(''); }
@@ -9213,7 +9525,7 @@ function renderPlSvcs() {
   w.querySelectorAll('button[data-rm]').forEach(b => b.onclick = () => { PL_DRAFT.services.splice(+b.dataset.rm, 1); renderPlSvcs(); });
   updatePlTotal();
 }
-function updatePlTotal() { if (PL_DRAFT.manualTotal) return; const t = PL_DRAFT.services.reduce((a, b) => a + (parseFloat(b.price) || 0), 0); if ($('#pl-e-total')) $('#pl-e-total').value = t; if ($('#pl-e-total-mode')) $('#pl-e-total-mode').textContent = '(авто)'; }
+function updatePlTotal() { if (PL_DRAFT.manualTotal) { plPayRender(); return; } const t = PL_DRAFT.services.reduce((a, b) => a + (parseFloat(b.price) || 0), 0); if ($('#pl-e-total')) $('#pl-e-total').value = t; if ($('#pl-e-total-mode')) $('#pl-e-total-mode').textContent = '(авто)'; plPayRender(); }
 function addPlMed(name) { name = String(name == null ? '' : name).trim(); if (!name) return; if (!PL_DRAFT.meds.find(x => x.name === name)) PL_DRAFT.meds.push({ name, note: '' }); renderPlMeds(); }
 function renderPlMeds() {
   const w = $('#pl-med-chips'); if (!w) return;
@@ -9222,24 +9534,83 @@ function renderPlMeds() {
   w.querySelectorAll('button[data-rm]').forEach(b => b.onclick = () => { PL_DRAFT.meds.splice(+b.dataset.rm, 1); renderPlMeds(); });
 }
 function clearPlannedForm() {
-  ['pl-e-num', 'pl-e-time', 'pl-e-horse', 'pl-e-phone', 'pl-e-age', 'pl-e-anam', 'pl-e-diag', 'pl-e-temp', 'pl-e-pulse', 'pl-e-resp', 'pl-e-wt', 'pl-e-note', 'pl-svc-search', 'pl-med-search'].forEach(id => { const el = $('#' + id); if (el) el.value = ''; });
-  PL_DRAFT = { services: [], meds: [], symptoms: [], manualTotal: false };
-  renderPlSymptoms(); renderPlSvcs(); renderPlMeds();
+  ['pl-e-time', 'pl-e-horse', 'pl-e-phone', 'pl-e-age', 'pl-e-anam', 'pl-e-diag', 'pl-e-temp', 'pl-e-pulse', 'pl-e-resp', 'pl-e-wt', 'pl-e-note', 'pl-svc-search', 'pl-med-search', 'pl-pay-amt'].forEach(id => { const el = $('#' + id); if (el) el.value = ''; });
+  const numAuto = PL_DRAFT.numAuto !== false;
+  PL_DRAFT = { services: [], meds: [], symptoms: [], pay: [], manualTotal: false, numAuto };
+  if (numAuto && $('#pl-e-num')) $('#pl-e-num').value = nextExamNum();
+  if ($('#pl-e-time')) $('#pl-e-time').value = plNowTime();
+  renderPlSymptoms(); renderPlSvcs(); renderPlMeds(); plPayRender(); renderPlSugg(); renderPlAdvChips(); plxDiagHint();
   const h = $('#pl-e-horse'); if (h) h.focus();
 }
 
-// ── Хадгалах: адуу (upsert) + үзлэг + санхүү + эмчийн статистик + шинжилгээ ──
-async function savePlannedExam() {
-  try { return await _savePlannedExam(); } catch (e) { console.error('[savePlannedExam]', e); toast('⚠️ Хадгалахад алдаа: ' + (e && e.message || e), 'err'); }
+// ── 💰 Нэг цонхон дахь төлбөр ────────────────────────────────
+const PL_PAY_METHODS = [['бэлэн', '💵 Бэлэн'], ['карт', '💳 Карт'], ['QPay', '📱 QPay'], ['дансаар', '🏦 Дансаар'], ['зээл', '📝 Зээл (авлага)']];
+function plTotalNow() { const el = $('#pl-e-total'); return el ? (parseFloat(el.value) || 0) : 0; }
+function plPaidSum() { return (PL_DRAFT.pay || []).filter(p => p.method !== 'зээл').reduce((a, p) => a + (parseFloat(p.amount) || 0), 0); }
+function plCreditSum() { return (PL_DRAFT.pay || []).filter(p => p.method === 'зээл').reduce((a, p) => a + (parseFloat(p.amount) || 0), 0); }
+function plPayAdd(method) {
+  const total = plTotalNow();
+  if (total <= 0) { toast('Нийт дүн 0 байна — эхлээд үйлчилгээ сонгоно уу', 'err'); return; }
+  const inp = $('#pl-pay-amt');
+  const free = total - plPaidSum() - plCreditSum(); // төлбөр, зээлээр хараахан хуваарилагдаагүй хэсэг
+  let amt = parseFloat(inp && inp.value);
+  if (!amt || amt <= 0) amt = free;
+  if (amt <= 0) { toast('Үлдэгдэл алга — бүтэн хуваарилагдсан', 'err'); return; }
+  if (amt > free) { toast('Дүн үлдсэн ' + fmt(free) + '-ээс их байна', 'err'); return; }
+  PL_DRAFT.pay.push({ amount: amt, method, date: '', ms: nowMs() });
+  if (inp) inp.value = '';
+  plPayRender();
 }
-async function _savePlannedExam() {
+function plPayRemove(i) { PL_DRAFT.pay.splice(i, 1); plPayRender(); }
+function plPayRender() {
+  const total = plTotalNow(), paid = plPaidSum(), credit = plCreditSum();
+  const due = Math.max(0, total - paid);
+  const pe = $('#pl-paid'), de = $('#pl-due'); if (pe) pe.textContent = fmt(paid); if (de) de.textContent = fmt(due);
+  const host = $('#pl-pay-list'); if (!host) return;
+  const list = (PL_DRAFT.pay || []).map((p, i) => `<div class="row" style="justify-content:space-between;background:var(--input);padding:6px 10px;border-radius:6px;font-size:12px;margin-bottom:4px"><span>${methodIcon(p.method)} ${escHTML(p.method)}</span><span class="row" style="gap:8px"><b>${fmt(p.amount)}</b><button type="button" class="btn btn-r btn-xs" onclick="plPayRemove(${i})">✕</button></span></div>`).join('');
+  const over = paid + credit > total;
+  host.innerHTML = list + (over ? '<div style="color:var(--red);font-size:12px;font-weight:700">⚠️ Төлбөр нийт дүнгээс хэтэрсэн — нийт дүнгээ шалгана уу</div>'
+    : (!(PL_DRAFT.pay || []).length ? '<div class="muted" style="font-size:12px">Төлбөр бүртгээгүй бол нэхэмжлэх «хүлээгдэж буй» болж Санхүүд үлдэнэ.</div>' : ''));
+}
+function plTripPay(exams) {
+  let total = 0, paid = 0;
+  exams.forEach(e => { const f = finByExamId(e.id); if (!f) return; total += parseFloat(f.amount) || 0; paid += getPaidAmount(f); });
+  return { total, paid, due: Math.max(0, total - paid) };
+}
+function plPayBadge(f) {
+  if (!f) return '<span class="muted">—</span>';
+  if (isFullyPaid(f)) return '<span class="badge b-g">✅ ' + escHTML(f.method || 'Төлсөн') + '</span>';
+  const paid = getPaidAmount(f);
+  if (paid > 0) return '<span class="badge b-o">⏳ ' + fmtCompact(paid) + ' / ' + fmtCompact(parseFloat(f.amount) || 0) + '</span>';
+  if (isReceivable(f)) return '<span class="badge b-o">📝 Авлага</span>';
+  return '<span class="badge b-r">⏳ Төлөгдөөгүй</span>';
+}
+
+// ── Хадгалах: адуу (upsert) + үзлэг + санхүү + эмчийн статистик + шинжилгээ ──
+let PL_SAVING = false;
+async function savePlannedExam(opts) {
+  if (PL_SAVING) return; // давхар товшилтоос хамгаална (таблет дээр хоёр удаа дарахад хоёр үзлэг үүсэхээс)
+  PL_SAVING = true;
+  ['pl-save-btn', 'pl-save-print-btn'].forEach(id => { const b = $('#' + id); if (b) b.disabled = true; });
+  try { return await _savePlannedExam(opts || {}); }
+  catch (e) { console.error('[savePlannedExam]', e); toast('⚠️ Хадгалахад алдаа: ' + (e && e.message || e), 'err'); }
+  finally { PL_SAVING = false; ['pl-save-btn', 'pl-save-print-btn'].forEach(id => { const b = $('#' + id); if (b) b.disabled = false; }); }
+}
+async function _savePlannedExam(opts) {
   const t = tripById(STATE.selectedTrip); if (!t) { toast('Явц сонгоно уу', 'err'); return; }
   const v = id => (($('#' + id) || {}).value || '').trim();
-  const horseName = v('pl-e-horse'), diag = v('pl-e-diag'), examNum = v('pl-e-num');
+  const horseName = v('pl-e-horse'), diag = v('pl-e-diag');
+  let examNum = v('pl-e-num');
   if (!horseName) { toast('Зүс (нэр) оруулна уу', 'err'); $('#pl-e-horse').focus(); return; }
   if (!diag) { toast('Онош оруулна уу', 'err'); $('#pl-e-diag').focus(); return; }
   if (!examNum) { toast('Үзлэгийн хуудасны дугаар оруулна уу (эсвэл «авто»)', 'err'); $('#pl-e-num').focus(); return; }
-  const dup = findExamNumDuplicate(examNum) || await findExamNumDuplicateRemote(examNum);
+  let dup = findExamNumDuplicate(examNum) || await findExamNumDuplicateRemote(examNum);
+  // Авто дугаар өөр таблеттэй давхцвал дараагийн чөлөөт дугаарыг өөрөө олно; гараар бичсэн бол алдаа өгнө
+  if (dup && PL_DRAFT.numAuto) {
+    let n = examNumValue(examNum), tries = 0;
+    while (dup && n !== null && tries++ < 30) { n++; examNum = formatExamNum(n); dup = findExamNumDuplicate(examNum) || await findExamNumDuplicateRemote(examNum); }
+    if (!dup && $('#pl-e-num')) $('#pl-e-num').value = examNum;
+  }
   if (dup) { toast('⚠️ ' + examNum + ' дугаар аль хэдийн байна (' + (dup.rec.horse || '') + ')', 'err'); $('#pl-e-num').focus(); return; }
   if (!PL_DRAFT.services.length && !confirm('Үйлчилгээ сонгоогүй байна. Үйлчилгээгүйгээр хадгалах уу?')) return;
   const owner = v('pl-e-owner'), phone = v('pl-e-phone');
@@ -9249,6 +9620,14 @@ async function _savePlannedExam() {
   const doc = (STATE.doctors || []).find(d => String(d.id) === v('pl-e-doc'));
   const asst = (STATE.doctors || []).find(d => String(d.id) === v('pl-e-asst'));
   if (!doc) { toast('Эмч сонгоно уу', 'err'); return; }
+  // Төлбөрийн шалгалт
+  const services0 = PL_DRAFT.services.map(s => ({ name: s.name, price: parseFloat(s.price) || 0 }));
+  const svcSum0 = services0.reduce((a, b) => a + b.price, 0);
+  const total0 = PL_DRAFT.manualTotal ? (parseFloat(v('pl-e-total')) || 0) : svcSum0;
+  if ((PL_DRAFT.pay || []).length) {
+    if (total0 <= 0) { toast('Нийт дүн 0 байхад төлбөр бүртгэх боломжгүй', 'err'); return; }
+    if (plPaidSum() + plCreditSum() > total0) { toast('Төлбөр нийт дүнгээс хэтэрсэн байна', 'err'); return; }
+  }
 
   // Адуу: зүс + эзэн + аймгаар олно (ИАБД хээрийн үзлэгт байхгүй); байхгүй бол шинээр бүртгэнэ
   // Зарим адууны нэр/эзэн тоо хэлбэрээр хадгалагдсан байж болно (ж: 12) — String()-ээр хамгаална
@@ -9258,9 +9637,9 @@ async function _savePlannedExam() {
     horse = { id: uid(), name: horseName, owner, phone, iabd: '', age: v('pl-e-age'), breed: '', mark: '', province, soum, date, extra: 'Төлөвлөгөөт үзлэг: ' + tripLabel(t), createdAt: nowMs(), ms: nowMs(), kind: 'planned' };
     STATE.horses.push(horse); fbSaveRecord('horses', horse);
   } else if (v('pl-e-age') && !horse.age) { horse.age = v('pl-e-age'); horse.ms = nowMs(); fbSaveRecord('horses', horse); }
-  const services = PL_DRAFT.services.map(s => ({ name: s.name, price: parseFloat(s.price) || 0 }));
-  const svcSum = services.reduce((a, b) => a + b.price, 0);
-  const total = PL_DRAFT.manualTotal ? (parseFloat(v('pl-e-total')) || 0) : svcSum;
+  const services = services0;
+  const svcSum = svcSum0;
+  const total = total0;
   const ms = nowMs();
   const exam = { id: uid(), kind: 'planned', tripId: t.id, tripLocation: t.location || t.province || '',
     horseId: horse.id, horse: horseName, owner, phone, docId: doc.id, docName: doc.name,
@@ -9274,22 +9653,29 @@ async function _savePlannedExam() {
   STATE.exams.push(exam);
   const fin = { id: uid(), kind: 'planned', tripId: t.id, examId: exam.id, examNum, horse: horseName, owner, phone, docName: doc.name, amount: total,
     services: services.map(s => s.name).join(', '), paid: false, method: '', date, paidDate: '', paidMs: 0, payments: [], ms };
+  // 💰 Газар дээр авсан төлбөрийг нэхэмжлэхтэй хамт бүртгэнэ (Санхүүгийн «Төлбөр бүртгэх»-тэй яг ижил бүтэц)
+  const hadPay = (PL_DRAFT.pay || []).length > 0;
+  if (hadPay) applyPaymentsToFin(fin, PL_DRAFT.pay.map(p => ({ amount: p.amount, method: p.method, date, ms: p.ms || ms })));
   STATE.fins.push(fin);
   doc.exams = (doc.exams || 0) + 1; doc.rev = (doc.rev || 0) + total; fbSaveRecord('doctors', doc);
   saveAll(); fbSaveRecord('exams', exam); fbSaveRecord('fins', fin);
   let labN = 0; try { if (typeof createLabOrdersFromExam === 'function') labN = createLabOrdersFromExam(exam).length; } catch (e) { console.error('lab', e); }
   writeLog('Төлөвлөгөөт үзлэг шивэв', exam.id, horseName + ' — ' + doc.name, 'Явц: ' + tripLabel(t) + (diag ? ' · Онош: ' + diag : ''), examNum);
+  if (hadPay) writeLog(isFullyPaid(fin) ? 'Төлбөр авсан' : 'Хэсэгчилсэн төлбөр авсан', fin.id, horseName, (isFullyPaid(fin) ? 'Бүтэн төлсөн' : 'Хэсэгчлэн төлсөн') + ': ' + fmt(getPaidAmount(fin)) + (fin.method ? ' · ' + fin.method : ''), examNum);
   updateBadges();
-  toast('✅ ' + horseName + ' (' + examNum + ') хадгалагдлаа' + (labN ? ' · 🧪 ' + labN + ' шинжилгээ' : ''), 'ok');
+  toast('✅ ' + horseName + ' (' + examNum + ') хадгалагдлаа' + (hadPay ? (isFullyPaid(fin) ? ' · 💰 төлөгдсөн' : ' · 💰 хэсэгчилсэн') : '') + (labN ? ' · 🧪 ' + labN + ' шинжилгээ' : ''), 'ok');
   // Аймаг/сум/эмч/огноог дараагийн маягтад хэвээр үлдээнэ, адууны талбаруудыг цэвэрлэнэ
-  PL_STICKY = { tripId: t.id, province, soum, owner, docId: doc.id, asstId: asst ? asst.id : '' };
+  PL_STICKY = { tripId: t.id, province, soum, owner, docId: doc.id, asstId: asst ? asst.id : '', numAuto: PL_DRAFT.numAuto !== false };
   const keepDate = date;
-  renderPlanned();
+  renderPlanned(true); // шинэ цэвэр маягт (бөглөсөн өгөгдлийг сэргээхгүй)
   if ($('#pl-e-date')) $('#pl-e-date').value = keepDate;
-  // Дараагийн дугаар: маягт дараалсан бол +1 санал болгоно
-  const nv = examNumValue(examNum);
-  if ($('#pl-e-num') && nv !== null) { const pad = examNum.replace(/\D/g, '').length; $('#pl-e-num').value = examNum.replace(/\d+/, String(nv + 1).padStart(pad, '0')); }
+  // Гараар дугаарлаж байгаа (цаасан маягтын дараалал) бол +1 санал болгоно; авто бол setupPlannedForm өөрөө бөглөсөн
+  if (PL_DRAFT.numAuto === false) {
+    const nv = examNumValue(examNum);
+    if ($('#pl-e-num') && nv !== null) { const pad = examNum.replace(/\D/g, '').length; $('#pl-e-num').value = examNum.replace(/\d+/, String(nv + 1).padStart(pad, '0')); }
+  }
   const h = $('#pl-e-horse'); if (h) h.focus();
+  if (opts && opts.print) printInvoice(fin.id, { direct: true });
 }
 
 // ── Явцын тайлан хэвлэх / CSV ─────────────────────────────────
