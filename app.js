@@ -9047,11 +9047,11 @@ function plxIndex() {
   return idx;
 }
 
-function plxFind(diagText) {
+function plxFind(diagText, exactOnly) {
   const idx = plxIndex(); const k = plxNorm(diagText);
   if (!k) return null;
   let g = idx.groups.get(k);
-  if (!g && k.length >= 4) { // хагас таарал: бичсэн нь онош дотор эсвэл онош нь бичсэнд агуулагдана
+  if (!g && !exactOnly && k.length >= 4) { // хагас таарал: бичсэн нь онош дотор эсвэл онош нь бичсэнд агуулагдана
     let best = null;
     idx.groups.forEach(x => { if (x.key.length >= 4 && (x.key.includes(k) || k.includes(x.key)) && (!best || x.n > best.n)) best = x; });
     g = best;
@@ -9108,7 +9108,35 @@ function plxApplyAll() {
   renderPlSvcs(); renderPlMeds(); renderPlSugg();
   toast(n ? '✨ ' + n + ' зүйл нэмэгдлээ — тун, хэмжээг шалгана уу' : 'Нэмэх шинэ зүйл алга (≥50% давтамжтай)', n ? 'ok' : 'err');
 }
-function plxPickDiag(label) { const el = $('#pl-e-diag'); if (!el) return; el.value = label; renderPlSugg(); plxDiagHint(); }
+// ✨ АВТОМАТ НӨХӨЛТ — онош яг таарвал (түүхэнд PLX_MIN_N+ үзлэгтэй) түгээмэл (≥50%) үйлчилгээ, эм (тунтай),
+// (≥40%) зөвлөгөөг өөрөө нэмнэ. Зөвхөн тухайн хэсэг хоосон байхад нэмж, эмчийн бичсэнийг дардаггүй;
+// нэг оношид нэг л удаа (эмч хасвал дахин нэмэхгүй). Нэмсэн зүйлсийг «↩ Буцаах»-аар нэг дор хасна.
+function plxAutoApply() {
+  const el = $('#pl-e-diag'); const diag = el ? el.value.trim() : ''; if (!diag) return;
+  const res = plxFind(diag, true); if (!res) return;
+  const key = res.group.key;
+  if (PL_DRAFT.autoKey === key) return;
+  if (PL_DRAFT.autoAdded) plxUndoAuto(true); // өмнөх оношийн автомат нэмсэн зүйлсийг цэвэрлэнэ
+  PL_DRAFT.autoKey = key;
+  const it = plxItems(res), added = { svc: [], med: [], adv: [] };
+  if (!PL_DRAFT.services.length) it.svcs.filter(x => x.pct >= 0.5).forEach(x => { addPlSvc(x.name); added.svc.push(x.name); });
+  if (!PL_DRAFT.meds.length) it.meds.filter(x => x.pct >= 0.5).forEach(x => { plxAddMed(x.name, x.note); added.med.push(x.name); });
+  if (!plxNoteLines().length) it.adv.filter(x => x.pct >= 0.4).slice(0, 4).forEach(x => { plxAddAdvice(x.line); added.adv.push(x.line); });
+  const n = added.svc.length + added.med.length + added.adv.length;
+  PL_DRAFT.autoAdded = n ? added : null;
+  renderPlSvcs(); renderPlMeds(); renderPlSugg(); renderPlAdvChips();
+  if (n) toast('✨ «' + res.label + '» оношид ' + n + ' зүйл автоматаар нэмлээ — тун, хэмжээг шалгана уу', 'ok');
+}
+function plxUndoAuto(silent) {
+  const a = PL_DRAFT.autoAdded; if (!a) return;
+  PL_DRAFT.services = PL_DRAFT.services.filter(x => !a.svc.includes(x.name));
+  PL_DRAFT.meds = PL_DRAFT.meds.filter(x => !a.med.includes(x.name));
+  a.adv.forEach(l => plxRemoveAdvice(l));
+  PL_DRAFT.autoAdded = null;
+  renderPlSvcs(); renderPlMeds(); renderPlSugg(); renderPlAdvChips();
+  if (!silent) toast('↩ Автоматаар нэмсэн зүйлс хасагдлаа', 'ok');
+}
+function plxPickDiag(label) { const el = $('#pl-e-diag'); if (!el) return; el.value = label; renderPlSugg(); plxDiagHint(); plxAutoApply(); }
 
 // ── Санал харуулах ──────────────────────────────────────────
 let __plxTimer = null, __plxTimer2 = null;
@@ -9141,7 +9169,9 @@ function renderPlSugg() {
   const pct = x => Math.round(x * 100) + '%';
   const chip = (cls, on, i, text, p) => `<button type="button" class="plx-chip ${on ? 'on' : ''}" onclick="plxToggle('${cls}',${i})">${on ? '✓ ' : '+ '}${escHTML(text)} <span class="plx-n">${p}</span></button>`;
   const row = (lbl, html) => html ? `<div class="plx-row"><span class="plx-lbl">${lbl}</span><div class="plx-chips">${html}</div></div>` : '';
+  const a = PL_DRAFT.autoAdded, an = a ? a.svc.length + a.med.length + a.adv.length : 0;
   host.innerHTML = `<div class="plx-box">
+    ${an ? `<div class="plx-auto">✨ Автоматаар <b>${an}</b> зүйл нэмлээ — шалгаад засна уу <button type="button" class="btn btn-xs" onclick="plxUndoAuto()">↩ Буцаах</button></div>` : ''}
     <div class="plx-h"><span>💡 «${escHTML(res.label)}» — өмнөх <b>${items.n}</b> ${res.src === 'planned' ? 'төлөвлөгөөт ' : ''}үзлэгийн дагуу</span>
       <button type="button" class="btn btn-xs btn-p" onclick="plxApplyAll()">✨ Түгээмэлийг нөхөх</button></div>
     ${row('Үйлчилгээ', items.svcs.map((s, i) => chip('svc', plxHasSvc(s.name), i, s.name, pct(s.pct))).join(''))}
@@ -9170,7 +9200,7 @@ function plCopyPrev() {
   PL_DRAFT.symptoms = Array.isArray(prev.symptoms) ? prev.symptoms.slice() : [];
   PL_DRAFT.services = (prev.services || []).map(s => ({ name: s.name, price: parseFloat(s.price) || getSvcPrice(s.name) || 0 }));
   PL_DRAFT.meds = (prev.meds || []).map(m => ({ name: plxMedName(m), note: plxMedNote(m) })).filter(m => m.name);
-  PL_DRAFT.manualTotal = false;
+  PL_DRAFT.manualTotal = false; PL_DRAFT.autoKey = plxNorm(prev.diagnosis); PL_DRAFT.autoAdded = null;
   renderPlSymptoms(); renderPlSvcs(); renderPlMeds(); renderPlSugg(); renderPlAdvChips(); plxDiagHint();
   toast('↻ «' + (prev.horse || 'өмнөх') + '» үзлэгийн онош, үйлчилгээ, эм, зөвлөгөөг хууллаа — шалгана уу', 'ok');
 }
@@ -9493,7 +9523,7 @@ function setupPlannedForm() {
   renderPlSymptoms(); renderPlSvcs(); renderPlMeds(); plPayRender();
   // 💡 Түүхэн датанаас санал
   plxEnsureHistory(); renderPlSugg(); renderPlAdvChips();
-  const dg = $('#pl-e-diag'); if (dg) dg.oninput = plxOnDiagInput;
+  const dg = $('#pl-e-diag'); if (dg) { dg.oninput = plxOnDiagInput; dg.onchange = plxAutoApply; }
   const nt = $('#pl-e-note'); if (nt) nt.oninput = () => { clearTimeout(__plxTimer2); __plxTimer2 = setTimeout(() => { renderPlSugg(); renderPlAdvChips(); }, 300); };
   // адууны зүсний санал (сүүлийн бүртгэлүүд)
   const dl = $('#pl-horse-dl');

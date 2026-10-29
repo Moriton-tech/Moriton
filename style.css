@@ -1642,3 +1642,37 @@ tbody tr:hover { background: #fafbfd; }
 .plx-foot { font-size: 11px; color: var(--muted); margin-top: 6px; }
 @media (max-width: 700px) { .plx-row { flex-direction: column; gap: 2px; } .plx-lbl { padding-top: 0; flex-basis: auto; } }
 @media print { #pl-entry-card .pl-actions { display: none; } }
+
+/* ===== Автомат санал + утасны дэлгэц (2026-10-29) ===== */
+.plx-auto{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;background:rgba(34,197,94,.12);border:1px solid rgba(34,197,94,.35);border-radius:8px;padding:6px 10px;margin-bottom:8px;font-size:12.5px}
+/* Баримтын цонх: толгой/хөл тогтмол, дунд хэсэг гүйлгэгдэнэ */
+#receipt-modal .mod{display:flex;flex-direction:column;max-height:92vh;max-height:92dvh}
+#receipt-modal #receipt-body{flex:1 1 auto;min-height:0;max-height:none!important;overflow-y:auto;-webkit-overflow-scrolling:touch}
+#receipt-modal .mod-actions{flex:0 0 auto}
+#pay-modal .mod{max-height:92vh;max-height:92dvh;overflow-y:auto;-webkit-overflow-scrolling:touch}
+@media (max-width:1000px){
+  #page-planned .grid2:has(#pl-entry-card)>:first-child{order:2}
+}
+@media (max-width:700px){
+  html,body{overflow-x:hidden}
+  #page-planned,#page-planned .card{max-width:100%;overflow-x:hidden}
+  #page-planned .grid2{gap:10px!important}
+  #pl-entry-card .fg,#pl-entry-card .fg.r2,#pl-entry-card .fg.r3,#pl-entry-card .fg.r4{grid-template-columns:1fr 1fr!important;gap:8px}
+  #pl-entry-card .fg .fld[style*="span"],#pl-entry-card .fld.full,#pl-entry-card #pl-e-owner{grid-column:1/-1}
+  #pl-entry-card input,#pl-entry-card select,#pl-entry-card textarea,#page-planned .inp{font-size:16px!important;min-width:0;max-width:100%}
+  #pl-entry-card .pl-actions{margin:12px -4px 0;padding:8px;gap:6px;bottom:60px;flex-wrap:wrap}
+  #pl-entry-card .pl-actions .btn{flex:1 1 calc(50% - 6px);padding:10px 6px;font-size:13px;justify-content:center}
+  #pl-entry-card .pl-pay{flex-wrap:wrap}
+  #pl-entry-card .pl-pay-btn{flex:1 1 calc(33% - 6px)}
+  .plx-row{flex-wrap:wrap}
+  .plx-chip{max-width:100%;white-space:normal;text-align:left}
+  #page-planned table{display:block;overflow-x:auto;-webkit-overflow-scrolling:touch}
+  .mod-bd{align-items:flex-end;padding:0}
+  .mod-bd .mod{width:100%;max-width:100%!important;border-radius:14px 14px 0 0;max-height:92vh;max-height:92dvh}
+  #receipt-modal .mod{padding:0!important}
+  #receipt-modal #receipt-body{padding:12px!important}
+  #receipt-modal .mod-actions{padding:10px 12px calc(10px + env(safe-area-inset-bottom))!important}
+  #receipt-modal .mod-actions .btn{flex:1}
+  #receipt-body .uz-sheet{transform-origin:top left}
+  #receipt-body table{max-width:100%}
+}
