@@ -2642,7 +2642,7 @@ function examNumMax(withRec) {
     if (cfg.since && dateOf(r) && dateOf(r) < cfg.since) return;
     if (v > max) { max = v; rec = { src, r }; }
   };
-  (STATE.exams || []).forEach(e => collect(e, 'үзлэг'));
+  (STATE.exams || []).forEach(e => { if (!isPlanned(e)) collect(e, 'үзлэг'); }); // газрын (ТҮ) дугаар төвийн цувралд орохгүй
   (STATE.waiting || []).forEach(w => collect(w, 'дараалал'));
   return withRec ? { max, rec } : max;
 }
@@ -2693,7 +2693,7 @@ async function findExamNumDuplicateRemote(examNum, excludeId) {
   if (!window.__fbQuery || !window.__fbReady) return null;
   const t = String(examNum).trim(); if (!t) return null;
   const num = (t.match(/\d+/) || [])[0];
-  const variants = [...new Set([t, num || '', num ? String(parseInt(num, 10)) : '', num ? String(parseInt(num, 10)).padStart(6, '0') : ''].filter(Boolean))];
+  const variants = /\D/.test(t) ? [t] : [...new Set([t, num || '', num ? String(parseInt(num, 10)) : '', num ? String(parseInt(num, 10)).padStart(6, '0') : ''].filter(Boolean))];
   const timeout = new Promise(r => setTimeout(() => r(null), 3000));
   const q = (async () => {
     for (const v of variants) {
@@ -2716,6 +2716,8 @@ function findExamNumDuplicate(examNum, excludeId) {
     if (!n) return false;
     const s = String(n).trim();
     if (s === target) return true;
+    // Үсэг (угтвар) агуулсан дугаар (ж: ТҮ261029-001) нь зөвхөн яг таарахад давхардал — төвийн тоон цувраатай харьцуулахгүй
+    if (/\D/.test(target) || /\D/.test(s)) return s.toLowerCase() === target.toLowerCase();
     // Тоон утгаар нь (тэгийн ялгааг үл харгалзан) харьцуулна
     const sNum = (s.match(/\d+/) || [])[0];
     return targetNum && sNum && parseInt(sNum, 10) === parseInt(targetNum, 10);
@@ -9370,8 +9372,8 @@ function renderTripDetail() {
 
       <div class="pl-sec">1 · Адуу, эзэн</div>
       <div class="fg r4">
-        <div class="fld"><label>Үзлэгийн хуудасны №</label><div class="row" style="gap:4px"><input class="inp" id="pl-e-num" placeholder="авто" style="font-weight:800" oninput="PL_DRAFT.numAuto=false"><button class="btn btn-xs" type="button" title="Системийн дараагийн дугаар" onclick="PL_DRAFT.numAuto=true;$('#pl-e-num').value=nextExamNum()">авто</button></div></div>
-        <div class="fld"><label>Огноо</label><input class="inp" type="date" id="pl-e-date" value="${escHTML(plDefaultDate(t))}"></div>
+        <div class="fld"><label>Үзлэгийн хуудасны №</label><div class="row" style="gap:4px"><input class="inp" id="pl-e-num" placeholder="авто" style="font-weight:800" oninput="PL_DRAFT.numAuto=false"><button class="btn btn-xs" type="button" title="Системийн дараагийн дугаар" onclick="PL_DRAFT.numAuto=true;$('#pl-e-num').value=plNextNumNow()">авто</button></div></div>
+        <div class="fld"><label>Огноо</label><input class="inp" type="date" id="pl-e-date" value="${escHTML(plDefaultDate(t))}" onchange="plOnDateChange()"></div>
         <div class="fld"><label>Цаг</label><input class="inp" type="time" id="pl-e-time"></div>
         <div class="fld"><label>Аймаг</label><select class="inp" id="pl-e-prov">${provOpts(stickyProv)}</select></div>
       </div>
@@ -9466,6 +9468,18 @@ function renderTripDetail() {
 }
 
 // Газар дээр ажиллах тул огноо нь явцын хугацаанд багтаж байвал өнөөдөр, үгүй бол явцын эхлэх өдөр
+// 🔢 Газрын (төлөвлөгөөт) үзлэгийн хуудасны дугаар — төвийн цувралаас тусдаа: ТҮ + ммддyy огноо + дараалал
+// ж: ТҮ261029-001. Өдөр бүр 001-ээс эхэлнэ; төв эмнэлгийн 090311… тоон цуваатай хэзээ ч давхцахгүй.
+function plNextNum(dateStr) {
+  const d = String(dateStr || todayStr()).slice(0, 10).replace(/-/g, '').slice(2);
+  const prefix = 'ТҮ' + d + '-';
+  let max = 0;
+  (STATE.exams || []).forEach(e => { const n = String((e && e.examNum) || ''); if (n.startsWith(prefix)) { const v = parseInt(n.slice(prefix.length), 10); if (!isNaN(v) && v > max) max = v; } });
+  return prefix + String(max + 1).padStart(3, '0');
+}
+function plNextNumNow() { const el = $('#pl-e-date'); return plNextNum(el && el.value ? el.value : todayStr()); }
+function plBumpNum(n) { const m = String(n).match(/^(.*?)(\d+)$/); return m ? m[1] + String(parseInt(m[2], 10) + 1).padStart(m[2].length, '0') : n; }
+function plOnDateChange() { if (PL_DRAFT.numAuto !== false && $('#pl-e-num')) $('#pl-e-num').value = plNextNumNow(); }
 function plDefaultDate(t) { const d = todayStr(); return (t.date && d >= t.date && d <= (t.endDate || t.date)) ? d : (t.date || d); }
 function plNowTime() { const d = new Date(); return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0'); }
 
@@ -9474,7 +9488,7 @@ function setupPlannedForm() {
   const stickyHere = PL_STICKY.tripId === STATE.selectedTrip;
   const numAuto = !(stickyHere && PL_STICKY.numAuto === false);
   PL_DRAFT = { services: [], meds: [], symptoms: [], pay: [], manualTotal: false, numAuto };
-  if (numAuto) { const ne = $('#pl-e-num'); if (ne && !ne.value) ne.value = nextExamNum(); }
+  if (numAuto) { const ne = $('#pl-e-num'); if (ne && !ne.value) ne.value = plNextNumNow(); }
   const te = $('#pl-e-time'); if (te && !te.value) te.value = plNowTime();
   renderPlSymptoms(); renderPlSvcs(); renderPlMeds(); plPayRender();
   // 💡 Түүхэн датанаас санал
@@ -9537,7 +9551,7 @@ function clearPlannedForm() {
   ['pl-e-time', 'pl-e-horse', 'pl-e-phone', 'pl-e-age', 'pl-e-anam', 'pl-e-diag', 'pl-e-temp', 'pl-e-pulse', 'pl-e-resp', 'pl-e-wt', 'pl-e-note', 'pl-svc-search', 'pl-med-search', 'pl-pay-amt'].forEach(id => { const el = $('#' + id); if (el) el.value = ''; });
   const numAuto = PL_DRAFT.numAuto !== false;
   PL_DRAFT = { services: [], meds: [], symptoms: [], pay: [], manualTotal: false, numAuto };
-  if (numAuto && $('#pl-e-num')) $('#pl-e-num').value = nextExamNum();
+  if (numAuto && $('#pl-e-num')) $('#pl-e-num').value = plNextNumNow();
   if ($('#pl-e-time')) $('#pl-e-time').value = plNowTime();
   renderPlSymptoms(); renderPlSvcs(); renderPlMeds(); plPayRender(); renderPlSugg(); renderPlAdvChips(); plxDiagHint();
   const h = $('#pl-e-horse'); if (h) h.focus();
@@ -9607,8 +9621,8 @@ async function _savePlannedExam(opts) {
   let dup = findExamNumDuplicate(examNum) || await findExamNumDuplicateRemote(examNum);
   // Авто дугаар өөр таблеттэй давхцвал дараагийн чөлөөт дугаарыг өөрөө олно; гараар бичсэн бол алдаа өгнө
   if (dup && PL_DRAFT.numAuto) {
-    let n = examNumValue(examNum), tries = 0;
-    while (dup && n !== null && tries++ < 30) { n++; examNum = formatExamNum(n); dup = findExamNumDuplicate(examNum) || await findExamNumDuplicateRemote(examNum); }
+    let tries = 0;
+    while (dup && tries++ < 30) { examNum = plBumpNum(examNum); dup = findExamNumDuplicate(examNum) || await findExamNumDuplicateRemote(examNum); }
     if (!dup && $('#pl-e-num')) $('#pl-e-num').value = examNum;
   }
   if (dup) { toast('⚠️ ' + examNum + ' дугаар аль хэдийн байна (' + (dup.rec.horse || '') + ')', 'err'); $('#pl-e-num').focus(); return; }
@@ -9670,10 +9684,7 @@ async function _savePlannedExam(opts) {
   renderPlanned(true); // шинэ цэвэр маягт (бөглөсөн өгөгдлийг сэргээхгүй)
   if ($('#pl-e-date')) $('#pl-e-date').value = keepDate;
   // Гараар дугаарлаж байгаа (цаасан маягтын дараалал) бол +1 санал болгоно; авто бол setupPlannedForm өөрөө бөглөсөн
-  if (PL_DRAFT.numAuto === false) {
-    const nv = examNumValue(examNum);
-    if ($('#pl-e-num') && nv !== null) { const pad = examNum.replace(/\D/g, '').length; $('#pl-e-num').value = examNum.replace(/\d+/, String(nv + 1).padStart(pad, '0')); }
-  }
+  if (PL_DRAFT.numAuto === false) { if ($('#pl-e-num')) $('#pl-e-num').value = plBumpNum(examNum); }
   const h = $('#pl-e-horse'); if (h) h.focus();
   if (opts && opts.print) printInvoice(fin.id, { direct: true });
 }
