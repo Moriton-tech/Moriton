@@ -9001,7 +9001,32 @@ let PLX_CUR = null; // сүүлд харуулсан санал: { res, items }
 function plxNorm(s) { return String(s == null ? '' : s).toLowerCase().replace(/[.,;:!?()«»"'`\/\\]/g, ' ').replace(/\s+/g, ' ').trim(); }
 function plxAdviceLines(note) { return String(note || '').split(/\r?\n/).map(s => s.replace(/^[•\-•\d.\)\s]+/, '').trim()).filter(Boolean); }
 function plxMedName(m) { return (m && typeof m === 'object') ? String(m.name || '').trim() : String(m || '').trim(); }
-function plxMedNote(m) { return (m && typeof m === 'object') ? String(m.note || '').trim() : ''; }
+function plxMedRawNote(m) { return (m && typeof m === 'object') ? String(m.note || '').trim() : ''; }
+// «500мл · 3 хоног» → {note:'500мл', days:3}
+function plxSplitDays(raw) {
+  raw = String(raw || '').trim(); let days = '';
+  const re = /(?:^|[\s·,;(])(\d{1,3})\s*(?:хоног|өдөр|хон)(?![а-яөүёa-z])\.?\)?/i;
+  const mm = raw.match(re);
+  if (mm) { days = mm[1]; raw = raw.replace(re, ' ').replace(/^[\s·,;\-—]+|[\s·,;\-—]+$/g, '').replace(/\s{2,}/g, ' ').trim(); }
+  return { note: raw, days };
+}
+function plxMedNote(m) { return plxSplitDays(plxMedRawNote(m)).note; }
+// Тухайн эмийн түүхэн дэх хамгийн түгээмэл хоногийн тоо
+const PLX_DAYS_CACHE = { ver: -1, n: -1, map: null };
+function plxMedDays(name) {
+  const k = plxNorm(name); if (!k) return '';
+  const ver = (typeof __stateVer !== 'undefined' ? __stateVer : 0), n = (STATE.exams || []).length;
+  if (PLX_DAYS_CACHE.ver !== ver || PLX_DAYS_CACHE.n !== n || !PLX_DAYS_CACHE.map) {
+    const map = new Map();
+    (STATE.exams || []).forEach(e => (Array.isArray(e.meds) ? e.meds : []).forEach(m => {
+      const d = plxSplitDays(plxMedRawNote(m)).days; if (!d) return;
+      const kk = plxNorm(plxMedName(m)); const o = map.get(kk) || {}; o[d] = (o[d] || 0) + 1; map.set(kk, o);
+    }));
+    PLX_DAYS_CACHE.map = map; PLX_DAYS_CACHE.ver = ver; PLX_DAYS_CACHE.n = n;
+  }
+  const o = PLX_DAYS_CACHE.map.get(k); if (!o) return '';
+  return Object.entries(o).sort((a, b) => b[1] - a[1])[0][0];
+}
 function plxBucket() { return { n: 0, svc: new Map(), med: new Map(), adv: new Map() }; }
 function plxBump(map, key, extra) { let o = map.get(key); if (!o) { o = { c: 0, notes: new Map() }; map.set(key, o); } o.c++; if (extra) o.notes.set(extra, (o.notes.get(extra) || 0) + 1); }
 
@@ -9088,7 +9113,9 @@ function plxRemoveAdvice(line) {
 function plxAddMed(name, note) {
   name = String(name || '').trim(); if (!name) return;
   const cur = PL_DRAFT.meds.find(x => x.name === name);
-  if (cur) { if (!cur.note && note) cur.note = note; } else PL_DRAFT.meds.push({ name, note: note || '' });
+  const sp = plxSplitDays(note);
+  if (cur) { if (!cur.note && sp.note) cur.note = sp.note; if (!cur.days) cur.days = sp.days || plxMedDays(name); }
+  else PL_DRAFT.meds.push({ name, note: sp.note, days: sp.days || plxMedDays(name) });
 }
 
 function plxToggle(kind, i) {
@@ -9199,7 +9226,7 @@ function plCopyPrev() {
   set('pl-e-diag', prev.diagnosis); set('pl-e-anam', prev.anamnesis); set('pl-e-note', prev.note);
   PL_DRAFT.symptoms = Array.isArray(prev.symptoms) ? prev.symptoms.slice() : [];
   PL_DRAFT.services = (prev.services || []).map(s => ({ name: s.name, price: parseFloat(s.price) || getSvcPrice(s.name) || 0 }));
-  PL_DRAFT.meds = (prev.meds || []).map(m => ({ name: plxMedName(m), note: plxMedNote(m) })).filter(m => m.name);
+  PL_DRAFT.meds = (prev.meds || []).map(m => { const sp = plxSplitDays(plxMedRawNote(m)); return { name: plxMedName(m), note: sp.note, days: sp.days || plxMedDays(plxMedName(m)) }; }).filter(m => m.name);
   PL_DRAFT.manualTotal = false; PL_DRAFT.autoKey = plxNorm(prev.diagnosis); PL_DRAFT.autoAdded = null;
   renderPlSymptoms(); renderPlSvcs(); renderPlMeds(); renderPlSugg(); renderPlAdvChips(); plxDiagHint();
   toast('↻ «' + (prev.horse || 'өмнөх') + '» үзлэгийн онош, үйлчилгээ, эм, зөвлөгөөг хууллаа — шалгана уу', 'ok');
@@ -9570,11 +9597,12 @@ function renderPlSvcs() {
   updatePlTotal();
 }
 function updatePlTotal() { if (PL_DRAFT.manualTotal) { plPayRender(); return; } const t = PL_DRAFT.services.reduce((a, b) => a + (parseFloat(b.price) || 0), 0); if ($('#pl-e-total')) $('#pl-e-total').value = t; if ($('#pl-e-total-mode')) $('#pl-e-total-mode').textContent = '(авто)'; plPayRender(); }
-function addPlMed(name) { name = String(name == null ? '' : name).trim(); if (!name) return; if (!PL_DRAFT.meds.find(x => x.name === name)) PL_DRAFT.meds.push({ name, note: '' }); renderPlMeds(); }
+function addPlMed(name) { name = String(name == null ? '' : name).trim(); if (!name) return; if (!PL_DRAFT.meds.find(x => x.name === name)) PL_DRAFT.meds.push({ name, note: '', days: plxMedDays(name) }); renderPlMeds(); }
 function renderPlMeds() {
   const w = $('#pl-med-chips'); if (!w) return;
-  w.innerHTML = PL_DRAFT.meds.length ? PL_DRAFT.meds.map((m, i) => `<div style="display:flex;align-items:center;gap:6px;background:var(--input);border-radius:8px;padding:5px 8px;margin-bottom:4px"><span style="font-size:12px;font-weight:700;min-width:110px">${escHTML(m.name)}</span><input class="inp" data-i="${i}" value="${escHTML(m.note || '')}" placeholder="тун, заавар" style="flex:1;padding:4px 8px;font-size:12px"><button class="btn btn-r btn-xs" data-rm="${i}">✕</button></div>`).join('') : '<div class="muted" style="font-size:12px">Эм сонгоогүй</div>';
+  w.innerHTML = PL_DRAFT.meds.length ? PL_DRAFT.meds.map((m, i) => `<div style="display:flex;align-items:center;gap:6px;background:var(--input);border-radius:8px;padding:5px 8px;margin-bottom:4px"><span style="font-size:12px;font-weight:700;min-width:110px">${escHTML(m.name)}</span><input class="inp" data-i="${i}" value="${escHTML(m.note || '')}" placeholder="тун, заавар" style="flex:1;min-width:0;padding:4px 8px;font-size:12px"><input class="inp" type="number" min="1" max="365" inputmode="numeric" data-d="${i}" value="${escHTML(String(m.days || ''))}" placeholder="—" title="Хэд хоног" style="width:54px;padding:4px 6px;font-size:12px;text-align:center"><span class="muted" style="font-size:11px">хоног</span><button class="btn btn-r btn-xs" data-rm="${i}">✕</button></div>`).join('') : '<div class="muted" style="font-size:12px">Эм сонгоогүй</div>';
   w.querySelectorAll('input[data-i]').forEach(inp => inp.oninput = () => { PL_DRAFT.meds[+inp.dataset.i].note = inp.value; });
+  w.querySelectorAll('input[data-d]').forEach(inp => inp.oninput = () => { PL_DRAFT.meds[+inp.dataset.d].days = inp.value; });
   w.querySelectorAll('button[data-rm]').forEach(b => b.onclick = () => { PL_DRAFT.meds.splice(+b.dataset.rm, 1); renderPlMeds(); });
 }
 function clearPlannedForm() {
@@ -9689,7 +9717,7 @@ async function _savePlannedExam(opts) {
     horseId: horse.id, horse: horseName, owner, phone, docId: doc.id, docName: doc.name,
     assistDocId: asst ? asst.id : '', assistDocName: asst ? asst.name : '',
     date, time, examNum, diagnosis: diag, note: v('pl-e-note'),
-    services, meds: PL_DRAFT.meds.map(m => ({ name: m.name, note: m.note || '' })),
+    services, meds: PL_DRAFT.meds.map(m => { const d = parseInt(m.days, 10); const n = String(m.note || '').trim(); return { name: m.name, note: [n, d > 0 && !plxSplitDays(n).days ? d + ' хоног' : ''].filter(Boolean).join(' · ') }; }),
     symptoms: PL_DRAFT.symptoms.slice(), anamnesis: v('pl-e-anam'),
     temp: v('pl-e-temp'), pulse: v('pl-e-pulse'), resp: v('pl-e-resp'), wt: v('pl-e-wt'),
     province, soum, images: [], amount: total, amountManual: PL_DRAFT.manualTotal && total !== svcSum,
