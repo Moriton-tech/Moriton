@@ -1730,3 +1730,18 @@ tbody tr:hover { background: #fafbfd; }
   .plq-serving .btn{flex:1 1 100%}
 }
 @media print{#pl-queue-card{display:none}}
+
+/* Төлөвлөгөөт үзлэг: нэг баганад шахагдах үед урт агуулга (явцын жагсаалт, хүснэгт) баганыг дэлгэцээс өргөн болгодог байсныг засав */
+@media (max-width:1000px){
+  #page-planned .grid2{grid-template-columns:minmax(0,1fr)!important}
+}
+#page-planned .grid2>*,#page-planned .card,#page-planned .fg>*,#page-planned .fld{min-width:0}
+#page-planned .li-info{min-width:0}
+#page-planned .li-name,#page-planned .li-sub{overflow-wrap:anywhere}
+@media (max-width:700px){
+  #page-planned .stats{grid-template-columns:repeat(2,minmax(0,1fr))!important}
+  #page-planned .ch{flex-wrap:wrap}
+  #page-planned .ph-title,#page-planned .ph-sub{overflow-wrap:anywhere}
+  #page-planned .card>.row{flex-wrap:wrap}
+}
+@media (max-width:700px){ .plq-sv-main{flex:1 1 calc(100% - 64px)} }
