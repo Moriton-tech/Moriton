@@ -1854,7 +1854,7 @@ function updateBadges() {
       if (el) { el.textContent = labOpen; el.style.display = labOpen ? '' : 'none'; }
     });
   } catch(e) {}
-  const w = STATE.waiting.length;
+  const w = STATE.waiting.filter(x => !x.plTrip).length;
   const i = STATE.inps.filter(x => !x.discharged).length;
   // Finance badge: pending + receivables (anything with due > 0)
   const f = STATE.fins.filter(x => {
@@ -2802,10 +2802,11 @@ async function submitReg() {
 // WAITING
 // ============================================================
 function renderWaiting() {
-  $('#w-sub').textContent = STATE.waiting.length + ' адуу үзлэг хүлээж байна';
-  $('#w-cnt').textContent = STATE.waiting.length;
+  const WL = STATE.waiting.filter(x => !x.plTrip); // төлөвлөгөөт үзлэгийн бүртгэлийн дарааллыг энд харуулахгүй
+  $('#w-sub').textContent = WL.length + ' адуу үзлэг хүлээж байна';
+  $('#w-cnt').textContent = WL.length;
   const list = $('#w-list');
-  if (STATE.waiting.length === 0) {
+  if (WL.length === 0) {
     list.innerHTML = '<div class="empty"><div class="empty-em">⏳</div>Хүлээж буй адуу алга</div>';
     STATE.selectedW = null;
     renderWDetail();
@@ -2814,10 +2815,10 @@ function renderWaiting() {
   // Normalize selectedW to string for consistent comparison
   if (STATE.selectedW != null) STATE.selectedW = String(STATE.selectedW);
   // Auto-select first if no selection or stale selection
-  if (!STATE.selectedW || !STATE.waiting.find(w => String(w.id) === STATE.selectedW)) {
-    STATE.selectedW = String(STATE.waiting[0].id);
+  if (!STATE.selectedW || !WL.find(w => String(w.id) === STATE.selectedW)) {
+    STATE.selectedW = String(WL[0].id);
   }
-  const waitSorted = [...STATE.waiting].sort((a,b) => recTime(b) - recTime(a));
+  const waitSorted = [...WL].sort((a,b) => recTime(b) - recTime(a));
   list.innerHTML = waitSorted.map(w => liHTML(w, 'wait')).join('');
   list.querySelectorAll('.li').forEach(el => {
     if (el.dataset.id === STATE.selectedW) el.classList.add('sel');
@@ -9293,7 +9294,11 @@ function renderPlanned(fresh) {
     </div>`;
   }).join('') : '<div class="empty"><div class="empty-em">🗓️</div>Явц бүртгээгүй байна — дээрх маягтаар шинэ явц үүсгэнэ үү</div>';
   renderTripDetail();
-  if (snap && snap.dirty && String(snap.tripId) === String(STATE.selectedTrip) && $('#pl-entry-card')) plFormRestore(snap);
+  if (snap && String(snap.tripId) === String(STATE.selectedTrip) && $('#pl-entry-card')) {
+    if (snap.dirty) plFormRestore(snap);
+    else if (snap.draft && snap.draft.waitId) { PL_DRAFT.waitId = snap.draft.waitId; PL_DRAFT.qNo = snap.draft.qNo; plServingRender(); }
+    Object.keys(snap.q || {}).forEach(id => { const el = $('#' + id); if (el && (snap.qdirty || id === 'pl-q-owner' || id === 'pl-q-phone')) el.value = snap.q[id]; });
+  }
 }
 
 // ── Бөглөж буй маягтыг sync дахин зурахад алдахгүй хамгаалах ──
@@ -9306,17 +9311,19 @@ function plFormSnapshot() {
   const card = $('#pl-entry-card'); if (!card) return null;
   const vals = {}; card.querySelectorAll('[id^="pl-e-"]').forEach(el => { if (el.value !== undefined) vals[el.id] = el.value; });
   const ae = document.activeElement;
-  return { tripId: card.dataset.trip, vals, draft: JSON.parse(JSON.stringify(PL_DRAFT)), dirty: plFormDirty(),
+  const q = {}; document.querySelectorAll('#pl-queue-card [id^="pl-q-"]').forEach(el => { if (el.value !== undefined && el.tagName !== 'DATALIST') q[el.id] = el.value; });
+  return { tripId: card.dataset.trip, vals, q, qdirty: ['pl-q-horse', 'pl-q-age', 'pl-q-complaint'].some(id => (q[id] || '').trim()), draft: JSON.parse(JSON.stringify(PL_DRAFT)), dirty: plFormDirty(),
     focus: ae && card.contains(ae) && ae.id ? ae.id : '', sel: ae && typeof ae.selectionStart === 'number' ? ae.selectionStart : null };
 }
 function plFormRestore(snap) {
   Object.keys(snap.vals).forEach(id => { const el = $('#' + id); if (el) el.value = snap.vals[id]; });
   PL_DRAFT = snap.draft;
+  plServingRender();
   renderPlSymptoms(); renderPlSvcs(); renderPlMeds(); plPayRender(); renderPlSugg(); renderPlAdvChips(); plxDiagHint();
   const m = $('#pl-e-total-mode'); if (m) m.textContent = PL_DRAFT.manualTotal ? '(гараар)' : '(авто)';
   if (snap.focus) { const f = $('#' + snap.focus); if (f) { f.focus(); try { if (snap.sel != null && f.setSelectionRange) f.setSelectionRange(snap.sel, snap.sel); } catch (_) { } } }
 }
-function selectTrip(id) { STATE.selectedTrip = id; renderPlanned(); }
+function selectTrip(id) { if (PL_DRAFT.waitId && String(id) !== String(STATE.selectedTrip)) { plQueueRelease(PL_DRAFT.waitId); PL_DRAFT.waitId = ''; } STATE.selectedTrip = id; renderPlanned(); }
 
 function saveTrip() {
   try { return _saveTrip(); } catch (e) { console.error('[saveTrip]', e); toast('⚠️ Хадгалахад алдаа: ' + (e && e.message || e), 'err'); }
@@ -9374,6 +9381,160 @@ function editTripField(field, val) {
 // ── Явцын дэлгэрэнгүй + шивэх маягт ───────────────────────────
 let PL_DRAFT = { services: [], meds: [], symptoms: [], pay: [], manualTotal: false, numAuto: true };
 let PL_STICKY = { tripId: null }; // аймаг/сум/эмч — дараагийн маягтад хэвээр
+
+// ============================================================
+// 🧾 БҮРТГЭЛ → ХҮЛЭЭЛТ → ҮЗЛЭГ ЭХЛҮҮЛЭХ (төлөвлөгөөт үзлэг)
+// Адуу ирэхэд эхлээд бүртгэнэ (нэр, эзэн, утас, шалтгаан) → дараалалд орно →
+// эмч «▶ Эхлүүлэх» дарахад мэдээлэл нь үзлэгийн маягтад өөрөө орно.
+// Хадгалах: `waiting` collection (нэг адуу = нэг document тул олон таблет зэрэг бүртгэхэд давхцахгүй),
+// plTrip талбараар төв эмнэлгийн хүлээлтээс ялгана (renderWaiting/updateBadges тэднийг харуулдаггүй).
+// ============================================================
+function plQueue(tripId) {
+  return (STATE.waiting || []).filter(w => w.plTrip && String(w.plTrip) === String(tripId)).sort((a, b) => (a.regMs || 0) - (b.regMs || 0));
+}
+function plQueueSave(w) { w.ms = nowMs(); saveAll(); fbSaveRecord('waiting', w); }
+function plQueueFind(id) { return (STATE.waiting || []).find(x => String(x.id) === String(id)); }
+function plQueueNextNo(tripId) {
+  let m = 0;
+  plQueue(tripId).forEach(w => { m = Math.max(m, parseInt(w.qNo, 10) || 0); });
+  tripExams(tripId).forEach(e => { m = Math.max(m, parseInt(e.qNo, 10) || 0); });
+  return m + 1;
+}
+function plQueueMe() {
+  const d = (STATE.doctors || []).find(x => String(x.id) === String((($('#pl-e-doc') || {}).value) || ''));
+  return (d && d.name) || (STATE.user && STATE.user.name) || '';
+}
+function plQueueSetup() {
+  const t = tripById(STATE.selectedTrip); if (!t) return;
+  // Эзний санал: энэ явцын эзэд (утасны хамт)
+  const owners = new Map();
+  tripExams(t.id).concat(plQueue(t.id)).forEach(e => { if (e.owner && !owners.has(e.owner)) owners.set(e.owner, e.phone || ''); else if (e.owner && !owners.get(e.owner) && e.phone) owners.set(e.owner, e.phone); });
+  const dl = $('#pl-q-owners'); if (dl) dl.innerHTML = [...owners.keys()].map(o => `<option value="${escHTML(o)}">`).join('');
+  const ow = $('#pl-q-owner');
+  if (ow) ow.onchange = () => { const ph = $('#pl-q-phone'); if (ph && !ph.value.trim() && owners.get(ow.value.trim())) ph.value = owners.get(ow.value.trim()); };
+  ['pl-q-horse', 'pl-q-owner', 'pl-q-phone', 'pl-q-age', 'pl-q-complaint'].forEach(id => {
+    const el = $('#' + id); if (el) el.onkeydown = ev => { if (ev.key === 'Enter') { ev.preventDefault(); plQueueAdd(); } };
+  });
+  plQueueListRender(); plServingRender();
+}
+function plQueueNewOwner() {
+  ['pl-q-owner', 'pl-q-phone'].forEach(id => { const el = $('#' + id); if (el) el.value = ''; });
+  const o = $('#pl-q-owner'); if (o) o.focus();
+}
+function plQueueAdd() {
+  const t = tripById(STATE.selectedTrip); if (!t) return;
+  const g = id => (($('#' + id) || {}).value || '').trim();
+  const horse = g('pl-q-horse'), owner = g('pl-q-owner');
+  if (!horse) { toast('Адууны нэр / зүсийг бичнэ үү', 'err'); const e = $('#pl-q-horse'); if (e) e.focus(); return; }
+  if (!owner) { toast('Эзний нэрийг бичнэ үү', 'err'); const e = $('#pl-q-owner'); if (e) e.focus(); return; }
+  const norm = x => String(x || '').trim().toLowerCase();
+  const dup = plQueue(t.id).find(w => norm(w.horse) === norm(horse) && norm(w.owner) === norm(owner));
+  if (dup && !confirm('«' + horse + '» (' + owner + ') дараалалд аль хэдийн бүртгэлтэй байна. Дахин бүртгэх үү?')) return;
+  const ms = nowMs();
+  const w = { id: uid(), plTrip: t.id, kind: 'planned', horse, owner, phone: g('pl-q-phone'), age: g('pl-q-age'), complaint: g('pl-q-complaint'),
+    qNo: plQueueNextNo(t.id), status: 'waiting', by: '', startMs: 0, regMs: ms, regDate: todayStr(), regBy: (STATE.user && STATE.user.name) || '', ms };
+  STATE.waiting.push(w); saveAll(); fbSaveRecord('waiting', w);
+  try { writeLog('Төлөвлөгөөт: адуу бүртгэв', w.id, horse + ' — ' + owner, 'Явц: ' + tripLabel(t) + ' · №' + w.qNo); } catch (e) { }
+  ['pl-q-horse', 'pl-q-age', 'pl-q-complaint'].forEach(id => { const el = $('#' + id); if (el) el.value = ''; });
+  updateBadges();
+  plQueueSetup();
+  toast('✅ №' + w.qNo + ' · ' + horse + ' бүртгэгдлээ', 'ok');
+  const h = $('#pl-q-horse'); if (h) h.focus();
+}
+function plQueueRelease(id) {
+  const w = plQueueFind(id);
+  if (w && w.status === 'inprogress') { w.status = 'waiting'; w.by = ''; w.startMs = 0; plQueueSave(w); }
+}
+function plQueueStart(id) {
+  const w = plQueueFind(id); if (!w) { toast('Энэ бүртгэл олдсонгүй (өөр төхөөрөмж дээр устгагдсан байж магадгүй)', 'err'); return; }
+  if (PL_DRAFT.waitId === String(id)) { const f = $('#pl-entry-card'); if (f) f.scrollIntoView({ behavior: 'smooth', block: 'start' }); return; }
+  if (w.status === 'inprogress' && w.by && !confirm('«' + w.horse + '» одоо ' + w.by + ' эмчийн дээр үзэгдэж байна. Өөрөө авч үзэх үү?')) return;
+  if (plFormDirty() && !confirm('Одоо бөглөж буй үзлэгийн маягт хадгалагдаагүй байна. Арилгаад «' + w.horse + '»-г эхлүүлэх үү?')) return;
+  clearPlannedForm(); // өмнөх адууг дараалалд буцаана
+  const set = (id2, v) => { const el = $('#' + id2); if (el) el.value = v || ''; };
+  set('pl-e-horse', w.horse); set('pl-e-owner', w.owner); set('pl-e-phone', w.phone); set('pl-e-age', w.age);
+  set('pl-e-anam', w.complaint ? 'Гомдол: ' + w.complaint : '');
+  PL_DRAFT.waitId = String(w.id); PL_DRAFT.qNo = w.qNo;
+  w.status = 'inprogress'; w.by = plQueueMe(); w.startMs = nowMs(); plQueueSave(w);
+  plServingRender(); plQueueListRender();
+  const card = $('#pl-entry-card'); if (card) card.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  const dg = $('#pl-e-diag'); if (dg) setTimeout(() => dg.focus({ preventScroll: true }), 350);
+  toast('▶ №' + w.qNo + ' · ' + w.horse + ' — үзлэг эхэллээ', 'ok');
+}
+function plQueueStartNext() {
+  const t = tripById(STATE.selectedTrip); if (!t) return;
+  const nx = plQueue(t.id).find(w => w.status !== 'inprogress');
+  if (!nx) { toast('Хүлээж буй адуу алга', 'err'); return; }
+  plQueueStart(nx.id);
+}
+function plQueueBack(id) {
+  const w = plQueueFind(id); if (!w) return;
+  if (PL_DRAFT.waitId === String(id)) {
+    if (plFormDirty() && !confirm('Маягтын бөглөсөн мэдээлэл арилна. «' + w.horse + '»-г дараалалд буцаах уу?')) return;
+    clearPlannedForm(); // дотроо release хийнэ
+  } else {
+    if (!confirm('«' + w.horse + '»-г дараалалд буцаах уу?')) return;
+    plQueueRelease(id); plQueueListRender();
+  }
+}
+function plQueueRemove(id) {
+  const w = plQueueFind(id); if (!w) return;
+  if (!confirm('«' + w.horse + '» (' + w.owner + ')-г бүртгэлээс устгах уу?')) return;
+  if (PL_DRAFT.waitId === String(id)) { PL_DRAFT.waitId = ''; PL_DRAFT.qNo = ''; plServingRender(); }
+  STATE.waiting = STATE.waiting.filter(x => String(x.id) !== String(id));
+  _markWaitingRemoved(id); saveAll(); fbDeleteDoc('waiting', String(id));
+  updateBadges(); plQueueListRender();
+  toast('Бүртгэлээс хасагдлаа', 'ok');
+}
+function plQueueAgo(ms) {
+  const m = Math.max(0, Math.round((Date.now() - (ms || Date.now())) / 60000));
+  return m < 60 ? m + ' мин' : Math.floor(m / 60) + 'ц ' + (m % 60) + 'м';
+}
+function plServingRender() {
+  const host = $('#pl-serving'); if (!host) return;
+  const w = PL_DRAFT.waitId ? plQueueFind(PL_DRAFT.waitId) : null;
+  if (!w) { if (PL_DRAFT.waitId && !plQueueFind(PL_DRAFT.waitId)) { /* өөр төхөөрөмж устгасан — маягт хэвээр, дугаар хадгална */ } host.innerHTML = ''; return; }
+  host.innerHTML = `<div class="plq-serving"><div class="plq-sv-no">№${escHTML(String(w.qNo || ''))}</div>
+    <div class="plq-sv-main"><b>${escHTML(w.horse)}</b> · ${escHTML(w.owner)}${w.phone ? ' · ' + escHTML(w.phone) : ''}<div class="muted" style="font-size:12px">${w.complaint ? '«' + escHTML(w.complaint) + '» · ' : ''}хүлээсэн ${escHTML(plQueueAgo(w.regMs))}</div></div>
+    <button class="btn btn-sm" type="button" onclick="plQueueBack('${escHTML(String(w.id))}')">↩ Дараалалд буцаах</button></div>`;
+}
+function plQueueListRender() {
+  const host = $('#pl-q-list'); if (!host) return;
+  const t = tripById(STATE.selectedTrip); if (!t) { host.innerHTML = ''; return; }
+  const q = plQueue(t.id);
+  const prog = q.filter(w => w.status === 'inprogress'), wait = q.filter(w => w.status !== 'inprogress');
+  const seen = tripExams(t.id).length;
+  const cnt = $('#pl-q-count');
+  if (cnt) cnt.innerHTML = `<span class="plq-pill w">⏳ Хүлээж буй <b>${wait.length}</b></span><span class="plq-pill p">🩺 Үзэж буй <b>${prog.length}</b></span><span class="plq-pill d">✅ Үзсэн <b>${seen}</b></span>`;
+  const me = plQueueMe();
+  const card = (w, idx) => {
+    const id = escHTML(String(w.id)), mine = PL_DRAFT.waitId === String(w.id), isProg = w.status === 'inprogress';
+    const next = !isProg && idx === 0;
+    const sub = [w.phone ? '📞 ' + escHTML(w.phone) : '', w.age ? escHTML(w.age) + ' настай' : ''].filter(Boolean).join(' · ');
+    return `<div class="plq-card ${isProg ? 'prog' : ''} ${next ? 'next' : ''}">
+      <div class="plq-no">№${escHTML(String(w.qNo || ''))}</div>
+      <div class="plq-main">
+        <div class="plq-name"><b>${escHTML(w.horse)}</b><span class="plq-owner"> · ${escHTML(w.owner)}</span>${next ? '<span class="plq-tag n">Дараагийнх</span>' : ''}${isProg ? `<span class="plq-tag p">🩺 ${mine ? 'Та үзэж байна' : escHTML(w.by || 'Үзэж байна')}</span>` : ''}</div>
+        ${sub ? `<div class="plq-sub">${sub}</div>` : ''}
+        ${w.complaint ? `<div class="plq-comp">💬 ${escHTML(w.complaint)}</div>` : ''}
+        <div class="plq-time">🕒 ${escHTML(plNowTimeOf(w.regMs))} · ${escHTML(plQueueAgo(w.regMs))} хүлээсэн</div>
+      </div>
+      <div class="plq-act">
+        ${mine ? `<button class="btn btn-sm" type="button" onclick="plQueueStart('${id}')">↓ Маягт руу</button>` : `<button class="btn btn-p" type="button" onclick="plQueueStart('${id}')">${isProg ? 'Авч үзэх' : '▶ Эхлүүлэх'}</button>`}
+        ${isProg && !mine ? `<button class="btn btn-sm" type="button" onclick="plQueueBack('${id}')" title="Дараалалд буцаах">↩</button>` : ''}
+        <button class="btn btn-sm btn-r" type="button" onclick="plQueueRemove('${id}')" title="Бүртгэлээс устгах">✕</button>
+      </div></div>`;
+  };
+  let html = '';
+  if (wait.length) html += `<div class="plq-bar"><span class="plq-ttl">Дараалал</span><button class="btn btn-sm btn-p" type="button" onclick="plQueueStartNext()">▶ Дараагийнхыг эхлүүлэх</button></div>`;
+  html += prog.map((w, i) => card(w, -1)).join('') + wait.map((w, i) => card(w, i)).join('');
+  if (!q.length) html = '<div class="plq-empty"><div style="font-size:30px">🐴</div><b>Хүлээж буй адуу алга</b><div class="muted" style="font-size:12px">Адуу ирэхэд дээрх маягтаар нэр, эзнийг нь бүртгэнэ — дараа нь эмч «Эхлүүлэх» дарна</div></div>';
+  host.innerHTML = html;
+}
+function plNowTimeOf(ms) { const d = new Date(ms || Date.now()); return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0'); }
+// Хүлээсэн хугацааг минут тутамд шинэчилнэ (бүртгэлийн маягтыг хөндөхгүй)
+setInterval(() => { try { if (STATE.activePage === 'planned' && $('#pl-q-list')) { plQueueListRender(); plServingRender(); } } catch (e) { } }, 60000);
+
 function renderTripDetail() {
   const host = $('#pl-detail'); if (!host) return;
   const t = tripById(STATE.selectedTrip);
@@ -9424,8 +9585,24 @@ function renderTripDetail() {
     </div>
 
     ${closed ? '<div class="card"><div class="muted">Явц хаагдсан тул шинэ үзлэг шивэхгүй. Шаардлагатай бол «Дахин нээх» дарна.</div></div>' : `
+    <div class="card" id="pl-queue-card">
+      <div class="ch">🧾 Бүртгэл · хүлээлт <span class="ch-r" id="pl-q-count"></span></div>
+      <div class="plq-form">
+        <div class="plq-f-horse"><label>🐎 Адууны нэр / зүс *</label><input class="inp" id="pl-q-horse" placeholder="ж: Хээр" autocomplete="off" list="pl-horse-dl"></div>
+        <div class="plq-f-owner"><label>👤 Эзэн *</label><input class="inp" id="pl-q-owner" placeholder="ж: Бат" autocomplete="off" list="pl-q-owners"></div>
+        <div class="plq-f-phone"><label>📞 Утас</label><input class="inp" id="pl-q-phone" type="tel" inputmode="tel" placeholder="99******"></div>
+        <div class="plq-f-age"><label>Нас</label><input class="inp" id="pl-q-age" placeholder="ж: 5"></div>
+        <div class="plq-f-comp"><label>Шалтгаан / гомдол (сонголттой)</label><input class="inp" id="pl-q-complaint" placeholder="ж: доголсон, хоолгүй, ханиалгаж байна"></div>
+        <div class="plq-f-btn"><button class="btn btn-p" type="button" onclick="plQueueAdd()">➕ Бүртгэх</button></div>
+      </div>
+      <datalist id="pl-q-owners"></datalist>
+      <div class="plq-hint">Enter дарахад бүртгэгдэнэ · нэг эзний дараагийн адуунд эзэн, утас хэвээр үлдэнэ <a href="javascript:void(0)" onclick="plQueueNewOwner()">🔄 Өөр эзэн</a></div>
+      <div id="pl-q-list"></div>
+    </div>
+
     <div class="card" id="pl-entry-card" data-trip="${escHTML(String(t.id))}">
       <div class="ch">🩺 Газар дээрх үзлэг <span class="ch-r muted" style="font-weight:600">үзлэг → эмчилгээ → төлбөр → хэвлэх · Ctrl+Enter = хадгалах</span></div>
+      <div id="pl-serving"></div>
 
       <div class="pl-sec">1 · Адуу, эзэн</div>
       <div class="fg r4">
@@ -9521,7 +9698,7 @@ function renderTripDetail() {
       <summary style="cursor:pointer;font-weight:800">📊 Датаны шинжилгээ — гараар бичих ажлыг хэр бууруулж байна <span class="muted" style="font-weight:600">(онош → эм, тариа, зөвлөгөө)</span></summary>
       <div id="pl-analysis-body" style="margin-top:10px"></div>
     </details>`;
-  if (!closed) setupPlannedForm();
+  if (!closed) { setupPlannedForm(); plQueueSetup(); }
 }
 
 // Газар дээр ажиллах тул огноо нь явцын хугацаанд багтаж байвал өнөөдөр, үгүй бол явцын эхлэх өдөр
@@ -9607,11 +9784,13 @@ function renderPlMeds() {
 }
 function clearPlannedForm() {
   ['pl-e-time', 'pl-e-horse', 'pl-e-phone', 'pl-e-age', 'pl-e-anam', 'pl-e-diag', 'pl-e-temp', 'pl-e-pulse', 'pl-e-resp', 'pl-e-wt', 'pl-e-note', 'pl-svc-search', 'pl-med-search', 'pl-pay-amt'].forEach(id => { const el = $('#' + id); if (el) el.value = ''; });
-  const numAuto = PL_DRAFT.numAuto !== false;
+  const numAuto = PL_DRAFT.numAuto !== false, oldWid = PL_DRAFT.waitId;
   PL_DRAFT = { services: [], meds: [], symptoms: [], pay: [], manualTotal: false, numAuto };
   if (numAuto && $('#pl-e-num')) $('#pl-e-num').value = plNextNumNow();
   if ($('#pl-e-time')) $('#pl-e-time').value = plNowTime();
   renderPlSymptoms(); renderPlSvcs(); renderPlMeds(); plPayRender(); renderPlSugg(); renderPlAdvChips(); plxDiagHint();
+  if (oldWid) plQueueRelease(oldWid); // маягт цэвэрлэгдвэл тухайн адуу дараалалд буцна
+  plServingRender(); plQueueListRender();
   const h = $('#pl-e-horse'); if (h) h.focus();
 }
 
@@ -9716,7 +9895,7 @@ async function _savePlannedExam(opts) {
   const exam = { id: uid(), kind: 'planned', tripId: t.id, tripLocation: t.location || t.province || '',
     horseId: horse.id, horse: horseName, owner, phone, docId: doc.id, docName: doc.name,
     assistDocId: asst ? asst.id : '', assistDocName: asst ? asst.name : '',
-    date, time, examNum, diagnosis: diag, note: v('pl-e-note'),
+    date, time, examNum, qNo: PL_DRAFT.qNo || '', diagnosis: diag, note: v('pl-e-note'),
     services, meds: PL_DRAFT.meds.map(m => { const d = parseInt(m.days, 10); const n = String(m.note || '').trim(); return { name: m.name, note: [n, d > 0 && !plxSplitDays(n).days ? d + ' хоног' : ''].filter(Boolean).join(' · ') }; }),
     symptoms: PL_DRAFT.symptoms.slice(), anamnesis: v('pl-e-anam'),
     temp: v('pl-e-temp'), pulse: v('pl-e-pulse'), resp: v('pl-e-resp'), wt: v('pl-e-wt'),
@@ -9730,6 +9909,8 @@ async function _savePlannedExam(opts) {
   if (hadPay) applyPaymentsToFin(fin, PL_DRAFT.pay.map(p => ({ amount: p.amount, method: p.method, date, ms: p.ms || ms })));
   STATE.fins.push(fin);
   doc.exams = (doc.exams || 0) + 1; doc.rev = (doc.rev || 0) + total; fbSaveRecord('doctors', doc);
+  const doneWid = PL_DRAFT.waitId; // бүртгэлийн дараалалаас эхэлсэн бол дараалалаас хасна
+  if (doneWid) { STATE.waiting = STATE.waiting.filter(x => String(x.id) !== String(doneWid)); _markWaitingRemoved(doneWid); fbDeleteDoc('waiting', String(doneWid)); }
   saveAll(); fbSaveRecord('exams', exam); fbSaveRecord('fins', fin);
   let labN = 0; try { if (typeof createLabOrdersFromExam === 'function') labN = createLabOrdersFromExam(exam).length; } catch (e) { console.error('lab', e); }
   writeLog('Төлөвлөгөөт үзлэг шивэв', exam.id, horseName + ' — ' + doc.name, 'Явц: ' + tripLabel(t) + (diag ? ' · Онош: ' + diag : ''), examNum);
@@ -12333,7 +12514,7 @@ const PAGE_DEPS = {
   kpi:       ['exams', 'fins', 'doctors', 'inps', 'config'],
   history:   ['exams', 'horses', 'fins', 'config'],
   report:    ['exams', 'fins', 'inps', 'doctors', 'horses', 'config'],
-  planned:   ['trips', 'exams', 'horses', 'doctors', 'config'],
+  planned:   ['trips', 'exams', 'horses', 'doctors', 'waiting', 'config'],
   review:    ['exams', 'inps', 'fins', 'users', 'doctors', 'config'],
   pharmacy:  ['inps', 'exams', 'doctors', 'config'],
   timesheet: ['staff', 'doctors', 'config'],
