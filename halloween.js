@@ -32,7 +32,8 @@
   var layer = null, toggle = null, themeMeta = null, origTheme = null, timer = null;
 
   /* ── SVG: нэг аалз ──────────────────────────────────── */
-  function spiderSVG(uid) {
+  function spiderSVG(uid, face) {
+    face = face || 'icons/halloween-face.jpg';
     var Lleg = [
       'M50 52 L26 28 L8 40 L4 66',
       'M49 58 L20 46 L4 62 L2 86',
@@ -63,7 +64,7 @@
       '<path d="M54 70 L66 70 L60 80 L66 90 L54 90 L60 80 Z" fill="#F28C28" opacity=".9"/>' +
       /* толгой — ХОНГОРЫН ЦАЙРАЙ (icons/halloween-face.jpg) */
       '<circle cx="60" cy="43" r="22" fill="#F28C28"/>' +
-      '<image href="icons/halloween-face.jpg" x="40" y="23" width="40" height="40" preserveAspectRatio="xMidYMid slice" clip-path="url(#hwc' + uid + ')"/>' +
+      '<image href="' + face + '" x="40" y="23" width="40" height="40" preserveAspectRatio="xMidYMid slice" clip-path="url(#hwc' + uid + ')"/>' +
       '<circle cx="60" cy="43" r="20" fill="none" stroke="#1b1026" stroke-width="1.6"/>' +
       /* соёо */
       '<path d="M54 63 L55.8 70 L57.6 63 M62.4 63 L64.2 70 L66 63" stroke="#e9e2ee" stroke-width="1.8" fill="#e9e2ee" stroke-linejoin="round" stroke-linecap="round"/>' +
@@ -112,7 +113,7 @@
               ';--bob:' + h[3] + ';--sway:' + h[4] + ';--delay:' + h[5] + '">' +
               '<div class="hw-sway">' + spiderSVG('h' + k) + '</div></div>';
     });
-    html += '<div class="hw-crawl">' + spiderSVG('c') + '</div>';
+    html += '<div class="hw-crawl">' + spiderSVG('c', 'icons/halloween-face2.jpg') + '</div>';
 
     layer.innerHTML = html;
     document.body.appendChild(layer);
