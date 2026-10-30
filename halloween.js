@@ -14,6 +14,7 @@
   var END = new Date(2026, 10, 1, 0, 0, 0).getTime();   // 11-р сарын 1, 00:00 (орон нутгийн цаг)
   var KEY = 'hw_off_2026';
   var TOAST_KEY = 'hw_toast_2026';
+  var SCARE_KEY = 'hw_scare_2026';
 
   function lsGet(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
   function lsSet(k, v) { try { localStorage.setItem(k, v); } catch (e) {} }
@@ -23,6 +24,7 @@
     var q = new URLSearchParams(location.search).get('halloween');
     if (q === 'off') lsSet(KEY, '1');
     if (q === 'on') lsSet(KEY, '0');
+    if (q === 'scare') { lsSet(KEY, '0'); lsSet(SCARE_KEY, '0'); }   // шалгахад: дахин цочооно
   } catch (e) {}
 
   if (Date.now() >= END) return;           // хугацаа дууссан — юу ч хийхгүй
@@ -130,6 +132,7 @@
 
     document.body.classList.add('hw-on');
     greet();
+    arm();
   }
 
   /* Өдөрт нэг удаа богино мэндчилгээ */
@@ -146,7 +149,46 @@
     setTimeout(function () { if (t.parentNode) t.parentNode.removeChild(t); }, 6000);
   }
 
+
+  /* ── Цочоох: дурын ТОВЧ эхний удаа дарахад ганцхан удаа ─────────
+     • Дуугүй. Товшилтыг хаахгүй (товч ердийнхөөрөө ажиллана).
+     • ~1.6 сек, нэг л удаа анивчина (гэрэлд мэдрэмтгий хүнд аюулгүй).
+     • Төхөөрөмж бүрд нэг л удаа. Дахин шалгах: ?halloween=scare           */
+  var SCARE_SEL = 'button, .btn, [role="button"], input[type="button"], input[type="submit"], .ni';
+  var scareArmed = false;
+
+  function onFirstClick(e) {
+    var t = e.target;
+    if (!t || !t.closest) return;
+    var el = t.closest(SCARE_SEL);
+    if (!el || el.id === 'hw-toggle') return;
+    if (lsGet(SCARE_KEY) === '1' || Date.now() >= END) { disarm(); return; }
+    lsSet(SCARE_KEY, '1');
+    disarm();
+    setTimeout(scare, 120);          // товчийн үйлдэл эхлээд явчихсаны дараа
+  }
+  function arm() {
+    if (scareArmed || lsGet(SCARE_KEY) === '1') return;
+    document.addEventListener('click', onFirstClick, true);
+    scareArmed = true;
+  }
+  function disarm() {
+    if (!scareArmed) return;
+    document.removeEventListener('click', onFirstClick, true);
+    scareArmed = false;
+  }
+  function scare() {
+    if (document.getElementById('hw-scare')) return;
+    var o = document.createElement('div');
+    o.id = 'hw-scare';
+    o.setAttribute('aria-hidden', 'true');
+    o.innerHTML = '<div class="hw-scare-bg"></div><div class="hw-scare-spider">' + spiderSVG('s') + '</div>';
+    document.body.appendChild(o);
+    setTimeout(function () { if (o.parentNode) o.parentNode.removeChild(o); }, 1900);
+  }
+
   function disable() {
+    disarm();
     document.body.classList.remove('hw-on');
     if (layer && layer.parentNode) layer.parentNode.removeChild(layer);
     if (toggle && toggle.parentNode) toggle.parentNode.removeChild(toggle);
