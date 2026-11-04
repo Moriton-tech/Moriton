@@ -11008,9 +11008,15 @@ function saveEditExam() {
     }
   }
 
+  // 🗓 Огноо засах (буруу огноогоор шивсэн үзлэг)
+  const newDate = (document.getElementById('ee-date').value || '').trim();
+  if (newDate && !/^\d{4}-\d{2}-\d{2}$/.test(newDate)) { toast('Огноо буруу форматтай байна', 'err'); return; }
+  if (newDate && newDate > todayStr()) { toast('Ирээдүйн огноо оруулах боломжгүй', 'err'); return; }
+
   const before = { ...e };
   const beforeSvcStr = (Array.isArray(e.services)?e.services:[]).map(s=>s.name).join(', ');
   e.examNum   = newExamNum;
+  if (newDate) e.date = newDate;
   e.diagnosis = document.getElementById('ee-diagnosis').value.trim();
   // Үйлчилгээг хадгална
   e.services  = (STATE._editExamSvcs || []).map(s => ({ name: s.name, price: parseFloat(s.price) || 0 }));
@@ -11027,7 +11033,7 @@ function saveEditExam() {
   }
   const afterSvcStr = e.services.map(s=>s.name).join(', ');
   const changes = diffStr(before, e, [
-    {k:'examNum',label:'Дугаар'},{k:'diagnosis',label:'Онош'},{k:'amount',label:'Дүн'}
+    {k:'examNum',label:'Дугаар'},{k:'date',label:'Огноо'},{k:'diagnosis',label:'Онош'},{k:'amount',label:'Дүн'}
   ]);
   let svcChange = '';
   if (beforeSvcStr !== afterSvcStr) svcChange = 'Үйлчилгээ: «' + (beforeSvcStr||'—') + '» → «' + (afterSvcStr||'—') + '»';
@@ -11044,6 +11050,23 @@ function saveEditExam() {
     linkedInp.initialAmount = e.amount;
     linkedInp.ms = nowMs();
     fbSaveRecord('inps', linkedInp);
+  }
+  const oldDate = before.date || '';
+  const dateChanged = !!newDate && oldDate !== e.date;
+  if (dateChanged) {
+    // Холбоотой нэхэмжлэх, тэр өдөр авсан төлбөр, шинжилгээний захиалгын огноог хамт засна.
+    // Зөвхөн хуучин огноотой таарч байгааг солино (байрлангийн гарах үеийн нэхэмжлэх, өөр өдөр
+    // хийсэн төлбөр зэрэг бодит огноотой бичлэгт хүрэхгүй).
+    STATE.fins.filter(f => String(f.examId) === String(e.id)).forEach(f => {
+      let ch = false;
+      if (f.date === oldDate) { f.date = e.date; ch = true; }
+      if (f.paidDate === oldDate) { f.paidDate = e.date; ch = true; }
+      (Array.isArray(f.payments) ? f.payments : []).forEach(pm => { if (pm && pm.date === oldDate) { pm.date = e.date; ch = true; } });
+      if (ch) { f.ms = nowMs(); fbSaveRecord('fins', f); }
+    });
+    (STATE.labs || []).filter(l => String(l.examId) === String(e.id) && l.date === oldDate).forEach(l => {
+      l.date = e.date; l.ms = nowMs(); fbSaveRecord('labs', l);
+    });
   }
   if (examNumChanged || amountChanged || svcChanged) {
     STATE.fins.filter(f => String(f.examId) === String(e.id)).forEach(f => {
@@ -11086,6 +11109,7 @@ function saveEditExam() {
   renderHistory();
   if (STATE.activePage === 'kpi') renderKPI();
   if (STATE.activePage === 'finance') renderFinance();
+  if (STATE.activePage === 'planned' && typeof renderPlanned === 'function') renderPlanned();
 }
 
 function deleteExam(id) {
