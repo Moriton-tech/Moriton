@@ -8077,7 +8077,12 @@ const BONUS_DEFAULT = {
   alone: 10000, main: 6000, assist: 4000,
   kwZond: 'Зонд', kwCall: 'Дуудлага',
   approver: 'Гүйцэтгэх захирал А.Наранбаатар', checker: 'Э.Оюунчимэг', accountant: 'Ж.Лхамсүрэн',
-  perUnit: true // qty = 1 үзлэг = 1 адуу (систем дээр үзлэг бүр тусдаа бичлэг)
+  perUnit: true, // qty = 1 үзлэг = 1 адуу (систем дээр үзлэг бүр тусдаа бичлэг)
+  // 🗓️ Төлөвлөгөөт үзлэг — ЭЭЛЖ (явц) бүрээр: сан = тооцох үзлэгийн тоо × plRate (эсвэл гараар),
+  // санг багийн бүрэлдэхүүнээр (4 эсвэл 5 хүн) хувиар хуваарилна.
+  plRate: 10000,
+  pl4: { reg: 25, senior: 35, co: 20 },            // 4 хүнтэй баг: бүртгэл + ахлах + 2 хамтарсан
+  pl5: { reg: 25, senior: 35, co: 15, driver: 10 } // 5 хүнтэй баг: + жолооч
 };
 const BONUS_CATS = ['Клиник', 'Зонд', 'Дуудлага', 'Клиник дуудлага', 'Төлөвлөгөөт'];
 const BONUS_PL_CAT = 'Төлөвлөгөөт';                                   // тусдаа олгогддог
@@ -8110,6 +8115,38 @@ function bonusDocRole(name) {
   return d ? d.role : 'Малын их эмч';
 }
 
+// ── 🗓️ Төлөвлөгөөт үзлэг: ээлжийн (явцын) урамшуулал ───────────
+const PL_SLOT_LBL = { reg: 'Бүртгэлийн ажилтан', senior: 'Ахлах эмч', co1: 'Хамтарсан эмч', co2: 'Хамтарсан эмч', driver: 'Жолооч' };
+function plSlots(size, cfg) {
+  const p = size === 5 ? Object.assign({}, BONUS_DEFAULT.pl5, cfg.pl5 || {}) : Object.assign({}, BONUS_DEFAULT.pl4, cfg.pl4 || {});
+  const s = [{ k: 'reg', pct: +p.reg || 0 }, { k: 'senior', pct: +p.senior || 0 }, { k: 'co1', pct: +p.co || 0 }, { k: 'co2', pct: +p.co || 0 }];
+  if (size === 5) s.push({ k: 'driver', pct: +p.driver || 0 });
+  return s;
+}
+// Явцын урамшууллын тохиргоо — t.bonus = { size, pool (гараар, null бол авто), names: {reg, senior, co1, co2, driver} }
+function tripBonusCfg(t) {
+  const b = Object.assign({ size: 4, pool: null, names: {} }, t.bonus || {});
+  const docs = tripDocs(t).map(d => d.name);
+  b.names = Object.assign({ reg: '', senior: docs[0] || '', co1: docs[1] || '', co2: docs[2] || '', driver: '' }, b.names || {});
+  b.size = b.size === 5 ? 5 : 4;
+  return b;
+}
+function computeTripBonus(t, cfg) {
+  cfg = cfg || bonusCfg();
+  const b = tripBonusCfg(t);
+  const ex = tripExams(t.id);
+  const n = ex.filter(e => !e.bonusSkip).length;
+  const autoPool = n * (+cfg.plRate || 0);
+  const manual = b.pool !== null && b.pool !== '' && !isNaN(parseFloat(b.pool));
+  const pool = manual ? parseFloat(b.pool) : autoPool;
+  const slots = plSlots(b.size, cfg);
+  const pctSum = slots.reduce((a, x) => a + x.pct, 0);
+  const lines = slots.map(x => ({ k: x.k, role: PL_SLOT_LBL[x.k], name: (b.names[x.k] || '').trim(), pct: x.pct, amt: Math.round(pool * x.pct / 100) }));
+  // Бутархайн зөрүүг ахлах эмчид (хувь 100% үед нийлбэр сантай яг тэнцэнэ)
+  if (pctSum === 100) { const diff = pool - lines.reduce((a, l) => a + l.amt, 0); const sr = lines.find(l => l.k === 'senior'); if (sr) sr.amt += diff; }
+  return { t, b, n, total: ex.length, autoPool, pool, manual, lines, pctSum, sum: lines.reduce((a, l) => a + l.amt, 0) };
+}
+
 // Сарын урамшууллын тооцоо
 function computeBonus(ym, province) {
   const cfg = bonusCfg();
@@ -8127,12 +8164,16 @@ function computeBonus(ym, province) {
     const main = bonusDocName(e.docId, e.docName);
     const asst = e.assistDocId || e.assistDocName ? bonusDocName(e.assistDocId, e.assistDocName) : '';
     const qty = 1;
-    const skip = !!e.bonusSkip || !main || main === '—';
-    const mainAmt = skip ? 0 : (asst ? cfg.main : cfg.alone) * qty;
-    const asstAmt = skip || !asst ? 0 : cfg.assist * qty;
+    const cat = bonusCategoryOf(e);
+    const pl = cat === BONUS_PL_CAT;
+    // ТҮ: эмчгүй байсан ч ээлжийн санд тоологдоно (баг нь явцаар тодорхой)
+    const skip = !!e.bonusSkip || (!pl && (!main || main === '—'));
+    // ТҮ-ийн мөнгө үзлэг бүрээр биш, ээлжээр (явцаар) хуваарилагдана → энд 0
+    const mainAmt = skip || pl ? 0 : (asst ? cfg.main : cfg.alone) * qty;
+    const asstAmt = skip || pl || !asst ? 0 : cfg.assist * qty;
     return { e, id: e.id, date: rpNormDate(e.date), time: e.time || '', examNum: e.examNum || '', horse: e.horse || '', owner: e.owner || '',
       svc: (Array.isArray(e.services) ? e.services : []).map(s => s.name).filter(Boolean).join(', '),
-      cat: bonusCategoryOf(e), auto: !e.bonusCat, main, asst, qty, mainAmt, asstAmt, skip, noDoc: !main || main === '—' };
+      cat, auto: !e.bonusCat, main, asst, qty, mainAmt, asstAmt, skip, noDoc: !pl && (!main || main === '—'), tripId: e.tripId || '' };
   });
   // Эмчийн нэгтгэл — 🏥 үндсэн үзлэг (Клиник/Зонд/Дуудлага/Клиник дуудлага) ба
   // 🗓️ Төлөвлөгөөт үзлэгийг ТУСАД НЬ (хамтран дүн мөн тусдаа) — ТҮ-ийн урамшуулал тусдаа олгогддог.
@@ -8141,8 +8182,8 @@ function computeBonus(ym, province) {
   const ensure = (n) => { if (!docMap[n]) docMap[n] = { name: n, role: bonusDocRole(n), cats: {}, assist: 0, count: 0, assistCount: 0,
     plMain: 0, plAssist: 0, plCount: 0, plAssistCount: 0, mainTotal: 0, plTotal: 0, total: 0 }; return docMap[n]; };
   rows.forEach(r => {
-    if (r.skip) return;
-    const pl = r.cat === BONUS_PL_CAT;
+    if (r.skip || r.cat === BONUS_PL_CAT) return; // ТҮ-г доор ээлжээр тооцно
+    const pl = false;
     const m = ensure(r.main);
     m.cats[r.cat] = (m.cats[r.cat] || 0) + r.mainAmt;
     if (pl) { m.plMain += r.mainAmt; m.plCount += r.qty; m.plTotal += r.mainAmt; }
@@ -8157,12 +8198,26 @@ function computeBonus(ym, province) {
   });
   const docs = Object.values(docMap).sort((a, b) => b.total - a.total);
   const byCat = {}; BONUS_CATS.forEach(c => byCat[c] = rows.filter(r => r.cat === c));
-  const total = docs.reduce((a, d) => a + d.total, 0);
-  const mainTotal = docs.reduce((a, d) => a + d.mainTotal, 0), plTotal = docs.reduce((a, d) => a + d.plTotal, 0);
+  const mainTotal = docs.reduce((a, d) => a + d.mainTotal, 0);
+  // 🗓️ ТҮ — эхэлсэн огноо нь энэ сард орсон ээлж бүр (салбарын шүүлтүүрээс үл хамаарна — баг нийтээрээ)
+  const trips = (STATE.trips || []).filter(t => (rpNormDate(t.date) || '').slice(0, 7) === ym)
+    .sort((a, b) => (a.date || '') < (b.date || '') ? -1 : 1).map(t => computeTripBonus(t, cfg));
+  const plMap = {};
+  trips.forEach(T => T.lines.forEach(l => {
+    if (!l.amt && !l.name) return;
+    const key = l.name || ('(' + l.role + ' — нэргүй)');
+    const p = plMap[key] || (plMap[key] = { name: key, noName: !l.name, roles: new Set(), trips: 0, total: 0 });
+    p.roles.add(l.role); p.trips++; p.total += l.amt;
+  }));
+  const plPeople = Object.values(plMap).map(p => Object.assign(p, { role: [...p.roles].join(', ') })).sort((a, b) => b.total - a.total);
+  const plTotal = trips.reduce((a, T) => a + T.sum, 0);
+  // Явцгүй (гараар «Төлөвлөгөөт» болгосон) үзлэг — ээлжийн санд орохгүй, анхааруулна
+  const plOrphan = rows.filter(r => r.cat === BONUS_PL_CAT && !r.skip && !tripById(r.tripId)).length;
+  const total = mainTotal + plTotal;
   const live = rows.filter(r => !r.skip);
-  return { ym, rows, docs, byCat, total, mainTotal, plTotal, cfg, skipped: rows.filter(r => r.skip).length,
+  return { ym, rows, docs, byCat, total, mainTotal, plTotal, cfg, skipped: rows.filter(r => r.skip).length, trips, plPeople, plOrphan,
     mainDocs: docs.filter(d => d.mainTotal > 0 || d.count || d.assistCount).sort((a, b) => b.mainTotal - a.mainTotal),
-    plDocs: docs.filter(d => d.plTotal > 0 || d.plCount || d.plAssistCount).sort((a, b) => b.plTotal - a.plTotal),
+    plDocs: plPeople,
     mainN: live.filter(r => r.cat !== BONUS_PL_CAT).length, plN: live.filter(r => r.cat === BONUS_PL_CAT).length,
     mainAsstN: live.filter(r => r.cat !== BONUS_PL_CAT && r.asst).length, plAsstN: live.filter(r => r.cat === BONUS_PL_CAT && r.asst).length };
 }
@@ -8178,14 +8233,63 @@ function bonusMainSummaryHTML(B, print) {
       <td ${R}>${d.assist ? fmt(d.assist) : dash}</td><td ${R}><b>${fmt(d.mainTotal)}</b></td></tr>`).join('') +
     `<tr style="background:var(--input)"><td colspan="2"><b>Нийт дүн</b></td><td ${R}><b>${B.mainN}</b></td>${BONUS_MAIN_CATS.map(c => `<td ${R}><b>${fmt(sum(d => d.cats[c]))}</b></td>`).join('')}<td ${R}><b>${fmt(sum(d => d.assist))}</b></td><td ${R}><b>${fmt(B.mainTotal)}</b></td></tr>`;
 }
+// ТҮ — хүн тус бүрийн нэгтгэл (сарын бүх ээлж)
 function bonusPlSummaryHTML(B, print) {
-  const sum = f => B.plDocs.reduce((a, d) => a + (f(d) || 0), 0);
-  const dash = print ? '' : '<span class="muted">—</span>';
   const R = 'style="text-align:right"';
-  return `<tr><th>Нэрс</th><th>Албан тушаал</th><th ${R}>Үзлэг (ахлах эмч)</th><th ${R}>Ахлах эмчийн дүн</th><th ${R}>Хамтарсан үзлэг</th><th ${R}>Хамтран дүн</th><th ${R}>Нийт дүн</th></tr>` +
-    B.plDocs.map(d => `<tr><td${print ? '' : ' class="bold"'}>${escHTML(d.name)}</td><td${print ? '' : ' class="muted"'}>${escHTML(d.role)}</td>
-      <td ${R}>${d.plCount || dash}</td><td ${R}>${d.plMain ? fmt(d.plMain) : dash}</td><td ${R}>${d.plAssistCount || dash}</td><td ${R}>${d.plAssist ? fmt(d.plAssist) : dash}</td><td ${R}><b>${fmt(d.plTotal)}</b></td></tr>`).join('') +
-    `<tr style="background:var(--input)"><td colspan="2"><b>Нийт дүн</b></td><td ${R}><b>${B.plN}</b></td><td ${R}><b>${fmt(sum(d => d.plMain))}</b></td><td ${R}><b>${B.plAsstN}</b></td><td ${R}><b>${fmt(sum(d => d.plAssist))}</b></td><td ${R}><b>${fmt(B.plTotal)}</b></td></tr>`;
+  return `<tr><th>Нэрс</th><th>Үүрэг (ээлжинд)</th><th ${R}>Ээлж</th><th ${R}>Нийт дүн</th></tr>` +
+    B.plPeople.map(p => `<tr><td${print ? '' : ' class="bold"'}>${escHTML(p.name)}</td><td${print ? '' : ' class="muted"'}>${escHTML(p.role)}</td><td ${R}>${p.trips}</td><td ${R}><b>${fmt(p.total)}</b></td></tr>`).join('') +
+    `<tr style="background:var(--input)"><td colspan="2"><b>Нийт дүн</b></td><td ${R}><b>${B.trips.length}</b></td><td ${R}><b>${fmt(B.plTotal)}</b></td></tr>`;
+}
+// Нэг ээлжийн хуваарилалтын хүснэгт (дэлгэц: засварлах талбартай / хэвлэх: цэвэр)
+function tripBonusTableHTML(T, print) {
+  const R = 'style="text-align:right"';
+  const id = escHTML(String(T.t.id));
+  const nameCell = (l) => print ? escHTML(l.name) :
+    `<input class="inp" list="bn-pl-names" style="padding:4px 8px;font-size:12px;min-width:150px" value="${escHTML(l.name)}" placeholder="${l.k === 'reg' || l.k === 'driver' ? 'Нэр бичих' : 'Эмч сонгох'}" onchange="setTripBonusName('${id}','${l.k}',this.value)">`;
+  return `<tr><th>Үүрэг</th><th>Нэр</th><th ${R}>%</th><th ${R}>Дүн</th></tr>
+    <tr style="${print ? '' : 'background:var(--input)'}"><td colspan="2"><b>Зонд болон клиник (сан)</b></td><td ${R}><b>100%</b></td><td ${R}><b>${fmt(T.pool)}</b></td></tr>` +
+    T.lines.map(l => `<tr><td>${escHTML(l.role)}</td><td>${nameCell(l)}</td><td ${R}>${l.pct}%</td><td ${R}>${fmt(l.amt)}</td></tr>`).join('') +
+    `<tr style="background:var(--input)"><td colspan="2"><b>Нийт</b></td><td ${R}><b>${T.pctSum}%</b></td><td ${R}><b>${fmt(T.sum)}</b></td></tr>`;
+}
+function tripBonusCardHTML(T) {
+  const id = escHTML(String(T.t.id));
+  const warn = [];
+  if (T.pctSum !== 100) warn.push('Хувийн нийлбэр ' + T.pctSum + '% — Тохиргоо → «🎁 Урамшуулал»-д 100% болгоно уу');
+  T.lines.forEach(l => { if (!l.name) warn.push(l.role + '-ийн нэр бөглөөгүй'); });
+  return `<div style="border:1px solid var(--border);border-radius:10px;padding:10px 12px;margin-top:10px">
+    <div class="row" style="justify-content:space-between;flex-wrap:wrap;gap:6px;margin-bottom:8px">
+      <div><b>${escHTML(tripLabel(T.t))}</b> ${T.t.status === 'closed' ? '<span class="badge b-g">хаагдсан</span>' : '<span class="badge b-y">нээлттэй</span>'}
+        <div class="muted" style="font-size:11px">${T.n} үзлэг тооцно${T.total !== T.n ? ' (' + (T.total - T.n) + ' хасагдсан)' : ''} · авто сан ${T.n} × ${fmt(T.b && bonusCfg().plRate)} = ${fmt(T.autoPool)}</div></div>
+      <div class="row" style="gap:6px;flex-wrap:wrap;align-items:flex-end">
+        <div class="fld" style="min-width:120px"><label>Баг</label><select class="inp" style="padding:4px 8px;font-size:12px" onchange="setTripBonusField('${id}','size',this.value)">
+          <option value="4" ${T.b.size === 4 ? 'selected' : ''}>4 хүнтэй баг</option><option value="5" ${T.b.size === 5 ? 'selected' : ''}>5 хүнтэй (+жолооч)</option></select></div>
+        <div class="fld" style="min-width:150px"><label>Сан ₮ ${T.manual ? '<span class="muted">(гараар)</span>' : '<span class="muted">(авто)</span>'}</label>
+          <input class="inp" type="number" style="padding:4px 8px;font-size:12px" value="${T.manual ? T.pool : ''}" placeholder="${T.autoPool}" onchange="setTripBonusField('${id}','pool',this.value)" title="Хоосон орхивол үзлэгийн тоо × нэгж дүнгээр автоматаар"></div>
+      </div>
+    </div>
+    <div class="tbl-wrap" style="overflow-x:auto"><table style="min-width:460px;font-size:12.5px"><tbody>${tripBonusTableHTML(T)}</tbody></table></div>
+    ${warn.length ? `<div style="font-size:11px;color:var(--warn,#b45309);margin-top:6px">⚠️ ${warn.map(escHTML).join(' · ')}</div>` : ''}
+  </div>`;
+}
+function setTripBonusField(tripId, field, val) {
+  const t = tripById(tripId); if (!t) return;
+  if (!(typeof canAccess === 'function' && (canAccess('finance') || canAccess('admin')))) { toast('Эрх хүрэхгүй', 'err'); return; }
+  const b = Object.assign({ size: 4, pool: null, names: {} }, t.bonus || {});
+  if (field === 'size') b.size = parseInt(val, 10) === 5 ? 5 : 4;
+  if (field === 'pool') { const v = parseFloat(val); b.pool = (val === '' || isNaN(v)) ? null : v; }
+  t.bonus = b; t.ms = nowMs();
+  lsSet('mt_trips', STATE.trips); fbSaveRecord('trips', t);
+  try { writeLog('ТҮ урамшуулал тохируулав', t.id, tripLabel(t), field + ': ' + (field === 'pool' ? (b.pool === null ? 'авто' : fmt(b.pool)) : b.size + ' хүн')); } catch (_) {}
+  renderBonus();
+}
+function setTripBonusName(tripId, slot, val) {
+  const t = tripById(tripId); if (!t) return;
+  if (!(typeof canAccess === 'function' && (canAccess('finance') || canAccess('admin')))) { toast('Эрх хүрэхгүй', 'err'); return; }
+  const b = Object.assign({ size: 4, pool: null, names: {} }, t.bonus || {});
+  b.names = Object.assign({}, tripBonusCfg(t).names, b.names || {}, { [slot]: (val || '').trim() });
+  t.bonus = b; t.ms = nowMs();
+  lsSet('mt_trips', STATE.trips); fbSaveRecord('trips', t);
+  renderBonus();
 }
 
 let __bonusLast = null;
@@ -8205,12 +8309,12 @@ function renderBonus() {
   __bonusLast = B;
   const host = $('#bn-body'); if (!host) return;
   const cfg = B.cfg;
-  if (!B.rows.length) { host.innerHTML = '<div class="empty"><div class="empty-em">🎁</div>' + bonusMonthLabel(B.ym) + ' — үзлэг бүртгэлгүй</div>'; return; }
+  if (!B.rows.length && !B.trips.length) { host.innerHTML = '<div class="empty"><div class="empty-em">🎁</div>' + bonusMonthLabel(B.ym) + ' — үзлэг бүртгэлгүй</div>'; return; }
   const catCount = (c) => B.byCat[c].filter(r => !r.skip).length;
   host.innerHTML = `
     <div class="stats s5" style="margin-bottom:12px">
       <div class="stat green"><div class="stat-l">🏥 Үндсэн үзлэгийн урамшуулал</div><div class="snum">${fmtCompact(B.mainTotal)}</div><div class="muted" style="font-size:10px">${B.mainN} үзлэг · ${B.mainAsstN} хамтарсан · ${B.mainDocs.length} эмч</div></div>
-      <div class="stat purple"><div class="stat-l">🗓️ Төлөвлөгөөт урамшуулал</div><div class="snum">${fmtCompact(B.plTotal)}</div><div class="muted" style="font-size:10px">${B.plN} үзлэг · ${B.plAsstN} хамтарсан · тусдаа олгоно</div></div>
+      <div class="stat purple"><div class="stat-l">🗓️ Төлөвлөгөөт урамшуулал</div><div class="snum">${fmtCompact(B.plTotal)}</div><div class="muted" style="font-size:10px">${B.plN} үзлэг · ${B.trips.length} ээлж · тусдаа олгоно</div></div>
       <div class="stat accent"><div class="stat-l">🏥 Клиник</div><div class="snum">${catCount('Клиник')}</div><div class="muted" style="font-size:10px">кл. дуудлага ${catCount('Клиник дуудлага')}</div></div>
       <div class="stat"><div class="stat-l">🧪 Зонд / 🚗 Дуудлага</div><div class="snum">${catCount('Зонд')} <span class="muted" style="font-size:14px">/ ${catCount('Дуудлага')}</span></div><div class="muted" style="font-size:10px">«${escHTML(cfg.kwZond)}» / «${escHTML(cfg.kwCall)}»</div></div>
       <div class="stat"><div class="stat-l">🎁 Бүгд нийт</div><div class="snum">${fmtCompact(B.total)}</div><div class="muted" style="font-size:10px">${B.rows.length - B.skipped} үзлэг${B.skipped ? ' · ' + B.skipped + ' хасагдсан' : ''}</div></div>
@@ -8222,9 +8326,12 @@ function renderBonus() {
       : '<div class="muted" style="font-size:12px">Энэ сард үндсэн үзлэг алга</div>'}
     <div class="muted" style="font-size:11px;margin-top:4px">«Хамтран» — зөвхөн үндсэн үзлэгт хамтрагч эмчээр орсон дүн. Үзлэг баганын «+N» — хамтрагчаар орсон үзлэгийн тоо.</div>
 
-    <div class="ch" style="margin-top:16px">🗓️ Төлөвлөгөөт үзлэгийн урамшуулал — эмч тус бүрээр <span class="muted" style="font-weight:600;text-transform:none">(тусдаа олгоно)</span></div>
-    ${B.plDocs.length ? `<div class="tbl-wrap" style="overflow-x:auto"><table style="min-width:640px"><tbody>${bonusPlSummaryHTML(B)}</tbody></table></div>`
-      : '<div class="muted" style="font-size:12px">Энэ сард төлөвлөгөөт үзлэг алга</div>'}
+    <div class="ch" style="margin-top:16px">🗓️ Төлөвлөгөөт үзлэгийн урамшуулал — ээлж (явц) бүрээр <span class="muted" style="font-weight:600;text-transform:none">(тусдаа олгоно)</span></div>
+    <div class="muted" style="font-size:11px">Ээлж бүрийн сан = тооцох үзлэгийн тоо × <b>${fmt(cfg.plRate)}</b> (эсвэл гараар оруулсан дүн) → багийн бүрэлдэхүүнээр хуваарилна. 4 хүнтэй: бүртгэл ${cfg.pl4.reg}% · ахлах эмч ${cfg.pl4.senior}% · хамтарсан эмч ${cfg.pl4.co}%×2. 5 хүнтэй: бүртгэл ${cfg.pl5.reg}% · ахлах эмч ${cfg.pl5.senior}% · хамтарсан эмч ${cfg.pl5.co}%×2 · жолооч ${cfg.pl5.driver}%. Эхэлсэн огноо нь энэ сард орсон ээлж харагдана.</div>
+    <datalist id="bn-pl-names">${[...new Set([...(STATE.doctors || []).map(d => d.name), ...(STATE.staff || []).map(x => x && (x.name || x)).filter(x => typeof x === 'string')])].map(n => `<option value="${escHTML(n)}">`).join('')}</datalist>
+    ${B.trips.length ? B.trips.map(tripBonusCardHTML).join('') : '<div class="muted" style="font-size:12px;margin-top:6px">Энэ сард эхэлсэн төлөвлөгөөт үзлэгийн ээлж алга</div>'}
+    ${B.plOrphan ? `<div style="font-size:11px;color:var(--warn,#b45309);margin-top:6px">⚠️ ${B.plOrphan} үзлэг «Төлөвлөгөөт» ангилалтай боловч явцгүй — ээлжийн санд ороогүй. Доорх жагсаалтаас ангиллыг нь засна уу.</div>` : ''}
+    ${B.plPeople.length ? `<div class="ch" style="margin-top:12px">👥 ТҮ — хүн тус бүрийн нэгтгэл</div><div class="tbl-wrap" style="overflow-x:auto"><table style="min-width:420px"><tbody>${bonusPlSummaryHTML(B)}</tbody></table></div>` : ''}
     <div style="margin-top:10px;padding:8px 12px;background:var(--input);border-radius:8px;font-size:12.5px">🎁 Бүгд: үндсэн <b>${fmt(B.mainTotal)}</b> + төлөвлөгөөт <b>${fmt(B.plTotal)}</b> = <b>${fmt(B.total)}</b></div>
 
     ${BONUS_CATS.map(c => {
@@ -8268,7 +8375,7 @@ function setBonusSkip(id, skip) {
 
 // Хэвлэх — санхүүгийн Excel-ийн загвараар (A4 босоо)
 function printBonus() {
-  const B = __bonusLast; if (!B || !B.rows.length) { toast('Эхлээд сар сонгоно уу', 'err'); return; }
+  const B = __bonusLast; if (!B || (!B.rows.length && !B.trips.length)) { toast('Эхлээд сар сонгоно уу', 'err'); return; }
   const cfg = B.cfg; const label = bonusMonthLabel(B.ym);
   const catTable = (c) => {
     const list = B.byCat[c].filter(r => !r.skip); if (!list.length) return '';
@@ -8292,14 +8399,22 @@ function printBonus() {
   $('#print-area').innerHTML = `<div class="rp-print bn-print">
     ${BONUS_MAIN_CATS.map(catTable).join('')}
     ${B.mainDocs.length ? summaryPage('үзлэг урамшуулал', bonusMainSummaryHTML(B, true), 'Төлөвлөгөөт үзлэг энэ хүснэгтэд ОРООГҮЙ (тусдаа хуудсанд).') : ''}
-    ${catTable(BONUS_PL_CAT)}
-    ${B.plDocs.length ? summaryPage('төлөвлөгөөт үзлэгийн урамшуулал', bonusPlSummaryHTML(B, true), 'Зөвхөн төлөвлөгөөт (хээрийн) үзлэг.') : ''}
+    ${B.trips.length ? `<div class="bn-page">
+      <div class="bn-appr">Батлав: ${escHTML(cfg.approver)} ______________</div>
+      <div class="pr-h1">Морьтон адууны эмнэлэг төлөвлөгөөт үзлэгийн урамшуулал /${escHTML(label)}/</div>
+      ${B.trips.map(T => `<div class="pr-h2" style="margin-top:10px">${escHTML(tripLabel(T.t))} — ${T.b.size} хүнтэй баг · ${T.n} үзлэг</div>
+        <table class="pr-tbl">${tripBonusTableHTML(T, true)}</table>`).join('')}
+      <div class="pr-h2" style="margin-top:12px">Хүн тус бүрээр</div>
+      <table class="pr-tbl">${bonusPlSummaryHTML(B, true)}</table>
+      <div class="muted" style="font-size:8.5pt;margin-top:6px">Ээлжийн сан = үзлэгийн тоо × ${fmt(cfg.plRate)} (эсвэл баталсан дүн), багийн бүрэлдэхүүнээр хувиар хуваарилав. Системээс автоматаар тооцов — ${localDateStr(new Date())}.</div>
+      <div class="pr-sign" style="margin-top:40px"><div>Хянасан: ______________ /${escHTML(cfg.checker)}/</div><div>Нягтлан бодогч: ______________ /${escHTML(cfg.accountant)}/</div></div>
+    </div>` : ''}
   </div>`;
   try { writeLog('Урамшууллын тайлан хэвлэв', '', '', label + ' · ' + fmt(B.total)); } catch (_) {}
   setTimeout(() => window.print(), 100);
 }
 function exportBonusCSV() {
-  const B = __bonusLast; if (!B || !B.rows.length) { toast('Эхлээд сар сонгоно уу', 'err'); return; }
+  const B = __bonusLast; if (!B || (!B.rows.length && !B.trips.length)) { toast('Эхлээд сар сонгоно уу', 'err'); return; }
   const rows = [['Ангилал', 'Огноо', 'Цаг', 'Баримт №', 'Адуу', 'Эзэн', 'Үйлчилгээ', 'Тоо хэмжээ', 'Ахлах эмч', 'Мөнгөн дүн', 'Хамтрагч эмч', 'Мөнгөн дүн', 'Тооцсон эсэх']];
   BONUS_CATS.forEach(c => B.byCat[c].forEach(r => rows.push([c, r.date, r.time, r.examNum, r.horse, r.owner, r.svc, r.qty, r.main, r.mainAmt, r.asst, r.asstAmt, r.skip ? 'Хасагдсан' : 'Тийм'])));
   const S = f => B.mainDocs.reduce((a, d) => a + (f(d) || 0), 0), P = f => B.plDocs.reduce((a, d) => a + (f(d) || 0), 0);
@@ -8307,10 +8422,12 @@ function exportBonusCSV() {
   rows.push(['Нэрс', 'Албан тушаал', 'Үзлэг', 'Хамтарсан үзлэг', ...BONUS_MAIN_CATS, 'Хамтран', 'Нийт дүн']);
   B.mainDocs.forEach(d => rows.push([d.name, d.role, d.count, d.assistCount, ...BONUS_MAIN_CATS.map(c => d.cats[c] || 0), d.assist, d.mainTotal]));
   rows.push(['Нийт', '', B.mainN, B.mainAsstN, ...BONUS_MAIN_CATS.map(c => S(d => d.cats[c])), S(d => d.assist), B.mainTotal]);
-  rows.push([]); rows.push(['ТӨЛӨВЛӨГӨӨТ ҮЗЛЭГИЙН УРАМШУУЛАЛ — ' + bonusMonthLabel(B.ym)]);
-  rows.push(['Нэрс', 'Албан тушаал', 'Үзлэг (ахлах эмч)', 'Ахлах эмчийн дүн', 'Хамтарсан үзлэг', 'Хамтран дүн', 'Нийт дүн']);
-  B.plDocs.forEach(d => rows.push([d.name, d.role, d.plCount, d.plMain, d.plAssistCount, d.plAssist, d.plTotal]));
-  rows.push(['Нийт', '', B.plN, P(d => d.plMain), B.plAsstN, P(d => d.plAssist), B.plTotal]);
+  rows.push([]); rows.push(['ТӨЛӨВЛӨГӨӨТ ҮЗЛЭГИЙН УРАМШУУЛАЛ (ээлжээр) — ' + bonusMonthLabel(B.ym)]);
+  rows.push(['Ээлж', 'Баг', 'Үзлэг', 'Сан', 'Үүрэг', 'Нэр', '%', 'Дүн']);
+  B.trips.forEach(T => T.lines.forEach(l => rows.push([tripLabel(T.t), T.b.size + ' хүн', T.n, T.pool, l.role, l.name, l.pct, l.amt])));
+  rows.push([]); rows.push(['Нэрс', 'Үүрэг', 'Ээлж', 'Нийт дүн']);
+  B.plPeople.forEach(p => rows.push([p.name, p.role, p.trips, p.total]));
+  rows.push(['Нийт', '', B.trips.length, B.plTotal]);
   rows.push([]); rows.push(['БҮГД', '', '', '', '', '', B.total]);
   downloadCSV(rows, 'урамшуулал_' + B.ym + '.csv');
 }
@@ -8322,14 +8439,23 @@ function renderBonusCfg() {
   set('bn-cfg-alone', cfg.alone); set('bn-cfg-main', cfg.main); set('bn-cfg-assist', cfg.assist);
   set('bn-cfg-zond', cfg.kwZond); set('bn-cfg-call', cfg.kwCall);
   set('bn-cfg-approver', cfg.approver); set('bn-cfg-checker', cfg.checker); set('bn-cfg-acc', cfg.accountant);
+  const p4 = Object.assign({}, BONUS_DEFAULT.pl4, cfg.pl4 || {}), p5 = Object.assign({}, BONUS_DEFAULT.pl5, cfg.pl5 || {});
+  set('bn-cfg-plrate', cfg.plRate);
+  set('bn-cfg-p4-reg', p4.reg); set('bn-cfg-p4-sen', p4.senior); set('bn-cfg-p4-co', p4.co);
+  set('bn-cfg-p5-reg', p5.reg); set('bn-cfg-p5-sen', p5.senior); set('bn-cfg-p5-co', p5.co); set('bn-cfg-p5-drv', p5.driver);
 }
 function saveBonusCfgFromForm() {
   if (!(typeof canAccess === 'function' && (canAccess('admin') || canAccess('finance')))) { toast('Эрх хүрэхгүй', 'err'); return; }
   const num = (id, d) => { const v = parseFloat(($('#' + id) || {}).value); return isNaN(v) ? d : v; };
   const str = (id, d) => { const v = (($('#' + id) || {}).value || '').trim(); return v || d; };
+  const pl4 = { reg: num('bn-cfg-p4-reg', 25), senior: num('bn-cfg-p4-sen', 35), co: num('bn-cfg-p4-co', 20) };
+  const pl5 = { reg: num('bn-cfg-p5-reg', 25), senior: num('bn-cfg-p5-sen', 35), co: num('bn-cfg-p5-co', 15), driver: num('bn-cfg-p5-drv', 10) };
+  const s4 = pl4.reg + pl4.senior + pl4.co * 2, s5 = pl5.reg + pl5.senior + pl5.co * 2 + pl5.driver;
+  if (s4 !== 100 || s5 !== 100) { toast('⚠️ ТҮ хувийн нийлбэр 100% биш: 4 хүнтэй ' + s4 + '%, 5 хүнтэй ' + s5 + '%', 'err'); return; }
   saveBonusCfg({ alone: num('bn-cfg-alone', 10000), main: num('bn-cfg-main', 6000), assist: num('bn-cfg-assist', 4000),
     kwZond: str('bn-cfg-zond', 'Зонд'), kwCall: str('bn-cfg-call', 'Дуудлага'),
-    approver: str('bn-cfg-approver', ''), checker: str('bn-cfg-checker', ''), accountant: str('bn-cfg-acc', '') });
+    approver: str('bn-cfg-approver', ''), checker: str('bn-cfg-checker', ''), accountant: str('bn-cfg-acc', ''),
+    plRate: num('bn-cfg-plrate', 10000), pl4: pl4, pl5: pl5 });
   try { writeLog('Урамшууллын тохиргоо солив', '', '', fmt(STATE.bonusCfg.alone) + ' / ' + fmt(STATE.bonusCfg.main) + '+' + fmt(STATE.bonusCfg.assist)); } catch (_) {}
   toast('✅ Урамшууллын тохиргоо хадгалагдлаа', 'ok');
 }
