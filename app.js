@@ -8082,7 +8082,10 @@ const BONUS_DEFAULT = {
   // санг багийн бүрэлдэхүүнээр (4 эсвэл 5 хүн) хувиар хуваарилна.
   plRate: 10000,
   pl4: { reg: 25, senior: 35, co: 20 },            // 4 хүнтэй баг: бүртгэл + ахлах + 2 хамтарсан
-  pl5: { reg: 25, senior: 35, co: 15, driver: 10 } // 5 хүнтэй баг: + жолооч
+  pl5: { reg: 25, senior: 35, co: 15, driver: 10 }, // 5 хүнтэй баг: + жолооч
+  // ТҮ-ийн санд ТООЦОХГҮЙ үйлчилгээ (жижиг үсгээр). Үзлэгийн БҮХ үйлчилгээ энэ жагсаалтад
+  // орвол (ж: зөвхөн «Хээл шалгах») тэр үзлэг санд орохгүй. Өөр үйлчилгээ давхар байвал тооцно.
+  plExcl: ['хээл шалгах']
 };
 const BONUS_CATS = ['Клиник', 'Зонд', 'Дуудлага', 'Клиник дуудлага', 'Төлөвлөгөөт'];
 const BONUS_PL_CAT = 'Төлөвлөгөөт';                                   // тусдаа олгогддог
@@ -8131,20 +8134,32 @@ function tripBonusCfg(t) {
   b.size = b.size === 5 ? 5 : 4;
   return b;
 }
-function computeTripBonus(t, cfg) {
+function plSvcNames(e) { return (Array.isArray(e.services) ? e.services : []).map(x => String(x.name || '').trim().toLowerCase()).filter(Boolean); }
+function plExclList(cfg) { return (Array.isArray(cfg.plExcl) ? cfg.plExcl : []).map(x => String(x || '').trim().toLowerCase()).filter(Boolean); }
+// ТҮ-ийн санд тооцогдох үзлэг үү: үйлчилгээгүй бол тооцно; бүх үйлчилгээ нь хасах жагсаалтад орвол тооцохгүй
+function plEligible(e, cfg) {
+  const names = plSvcNames(e); if (!names.length) return true;
+  const ex = plExclList(cfg || bonusCfg()); if (!ex.length) return true;
+  return names.some(n => !ex.some(k => n === k || n.includes(k)));
+}
+// ym өгвөл зөвхөн тэр сард хийгдсэн үзлэгээр сан бодно (сар дамнасан ээлж сар бүрдээ хуваагдана)
+function computeTripBonus(t, cfg, ym) {
   cfg = cfg || bonusCfg();
   const b = tripBonusCfg(t);
-  const ex = tripExams(t.id);
-  const n = ex.filter(e => !e.bonusSkip).length;
+  const ex = tripExams(t.id).filter(e => !ym || (rpNormDate(e.date) || '').slice(0, 7) === ym);
+  const svcOut = ex.filter(e => !e.bonusSkip && !plEligible(e, cfg)).length;
+  const n = ex.filter(e => !e.bonusSkip && plEligible(e, cfg)).length;
   const autoPool = n * (+cfg.plRate || 0);
-  const manual = b.pool !== null && b.pool !== '' && !isNaN(parseFloat(b.pool));
+  // Гараар оруулсан сан зөвхөн ээлж эхэлсэн сард үйлчилнэ (бусад сард авто)
+  const startYm = (rpNormDate(t.date) || '').slice(0, 7);
+  const manual = (!ym || ym === startYm) && b.pool !== null && b.pool !== '' && !isNaN(parseFloat(b.pool));
   const pool = manual ? parseFloat(b.pool) : autoPool;
   const slots = plSlots(b.size, cfg);
   const pctSum = slots.reduce((a, x) => a + x.pct, 0);
   const lines = slots.map(x => ({ k: x.k, role: PL_SLOT_LBL[x.k], name: (b.names[x.k] || '').trim(), pct: x.pct, amt: Math.round(pool * x.pct / 100) }));
   // Бутархайн зөрүүг ахлах эмчид (хувь 100% үед нийлбэр сантай яг тэнцэнэ)
   if (pctSum === 100) { const diff = pool - lines.reduce((a, l) => a + l.amt, 0); const sr = lines.find(l => l.k === 'senior'); if (sr) sr.amt += diff; }
-  return { t, b, n, total: ex.length, autoPool, pool, manual, lines, pctSum, sum: lines.reduce((a, l) => a + l.amt, 0) };
+  return { t, b, n, svcOut, total: ex.length, autoPool, pool, manual, lines, pctSum, sum: lines.reduce((a, l) => a + l.amt, 0) };
 }
 
 // Сарын урамшууллын тооцоо
@@ -8167,13 +8182,14 @@ function computeBonus(ym, province) {
     const cat = bonusCategoryOf(e);
     const pl = cat === BONUS_PL_CAT;
     // ТҮ: эмчгүй байсан ч ээлжийн санд тоологдоно (баг нь явцаар тодорхой)
-    const skip = !!e.bonusSkip || (!pl && (!main || main === '—'));
+    const plExcl = pl && !plEligible(e, cfg);
+    const skip = !!e.bonusSkip || plExcl || (!pl && (!main || main === '—'));
     // ТҮ-ийн мөнгө үзлэг бүрээр биш, ээлжээр (явцаар) хуваарилагдана → энд 0
     const mainAmt = skip || pl ? 0 : (asst ? cfg.main : cfg.alone) * qty;
     const asstAmt = skip || pl || !asst ? 0 : cfg.assist * qty;
     return { e, id: e.id, date: rpNormDate(e.date), time: e.time || '', examNum: e.examNum || '', horse: e.horse || '', owner: e.owner || '',
       svc: (Array.isArray(e.services) ? e.services : []).map(s => s.name).filter(Boolean).join(', '),
-      cat, auto: !e.bonusCat, main, asst, qty, mainAmt, asstAmt, skip, noDoc: !pl && (!main || main === '—'), tripId: e.tripId || '' };
+      cat, auto: !e.bonusCat, main, asst, qty, mainAmt, asstAmt, skip, plExcl, noDoc: !pl && (!main || main === '—'), tripId: e.tripId || '' };
   });
   // Эмчийн нэгтгэл — 🏥 үндсэн үзлэг (Клиник/Зонд/Дуудлага/Клиник дуудлага) ба
   // 🗓️ Төлөвлөгөөт үзлэгийг ТУСАД НЬ (хамтран дүн мөн тусдаа) — ТҮ-ийн урамшуулал тусдаа олгогддог.
@@ -8200,8 +8216,10 @@ function computeBonus(ym, province) {
   const byCat = {}; BONUS_CATS.forEach(c => byCat[c] = rows.filter(r => r.cat === c));
   const mainTotal = docs.reduce((a, d) => a + d.mainTotal, 0);
   // 🗓️ ТҮ — эхэлсэн огноо нь энэ сард орсон ээлж бүр (салбарын шүүлтүүрээс үл хамаарна — баг нийтээрээ)
-  const trips = (STATE.trips || []).filter(t => (rpNormDate(t.date) || '').slice(0, 7) === ym)
-    .sort((a, b) => (a.date || '') < (b.date || '') ? -1 : 1).map(t => computeTripBonus(t, cfg));
+  // 🗓️ ТҮ — энэ сард үзлэг хийгдсэн (эсвэл энэ сард эхэлсэн) ээлж бүр; сан нь зөвхөн энэ сарын үзлэгээр
+  const tripIdsInMonth = new Set(rows.filter(r => r.cat === BONUS_PL_CAT && r.tripId).map(r => String(r.tripId)));
+  const trips = (STATE.trips || []).filter(t => tripIdsInMonth.has(String(t.id)) || (rpNormDate(t.date) || '').slice(0, 7) === ym)
+    .sort((a, b) => (a.date || '') < (b.date || '') ? -1 : 1).map(t => computeTripBonus(t, cfg, ym));
   const plMap = {};
   trips.forEach(T => T.lines.forEach(l => {
     if (!l.amt && !l.name) return;
@@ -8213,9 +8231,10 @@ function computeBonus(ym, province) {
   const plTotal = trips.reduce((a, T) => a + T.sum, 0);
   // Явцгүй (гараар «Төлөвлөгөөт» болгосон) үзлэг — ээлжийн санд орохгүй, анхааруулна
   const plOrphan = rows.filter(r => r.cat === BONUS_PL_CAT && !r.skip && !tripById(r.tripId)).length;
+  const plSvcOut = rows.filter(r => r.plExcl && !r.e.bonusSkip).length;
   const total = mainTotal + plTotal;
   const live = rows.filter(r => !r.skip);
-  return { ym, rows, docs, byCat, total, mainTotal, plTotal, cfg, skipped: rows.filter(r => r.skip).length, trips, plPeople, plOrphan,
+  return { ym, rows, docs, byCat, total, mainTotal, plTotal, cfg, skipped: rows.filter(r => r.skip).length, trips, plPeople, plOrphan, plSvcOut,
     mainDocs: docs.filter(d => d.mainTotal > 0 || d.count || d.assistCount).sort((a, b) => b.mainTotal - a.mainTotal),
     plDocs: plPeople,
     mainN: live.filter(r => r.cat !== BONUS_PL_CAT).length, plN: live.filter(r => r.cat === BONUS_PL_CAT).length,
@@ -8259,7 +8278,7 @@ function tripBonusCardHTML(T) {
   return `<div style="border:1px solid var(--border);border-radius:10px;padding:10px 12px;margin-top:10px">
     <div class="row" style="justify-content:space-between;flex-wrap:wrap;gap:6px;margin-bottom:8px">
       <div><b>${escHTML(tripLabel(T.t))}</b> ${T.t.status === 'closed' ? '<span class="badge b-g">хаагдсан</span>' : '<span class="badge b-y">нээлттэй</span>'}
-        <div class="muted" style="font-size:11px">${T.n} үзлэг тооцно${T.total !== T.n ? ' (' + (T.total - T.n) + ' хасагдсан)' : ''} · авто сан ${T.n} × ${fmt(T.b && bonusCfg().plRate)} = ${fmt(T.autoPool)}</div></div>
+        <div class="muted" style="font-size:11px">Энэ сард ${T.total} үзлэг → <b>${T.n} тооцно</b>${T.svcOut ? ' · ' + T.svcOut + ' үйлчилгээгээр хасагдсан' : ''}${T.total - T.n - T.svcOut > 0 ? ' · ' + (T.total - T.n - T.svcOut) + ' гараар хасагдсан' : ''} · авто сан ${T.n} × ${fmt(bonusCfg().plRate)} = ${fmt(T.autoPool)}</div></div>
       <div class="row" style="gap:6px;flex-wrap:wrap;align-items:flex-end">
         <div class="fld" style="min-width:120px"><label>Баг</label><select class="inp" style="padding:4px 8px;font-size:12px" onchange="setTripBonusField('${id}','size',this.value)">
           <option value="4" ${T.b.size === 4 ? 'selected' : ''}>4 хүнтэй баг</option><option value="5" ${T.b.size === 5 ? 'selected' : ''}>5 хүнтэй (+жолооч)</option></select></div>
@@ -8295,6 +8314,112 @@ function setTripBonusName(tripId, slot, val) {
 let __bonusLast = null;
 function bonusMonthLabel(ym) { const [y, m] = ym.split('-'); return y + ' оны ' + parseInt(m, 10) + ' сар'; }
 
+// ── ⚙️ ТҮ: аль үйлчилгээнээс урамшуулал тооцох ───────────────
+function plSvcCfgHTML(B) {
+  const cfg = B.cfg, ex = plExclList(cfg);
+  const cnt = {};
+  (STATE.exams || []).filter(isPlanned).forEach(e => (Array.isArray(e.services) ? e.services : []).forEach(x => {
+    const n = String(x.name || '').trim(); if (!n) return; const k = n.toLowerCase(); (cnt[k] || (cnt[k] = { name: n, n: 0 })).n++;
+  }));
+  ex.forEach(k => { if (!cnt[k]) cnt[k] = { name: k, n: 0 }; });
+  const list = Object.entries(cnt).sort((a, b) => b[1].n - a[1].n);
+  const off = list.filter(([k]) => ex.some(x => k === x || k.includes(x)));
+  return `<details style="margin-top:8px;border:1px dashed var(--border);border-radius:10px;padding:8px 12px">
+    <summary style="cursor:pointer;font-size:12.5px"><b>⚙️ Аль үйлчилгээнээс урамшуулал тооцох</b> <span class="muted">— тооцохгүй: ${off.length ? off.map(([, v]) => escHTML(v.name)).join(', ') : 'байхгүй'}${B.plSvcOut ? ' · энэ сард ' + B.plSvcOut + ' үзлэг хасагдсан' : ''}</span></summary>
+    <div class="muted" style="font-size:11px;margin:6px 0">Тэмдэглэгээг авсан үйлчилгээ <b>ганцаараа</b> хийгдсэн үзлэг санд орохгүй. Өөр (тэмдэглэсэн) үйлчилгээ давхар хийгдсэн бол тооцно. Үйлчилгээгүй үзлэгийг тооцно.</div>
+    <div style="display:flex;flex-wrap:wrap;gap:6px">${list.length ? list.map(([k, v]) => {
+      const on = !ex.some(x => k === x || k.includes(x));
+      return `<label style="display:inline-flex;align-items:center;gap:4px;padding:3px 8px;border:1px solid var(--border);border-radius:14px;font-size:12px;cursor:pointer;${on ? '' : 'opacity:.6;text-decoration:line-through'}">
+        <input type="checkbox" ${on ? 'checked' : ''} onchange="togglePlSvc(${escHTML(JSON.stringify(k))}, this.checked)">${escHTML(v.name)} <span class="muted">${v.n}</span></label>`;
+    }).join('') : '<span class="muted" style="font-size:12px">Төлөвлөгөөт үзлэгт үйлчилгээ бүртгэгдээгүй</span>'}</div>
+  </details>`;
+}
+function togglePlSvc(key, on) {
+  if (!(typeof canAccess === 'function' && (canAccess('finance') || canAccess('admin')))) { toast('Эрх хүрэхгүй', 'err'); renderBonus(); return; }
+  const cfg = bonusCfg(); key = String(key || '').toLowerCase();
+  let ex = plExclList(cfg);
+  if (on) ex = ex.filter(x => x !== key && !key.includes(x)); else if (!ex.includes(key)) ex.push(key);
+  saveBonusCfg({ plExcl: ex });
+  try { writeLog('ТҮ урамшуулал: үйлчилгээ ' + (on ? 'тооцно' : 'хасна'), '', key, 'Тооцохгүй: ' + (ex.join(', ') || '—')); } catch (_) {}
+  renderBonus();
+  setTimeout(() => { const d = document.querySelector('#bn-body details'); if (d) d.open = true; }, 0);
+}
+
+// ── 📌 Сарын дүнг хадгалж, дараа нь юу өөрчлөгдсөнийг харуулах ──
+// Хадгалсан хувь logs collection-д 'bnsnap_YYYY-MM' id-тай (бүх төхөөрөмжид нэг). Хэвлэхэд автоматаар хадгална.
+const __bnSnapCache = {};
+function bonusSnapOf(B) {
+  const ex = {};
+  B.rows.forEach(r => { ex[r.id] = [r.date, r.cat, r.main, r.asst, r.mainAmt, r.asstAmt, r.skip ? 1 : 0, r.examNum, r.horse]; });
+  const per = {};
+  B.mainDocs.forEach(d => { per[d.name] = [d.mainTotal, 0]; });
+  B.plPeople.forEach(p => { (per[p.name] || (per[p.name] = [0, 0]))[1] = p.total; });
+  return { ym: B.ym, ms: nowMs(), by: (STATE.user && STATE.user.name) || '', mainTotal: B.mainTotal, plTotal: B.plTotal, total: B.total, per, ex };
+}
+function saveBonusSnap(silent) {
+  const B = __bonusLast; if (!B) return;
+  const snap = bonusSnapOf(B);
+  const id = 'bnsnap_' + B.ym;
+  __bnSnapCache[B.ym] = snap;
+  const log = { id, user_name: snap.by, user_role: (STATE.user && STATE.user.role) || '', action: 'Урамшууллын дүн хадгалав', target_id: B.ym, target_name: bonusMonthLabel(B.ym),
+    exam_id: '', details: 'Үндсэн ' + fmt(B.mainTotal) + ' · ТҮ ' + fmt(B.plTotal) + ' · нийт ' + fmt(B.total), log_date: todayStr(), log_ms: snap.ms, snap: JSON.stringify(snap) };
+  try { fbWriteDoc('logs', id, log); } catch (e) { console.error(e); }
+  if (!silent) toast('📌 ' + bonusMonthLabel(B.ym) + '-ын дүн хадгалагдлаа — цаашид өөрчлөгдвөл энд харагдана', 'ok');
+  renderBonusDiff(B);
+}
+async function loadBonusSnap(ym) {
+  if (__bnSnapCache[ym] !== undefined) return __bnSnapCache[ym];
+  let d = null;
+  try { d = window.__fbDocIfExists ? await window.__fbDocIfExists('logs', 'bnsnap_' + ym) : null; } catch (_) {}
+  let snap = null; try { snap = d && d.snap ? JSON.parse(d.snap) : null; } catch (_) {}
+  if (d !== undefined) __bnSnapCache[ym] = snap; // сүлжээний алдаа бол дараа дахин оролдоно
+  return snap;
+}
+async function renderBonusDiff(B) {
+  const host = $('#bn-diff'); if (!host || !B) return;
+  const snap = await loadBonusSnap(B.ym);
+  if (__bonusLast !== B) return;
+  const btn = `<button class="btn btn-sm" onclick="saveBonusSnap()">📌 ${snap ? 'Одоогийн дүнгээр шинэчилж хадгалах' : 'Энэ дүнг хадгалах'}</button>`;
+  if (!snap) { host.innerHTML = `<div class="row" style="gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px;font-size:12px"><span class="muted">Энэ сарын дүн хадгалагдаагүй. Хадгалбал дараа нь юу өөрчлөгдсөнийг үзлэг бүрээр харуулна (хэвлэхэд автоматаар хадгална).</span>${btn}</div>`; return; }
+  const cur = bonusSnapOf(B);
+  const R = 'style="text-align:right"';
+  const people = [...new Set([...Object.keys(snap.per || {}), ...Object.keys(cur.per)])].map(n => {
+    const a = (snap.per || {})[n] || [0, 0], b = cur.per[n] || [0, 0];
+    return { n, a0: a[0], b0: b[0], a1: a[1], b1: b[1], d: (b[0] + b[1]) - (a[0] + a[1]) };
+  }).filter(x => x.d || x.a0 !== x.b0 || x.a1 !== x.b1);
+  const chg = [];
+  const lbl = (x) => (x[7] ? '№' + x[7] + ' ' : '') + (x[8] || '');
+  Object.keys(cur.ex).forEach(id => {
+    const o = (snap.ex || {})[id], n = cur.ex[id];
+    if (!o) { chg.push({ id, t: 'Шинээр нэмэгдсэн', who: lbl(n), d: n[0] + ' · ' + n[1] + ' · ' + (n[2] || '—') + (n[3] ? ' + ' + n[3] : ''), amt: n[4] + n[5] }); return; }
+    const why = [];
+    if (o[0] !== n[0]) why.push('огноо ' + o[0] + ' → ' + n[0]);
+    if (o[1] !== n[1]) why.push('ангилал ' + o[1] + ' → ' + n[1]);
+    if (o[2] !== n[2]) why.push('эмч ' + (o[2] || '—') + ' → ' + (n[2] || '—'));
+    if (o[3] !== n[3]) why.push('хамтрагч ' + (o[3] || '—') + ' → ' + (n[3] || '—'));
+    if (o[6] !== n[6]) why.push(n[6] ? 'урамшууллаас хасагдсан' : 'урамшуулалд буцаж орсон');
+    if (o[4] + o[5] !== n[4] + n[5] && !why.length) why.push('дүн ' + fmt(o[4] + o[5]) + ' → ' + fmt(n[4] + n[5]));
+    if (why.length) chg.push({ id, t: 'Өөрчлөгдсөн', who: lbl(n), d: why.join(' · '), amt: (n[4] + n[5]) - (o[4] + o[5]) });
+  });
+  Object.keys(snap.ex || {}).forEach(id => { if (!cur.ex[id]) { const o = snap.ex[id]; chg.push({ id, t: 'Энэ сараас гарсан / устгагдсан', who: lbl(o), d: o[0] + ' · ' + o[1] + ' · ' + (o[2] || '—'), amt: -(o[4] + o[5]) }); } });
+  const same = !people.length && !chg.length && snap.total === cur.total;
+  host.innerHTML = `<div style="border:1px solid ${same ? 'var(--border)' : 'var(--warn,#b45309)'};border-radius:10px;padding:8px 12px;margin-bottom:12px;font-size:12px">
+    <div class="row" style="justify-content:space-between;gap:8px;flex-wrap:wrap;align-items:center">
+      <div>${same ? '✅' : '🔍'} <b>Хадгалсан дүн</b> (${escHTML((() => { const d = new Date(snap.ms); return localDateStr(d) + ' ' + String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0'); })())}${snap.by ? ', ' + escHTML(snap.by) : ''}): нийт ${fmt(snap.total)} → одоо <b>${fmt(cur.total)}</b>
+        ${same ? '<span class="muted"> — өөрчлөлтгүй</span>' : `<span style="color:var(--warn,#b45309)"> (${cur.total - snap.total >= 0 ? '+' : ''}${fmt(cur.total - snap.total)})</span> · үндсэн ${fmt(snap.mainTotal)} → ${fmt(cur.mainTotal)} · ТҮ ${fmt(snap.plTotal)} → ${fmt(cur.plTotal)}`}</div>
+      ${btn}
+    </div>
+    ${people.length ? `<div class="tbl-wrap" style="overflow-x:auto;margin-top:6px"><table style="font-size:11.5px;min-width:520px"><tbody>
+      <tr><th>Нэр</th><th ${R}>Үндсэн (өмнө → одоо)</th><th ${R}>ТҮ (өмнө → одоо)</th><th ${R}>Зөрүү</th></tr>
+      ${people.map(x => `<tr><td>${escHTML(x.n)}</td><td ${R}>${fmt(x.a0)} → ${fmt(x.b0)}</td><td ${R}>${fmt(x.a1)} → ${fmt(x.b1)}</td><td ${R}><b>${x.d >= 0 ? '+' : ''}${fmt(x.d)}</b></td></tr>`).join('')}
+    </tbody></table></div>` : ''}
+    ${chg.length ? `<div class="tbl-wrap" style="overflow-x:auto;margin-top:6px"><table style="font-size:11.5px;min-width:620px"><tbody>
+      <tr><th>Юу болсон</th><th>Үзлэг</th><th>Дэлгэрэнгүй</th><th ${R}>Дүнд нөлөө</th></tr>
+      ${chg.map(c => `<tr style="cursor:pointer" onclick="openExamDetail('${escHTML(String(c.id))}')"><td>${escHTML(c.t)}</td><td>${escHTML(c.who)}</td><td style="white-space:normal">${escHTML(c.d)}</td><td ${R}>${c.amt ? (c.amt > 0 ? '+' : '') + fmt(c.amt) : '<span class="muted">ТҮ — ээлжээр</span>'}</td></tr>`).join('')}
+    </tbody></table></div>` : ''}
+  </div>`;
+}
+
 function renderBonus() {
   const ymEl = $('#bn-month'); if (!ymEl) return;
   if (!ymEl.value) { const n = new Date(); n.setMonth(n.getMonth() - (n.getDate() < 5 ? 1 : 0)); ymEl.value = n.getFullYear() + '-' + String(n.getMonth() + 1).padStart(2, '0'); }
@@ -8307,6 +8432,7 @@ function renderBonus() {
   }
   const B = computeBonus(ymEl.value, provSel ? provSel.value : '');
   __bonusLast = B;
+  setTimeout(() => { try { renderBonusDiff(B); } catch (e) { console.error(e); } }, 0);
   const host = $('#bn-body'); if (!host) return;
   const cfg = B.cfg;
   if (!B.rows.length && !B.trips.length) { host.innerHTML = '<div class="empty"><div class="empty-em">🎁</div>' + bonusMonthLabel(B.ym) + ' — үзлэг бүртгэлгүй</div>'; return; }
@@ -8319,6 +8445,7 @@ function renderBonus() {
       <div class="stat"><div class="stat-l">🧪 Зонд / 🚗 Дуудлага</div><div class="snum">${catCount('Зонд')} <span class="muted" style="font-size:14px">/ ${catCount('Дуудлага')}</span></div><div class="muted" style="font-size:10px">«${escHTML(cfg.kwZond)}» / «${escHTML(cfg.kwCall)}»</div></div>
       <div class="stat"><div class="stat-l">🎁 Бүгд нийт</div><div class="snum">${fmtCompact(B.total)}</div><div class="muted" style="font-size:10px">${B.rows.length - B.skipped} үзлэг${B.skipped ? ' · ' + B.skipped + ' хасагдсан' : ''}</div></div>
     </div>
+    <div id="bn-diff"></div>
     <div class="muted" style="font-size:11px;margin-bottom:10px">Хувь хэмжээ: ганцаараа <b>${fmt(cfg.alone)}</b> · хамтарсан бол үндсэн <b>${fmt(cfg.main)}</b> + хамтрагч <b>${fmt(cfg.assist)}</b> (нэг үзлэг = нэг адуу). Ангилал үйлчилгээний нэрээр автоматаар тогтооно — мөр бүр дээр гараар солих, эсвэл урамшууллаас хасах боломжтой; өөрчлөлт бүх төхөөрөмжид хадгалагдана. Тохиргоо → «🎁 Урамшуулал».</div>
 
     <div class="ch">🏥 Үндсэн үзлэгийн урамшуулал — эмч тус бүрээр <span class="muted" style="font-weight:600;text-transform:none">(төлөвлөгөөт үзлэггүй) · ${escHTML(bonusMonthLabel(B.ym))}</span></div>
@@ -8327,9 +8454,10 @@ function renderBonus() {
     <div class="muted" style="font-size:11px;margin-top:4px">«Хамтран» — зөвхөн үндсэн үзлэгт хамтрагч эмчээр орсон дүн. Үзлэг баганын «+N» — хамтрагчаар орсон үзлэгийн тоо.</div>
 
     <div class="ch" style="margin-top:16px">🗓️ Төлөвлөгөөт үзлэгийн урамшуулал — ээлж (явц) бүрээр <span class="muted" style="font-weight:600;text-transform:none">(тусдаа олгоно)</span></div>
-    <div class="muted" style="font-size:11px">Ээлж бүрийн сан = тооцох үзлэгийн тоо × <b>${fmt(cfg.plRate)}</b> (эсвэл гараар оруулсан дүн) → багийн бүрэлдэхүүнээр хуваарилна. 4 хүнтэй: бүртгэл ${cfg.pl4.reg}% · ахлах эмч ${cfg.pl4.senior}% · хамтарсан эмч ${cfg.pl4.co}%×2. 5 хүнтэй: бүртгэл ${cfg.pl5.reg}% · ахлах эмч ${cfg.pl5.senior}% · хамтарсан эмч ${cfg.pl5.co}%×2 · жолооч ${cfg.pl5.driver}%. Эхэлсэн огноо нь энэ сард орсон ээлж харагдана.</div>
+    <div class="muted" style="font-size:11px">Ээлж бүрийн сан = тооцох үзлэгийн тоо × <b>${fmt(cfg.plRate)}</b> (эсвэл гараар оруулсан дүн) → багийн бүрэлдэхүүнээр хуваарилна. 4 хүнтэй: бүртгэл ${cfg.pl4.reg}% · ахлах эмч ${cfg.pl4.senior}% · хамтарсан эмч ${cfg.pl4.co}%×2. 5 хүнтэй: бүртгэл ${cfg.pl5.reg}% · ахлах эмч ${cfg.pl5.senior}% · хамтарсан эмч ${cfg.pl5.co}%×2 · жолооч ${cfg.pl5.driver}%. Сан нь зөвхөн энэ сард хийгдсэн үзлэгээр бодогдоно (сар дамнасан ээлж сар бүрдээ хуваагдана).</div>
     <datalist id="bn-pl-names">${[...new Set([...(STATE.doctors || []).map(d => d.name), ...(STATE.staff || []).map(x => x && (x.name || x)).filter(x => typeof x === 'string')])].map(n => `<option value="${escHTML(n)}">`).join('')}</datalist>
-    ${B.trips.length ? B.trips.map(tripBonusCardHTML).join('') : '<div class="muted" style="font-size:12px;margin-top:6px">Энэ сард эхэлсэн төлөвлөгөөт үзлэгийн ээлж алга</div>'}
+    ${plSvcCfgHTML(B)}
+    ${B.trips.length ? B.trips.map(tripBonusCardHTML).join('') : '<div class="muted" style="font-size:12px;margin-top:6px">Энэ сард төлөвлөгөөт үзлэгийн ээлж алга</div>'}
     ${B.plOrphan ? `<div style="font-size:11px;color:var(--warn,#b45309);margin-top:6px">⚠️ ${B.plOrphan} үзлэг «Төлөвлөгөөт» ангилалтай боловч явцгүй — ээлжийн санд ороогүй. Доорх жагсаалтаас ангиллыг нь засна уу.</div>` : ''}
     ${B.plPeople.length ? `<div class="ch" style="margin-top:12px">👥 ТҮ — хүн тус бүрийн нэгтгэл</div><div class="tbl-wrap" style="overflow-x:auto"><table style="min-width:420px"><tbody>${bonusPlSummaryHTML(B)}</tbody></table></div>` : ''}
     <div style="margin-top:10px;padding:8px 12px;background:var(--input);border-radius:8px;font-size:12.5px">🎁 Бүгд: үндсэн <b>${fmt(B.mainTotal)}</b> + төлөвлөгөөт <b>${fmt(B.plTotal)}</b> = <b>${fmt(B.total)}</b></div>
@@ -8352,7 +8480,7 @@ function renderBonus() {
           <td>${escHTML(r.asst) || '<span class="muted">—</span>'}</td>
           <td style="text-align:right">${r.asstAmt ? fmt(r.asstAmt) : '—'}</td>
           <td><select class="inp" style="padding:3px 6px;font-size:11px" onchange="setBonusCat('${escHTML(String(r.id))}', this.value)">${BONUS_CATS.map(x => `<option ${x === r.cat ? 'selected' : ''}>${x}</option>`).join('')}</select>${r.auto ? '' : '<div class="muted" style="font-size:9px">гараар</div>'}</td>
-          <td style="text-align:center"><input type="checkbox" ${r.skip ? '' : 'checked'} ${r.noDoc ? 'disabled' : ''} onchange="setBonusSkip('${escHTML(String(r.id))}', !this.checked)" title="Урамшуулалд тооцох эсэх"></td>
+          <td style="text-align:center">${r.plExcl ? '<span class="badge b-y" style="font-size:9px" title="Үйлчилгээ нь ТҮ урамшуулалд тооцогдохгүй жагсаалтад орсон">үйлчилгээ</span>' : `<input type="checkbox" ${r.skip ? '' : 'checked'} ${r.noDoc ? 'disabled' : ''} onchange="setBonusSkip('${escHTML(String(r.id))}', !this.checked)" title="Урамшуулалд тооцох эсэх">`}</td>
         </tr>`).join('')}
         <tr style="background:var(--input)"><td colspan="6" class="bold">Нийт дүн</td><td class="bold" style="text-align:right">${fmt(sumM)}</td><td></td><td class="bold" style="text-align:right">${fmt(sumA)}</td><td colspan="2"></td></tr>
         </tbody></table></div>`;
@@ -8411,6 +8539,7 @@ function printBonus() {
     </div>` : ''}
   </div>`;
   try { writeLog('Урамшууллын тайлан хэвлэв', '', '', label + ' · ' + fmt(B.total)); } catch (_) {}
+  try { saveBonusSnap(true); } catch (_) {}
   setTimeout(() => window.print(), 100);
 }
 function exportBonusCSV() {
