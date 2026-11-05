@@ -9633,6 +9633,54 @@ function editTripField(field, val) {
   renderPlanned();
 }
 
+// ── Явцын огноо засах (буруу огноогоор үүсгэсэн явц) ─────────
+// Явцын огноо өөрчлөгдөхөд шинэ хугацаанаас гадуур үлдсэн үзлэгүүдийг (ихэвчлэн явцын буруу
+// огноогоор автоматаар бөглөгдсөн) ижил хоногоор шилжүүлэхийг санал болгоно. Үзлэгийн дугаар хэвээр.
+function moveExamDate(e, newDate) {
+  const oldDate = e.date || '';
+  if (!newDate || oldDate === newDate) return false;
+  e.date = newDate; e.ms = nowMs(); fbSaveRecord('exams', e);
+  (STATE.fins || []).filter(f => String(f.examId) === String(e.id)).forEach(f => {
+    let ch = false;
+    if (f.date === oldDate) { f.date = newDate; ch = true; }
+    if (f.paidDate === oldDate) { f.paidDate = newDate; ch = true; }
+    (Array.isArray(f.payments) ? f.payments : []).forEach(pm => { if (pm && pm.date === oldDate) { pm.date = newDate; ch = true; } });
+    if (ch) { f.ms = nowMs(); fbSaveRecord('fins', f); }
+  });
+  (STATE.labs || []).filter(l => String(l.examId) === String(e.id) && l.date === oldDate).forEach(l => { l.date = newDate; l.ms = nowMs(); fbSaveRecord('labs', l); });
+  return true;
+}
+function addDaysStr(ds, n) { const d = new Date(ds + 'T00:00:00'); d.setDate(d.getDate() + n); return localDateStr(d); }
+function editTripDates(field, val) {
+  const t = tripById(STATE.selectedTrip); if (!t) return;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(val || '')) { toast('Огноо сонгоно уу', 'err'); renderPlanned(); return; }
+  const oldStart = t.date, oldEnd = t.endDate || t.date;
+  let start = field === 'date' ? val : t.date, end = field === 'endDate' ? val : (t.endDate || t.date);
+  if (field === 'date' && oldEnd === oldStart) end = val;                // нэг өдрийн явц — дуусах огноо хамт
+  else if (field === 'date' && end < start) end = addDaysStr(start, Math.round((new Date(oldEnd) - new Date(oldStart)) / 864e5));
+  if (end < start) { toast('Дууссан огноо эхэлсэнээс өмнө байж болохгүй', 'err'); renderPlanned(); return; }
+  t.date = start; t.endDate = end; t.ms = nowMs();
+  lsSet('mt_trips', STATE.trips); fbSaveRecord('trips', t);
+  writeLog('Явцын огноо засав', t.id, tripLabel(t), oldStart + (oldEnd !== oldStart ? '→' + oldEnd : '') + ' ⇒ ' + start + (end !== start ? '→' + end : ''));
+  // Шинэ хугацаанаас гадуур үлдсэн үзлэгүүд
+  const out = tripExams(t.id).filter(e => { const d = rpNormDate(e.date) || ''; return d && (d < start || d > end); });
+  if (out.length && field === 'date') {
+    const shift = Math.round((new Date(start + 'T00:00:00') - new Date(oldStart + 'T00:00:00')) / 864e5);
+    const byDate = {}; out.forEach(e => { const d = rpNormDate(e.date); byDate[d] = (byDate[d] || 0) + 1; });
+    const lines = Object.keys(byDate).sort().map(d => '  ' + d + ' → ' + addDaysStr(d, shift) + '  (' + byDate[d] + ' үзлэг)').join('\n');
+    if (confirm(out.length + ' үзлэг явцын шинэ хугацаанаас гадуур байна. Тэдгээрийг ' + (shift > 0 ? '+' : '') + shift + ' хоногоор шилжүүлэх үү?\n\n' + lines + '\n\nНэхэмжлэх, тэр өдрийн төлбөр, шинжилгээний огноо хамт засагдана. Үзлэгийн дугаар өөрчлөгдөхгүй.')) {
+      let n = 0;
+      out.forEach(e => { const nd = addDaysStr(rpNormDate(e.date), shift); if (nd <= todayStr() && moveExamDate(e, nd)) n++; });
+      saveAll();
+      writeLog('Явцын үзлэгүүдийн огноо шилжүүлэв', t.id, tripLabel(t), n + ' үзлэг · ' + (shift > 0 ? '+' : '') + shift + ' хоног');
+      toast('✅ Явцын огноо засагдаж, ' + n + ' үзлэг шилжлээ' + (n < out.length ? ' (' + (out.length - n) + ' нь ирээдүйн огноо болох тул үлдээв)' : ''), 'ok');
+    } else toast('Явцын огноо засагдлаа (үзлэгүүдийн огноо хэвээр)', 'ok');
+  } else if (out.length) {
+    toast('⚠️ Явцын огноо засагдлаа. ' + out.length + ' үзлэг хугацаанаас гадуур байна — шаардлагатай бол үзлэг тус бүрийн огноог засна уу', 'err');
+  } else toast('✅ Явцын огноо засагдлаа', 'ok');
+  renderPlanned();
+}
+
 // ── Явцын дэлгэрэнгүй + шивэх маягт ───────────────────────────
 let PL_DRAFT = { services: [], meds: [], symptoms: [], pay: [], manualTotal: false, numAuto: true };
 let PL_STICKY = { tripId: null }; // аймаг/сум/эмч — дараагийн маягтад хэвээр
@@ -9833,6 +9881,11 @@ function renderTripDetail() {
       </div>
       ${Object.keys(byProv).length ? '<div class="row" style="gap:6px;flex-wrap:wrap;margin-top:8px">' + Object.keys(byProv).sort().map(k => '<span class="badge">' + escHTML(k) + ': <b>' + byProv[k] + '</b></span>').join('') + '</div>' : ''}
       <div class="fg r4" style="margin-top:10px">
+        <div class="fld"><label>🗓 Эхэлсэн огноо</label><input class="inp" type="date" value="${escHTML(t.date || '')}" onchange="editTripDates('date', this.value)"></div>
+        <div class="fld"><label>Дууссан огноо</label><input class="inp" type="date" value="${escHTML(t.endDate || t.date || '')}" onchange="editTripDates('endDate', this.value)"></div>
+        <div class="fld" style="grid-column:span 2"><label>Маршрут (аймгууд)</label><input class="inp" value="${escHTML(t.route || t.location || '')}" onchange="editTripField('route', this.value.trim()); (tripById(STATE.selectedTrip) || {}).location = this.value.trim()"></div>
+      </div>
+      <div class="fg r4" style="margin-top:6px">
         <div class="fld"><label>Эмч 1 (ахлах)</label><select class="inp" onchange="editTripField('doc0',this.value)">${docOpts(ids3[0])}</select></div>
         <div class="fld"><label>Эмч 2</label><select class="inp" onchange="editTripField('doc1',this.value)">${docOpts(ids3[1], true)}</select></div>
         <div class="fld"><label>Эмч 3</label><select class="inp" onchange="editTripField('doc2',this.value)">${docOpts(ids3[2], true)}</select></div>
