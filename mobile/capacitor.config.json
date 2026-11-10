@@ -1,0 +1,13 @@
+{
+  "appId": "mn.moriton.vet",
+  "appName": "Морьтон Эмч",
+  "webDir": "www",
+  "backgroundColor": "#022438",
+  "server": {
+    "url": "https://moriton-4ecc0.web.app/?app=vet",
+    "allowNavigation": ["moriton-4ecc0.web.app", "moriton-4ecc0.firebaseapp.com"],
+    "errorPath": "offline.html"
+  },
+  "android": { "appendUserAgent": "MoritonVet/1.0", "allowMixedContent": false },
+  "ios": { "appendUserAgent": "MoritonVet/1.0", "contentInset": "never", "limitsNavigationsToAppBoundDomains": false }
+}

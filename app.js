@@ -977,6 +977,7 @@ function loadAll() {
   STATE.inpLocations = lsGet('mt_inp_locations', null); // null = анхдагч жагсаалт
   STATE.customRoles = lsGet('mt_custom_roles', []); if (!Array.isArray(STATE.customRoles)) STATE.customRoles = []; // 👥 админ нэмсэн дүрүүд
   STATE.callCfg = lsGet('mt_call_cfg', null); // 📞 эзэнд мэдээлэх сануулга
+  STATE.opsCfg = lsGet('mt_ops_cfg', null);   // 🐎 үржүүлгийн адуу, 💊 ERP эмийн нэршил
   STATE.medCatalog = lsGet('mt_med_catalog', []); if (!Array.isArray(STATE.medCatalog)) STATE.medCatalog = []; // 💊 эмийн каталог (нэгжийн үнэ)
   STATE.employees = lsGet('mt_employees', []); if (!Array.isArray(STATE.employees)) STATE.employees = []; // 🕒 ажилтны жагсаалт (цагийн бүртгэл)
   STATE.dailyCfg = lsGet('mt_daily_cfg', null); // 📋 өдрийн мэдээний тохиргоо (салбар, боловсруулсан)
@@ -1278,6 +1279,7 @@ const DEFAULT_USERS = [
 
 // Боломжит бүх хуудас (эрх тохируулахад ашиглана)
 const ALL_PAGES = [
+  { id: 'my',        label: 'Миний ажил (эмч)' },
   { id: 'dashboard', label: 'Хяналтын самбар' },
   { id: 'register',  label: 'Адуу бүртгэл' },
   { id: 'waiting',   label: 'Хүлээж байгаа' },
@@ -1289,6 +1291,7 @@ const ALL_PAGES = [
   { id: 'lab',       label: 'Шинжилгээ' },
   { id: 'review',    label: 'Ахлах эмчийн хяналт' },
   { id: 'pharmacy',  label: 'Эмийн сан' },
+  { id: 'breeding',  label: 'Үржүүлгийн адуу' },
   { id: 'timesheet', label: 'Цагийн бүртгэл' },
   { id: 'kpi',       label: 'KPI самбар' },
   { id: 'report',    label: 'Өдрийн тайлан' },
@@ -1297,7 +1300,7 @@ const ALL_PAGES = [
 
 // Боломжит дүрүүд — үндсэн жагсаалт. Админ «Нэвтрэх эрх» цонхноос шинэ дүр
 // (ж: Нярав, Жолооч) нэмж болно → STATE.customRoles (clinic_config-д хадгална).
-const ALL_ROLES = ['Ерөнхий эмч','Ахлах эмч','Малын их эмч','Дадлагажигч','Бүртгэлийн ажилтан','Санхүү','Эмийн санч','Менежер','Админ'];
+const ALL_ROLES = ['Ерөнхий эмч','Ахлах эмч','Малын их эмч','Дадлагажигч','Бүртгэлийн ажилтан','Санхүү','Эмийн санч','Менежер','Үржүүлгийн менежер','Админ'];
 // Дүр шинээр сонгоход (тухайн дүртэй хэрэглэгч хараахан байхгүй үед) санал болгох хуудсууд
 const ROLE_DEFAULT_PAGES = {
   'Ерөнхий эмч':        ['dashboard','register','waiting','exam','inpatient','planned','lab','review','pharmacy','timesheet','finance','kpi','history','report','admin'],
@@ -1307,7 +1310,8 @@ const ROLE_DEFAULT_PAGES = {
   'Бүртгэлийн ажилтан': ['dashboard','register','waiting','planned','history'],
   'Санхүү':             ['dashboard','finance','timesheet','history','report'],
   'Эмийн санч':         ['dashboard','pharmacy','inpatient'],
-  'Менежер':            ['dashboard','inpatient','review','pharmacy','timesheet','finance','kpi','history','report'],
+  'Менежер':            ['dashboard','inpatient','review','pharmacy','breeding','timesheet','finance','kpi','history','report'],
+  'Үржүүлгийн менежер': ['breeding'],
   'Админ':              ['dashboard','register','waiting','exam','inpatient','planned','lab','review','pharmacy','timesheet','finance','kpi','history','report','admin']
 };
 // Бүх дүр: үндсэн + админ нэмсэн + одоо байгаа хэрэглэгчдийн дүр (жагсаалтаас гадуурх дүр алдагдахгүй)
@@ -1408,6 +1412,10 @@ function canAccess(page) {
   if (page === 'review' && !pages.includes('review') && (canApproveDx() || ['Ерөнхий эмч', 'Админ'].includes(STATE.user.role))) return true;
   // 💊 Эмийн сан: Эмийн санч, Ерөнхий эмч, Ахлах эмч, Админ — хуучин хэрэглэгчдийн pages-д 'pharmacy' байхгүй ч орно
   if (page === 'pharmacy' && !pages.includes('pharmacy') && ['Эмийн санч', 'Ерөнхий эмч', 'Ахлах эмч', 'Админ'].includes(STATE.user.role)) return true;
+  // 📱 Миний ажил: эмчтэй холбогдсон хэрэглэгч бүр (эмчийн апп-ын нүүр)
+  if (page === 'my') return !!(typeof currentUserDoctor === 'function' && currentUserDoctor());
+  // 🐎 Үржүүлгийн адуу: үржүүлгийн менежер, санхүү, менежер, ахлах/ерөнхий эмч, админ — хуучин хэрэглэгчдийн pages-д байхгүй ч орно
+  if (page === 'breeding' && !pages.includes('breeding') && ['Үржүүлгийн менежер', 'Санхүү', 'Менежер', 'Ерөнхий эмч', 'Ахлах эмч', 'Админ'].includes(STATE.user.role)) return true;
   // 🕒 Цагийн бүртгэл: Менежер, Ерөнхий эмч, Ахлах эмч, Санхүү, Админ
   if (page === 'timesheet' && !pages.includes('timesheet') && ['Менежер', 'Ерөнхий эмч', 'Ахлах эмч', 'Санхүү', 'Админ'].includes(STATE.user.role)) return true;
   return pages.includes(page);
@@ -1429,6 +1437,8 @@ function applyRolePermissions() {
     const p = el.dataset.page;
     el.style.display = canAccess(p) ? '' : 'none';
   });
+  // 📱 Эмчийн доод цэс: «Миний ажил» гарч ирвэл «Бүртгэл» товч цэс рүү шилжинэ (5 товч багтаана)
+  try { const rb = document.querySelector('.bn-i[data-page="register"]'); if (rb && canAccess('my')) rb.style.display = 'none'; } catch (_) {}
   // "Үнэ оруулах" товчийг зөвхөн Админд харуулна
   const isAdminUser = STATE.user.role === 'Админ';
   ['ni-sync','ni-sync2'].forEach(id => {
@@ -1468,7 +1478,8 @@ function doLogin() {
     initApp();
     applyRolePermissions();
     writeLog('Нэвтэрсэн', '', '');
-    if (!canAccess(STATE.activePage || 'dashboard')) {
+    if (typeof opsLanding === 'function') opsLanding();
+    else if (!canAccess(STATE.activePage || 'dashboard')) {
       nav('dashboard');
     }
   }).catch(() => {
@@ -1498,8 +1509,8 @@ function nav(p, opts) {
   opts = opts || {};
   // Role-based access check — redirect to dashboard if not allowed
   if (STATE.user && !canAccess(p)) {
-    toast('Энэ хуудсанд хандах эрх алга байна', 'err');
-    p = 'dashboard';
+    if (p !== 'dashboard') toast('Энэ хуудсанд хандах эрх алга байна', 'err');
+    p = (typeof homePage === 'function') ? homePage() : 'dashboard'; // самбарын эрхгүй дүр (ж: Үржүүлгийн менежер) өөрийн эхний хуудас руу
   }
   const samePage = (STATE.activePage === p);
   STATE.activePage = p;
@@ -1531,6 +1542,8 @@ function nav(p, opts) {
   if (p === 'pharmacy' && typeof renderPharmacy === 'function') renderPharmacy();
   if (p === 'timesheet' && typeof renderTimesheet === 'function') renderTimesheet();
   if (p === 'admin') renderAdmin();
+  if (p === 'my' && typeof renderMyWork === 'function') renderMyWork();
+  if (p === 'breeding' && typeof renderBreeding === 'function') renderBreeding();
   // Reset scroll only on real navigation (not when re-rendering current page via sync)
   if (!opts.silent && !samePage) {
     $('#main').scrollTop = 0;
@@ -3047,7 +3060,7 @@ function setupMedSearch() {
   inp.oninput = () => {
     const q = inp.value.toLowerCase().trim();
     if (!q) { list.classList.remove('show'); return; }
-    const matches = MED_LIST.filter(m => m.toLowerCase().includes(q)).slice(0, 50);
+    const matches = (typeof medNamesFor === 'function') ? medNamesFor(q, 50) : MED_LIST.filter(m => m.toLowerCase().includes(q)).slice(0, 50);
     if (matches.length === 0) { list.classList.remove('show'); return; }
     list.innerHTML = matches.map(m => `<div class="dd-item" data-m="${escHTML(m)}">${escHTML(m)}</div>`).join('');
     list.classList.add('show');
@@ -3570,7 +3583,7 @@ function _inpRenderDaysUI(active) {
 }
 function _inpFilterState() {
   const v = id => (($('#' + id) || {}).value || '');
-  return { doc: v('inp-f-doc'), loc: v('inp-f-loc'), q: v('inp-f-q').toLowerCase().trim(), sort: v('inp-f-sort') || 'days_desc', days: INP_DAYS_F };
+  return { doc: v('inp-f-doc'), loc: v('inp-f-loc'), q: v('inp-f-q').toLowerCase().trim(), sort: v('inp-f-sort') || 'days_desc', days: INP_DAYS_F, kind: v('inp-f-kind') };
 }
 function _inpFillFilters(active) {
   const docSel = $('#inp-f-doc'), locSel = $('#inp-f-loc');
@@ -3620,6 +3633,7 @@ function _inpApplyFilter(active, F) {
   if (F.loc) list = F.loc === '__none' ? list.filter(i => !i.location) : list.filter(i => i.location === F.loc);
   if (F.q) { const words = F.q.split(/\s+/).filter(Boolean); list = list.filter(i => { const t = inpSearchText(i); return words.every(w => t.includes(w)); }); }
   if (F.days) list = list.filter(i => _inpDaysOk(i, F.days));
+  if (F.kind && typeof isBreedingInp === 'function') list = list.filter(i => (F.kind === 'breed') === isBreedingInp(i));
   const dueOf = i => Math.max(0, getInpFullTotal(i) - getInpPrepaidTotal(i));
   const locIx = l => { const k = inpLocations().indexOf(l || ''); return k < 0 ? 999 : k; };
   const sorters = {
@@ -3655,6 +3669,8 @@ function _inpCardHTML(i) {
       </div>
       <div class="inpc-tags">
         ${inpExamNum(i) ? `<span class="inpc-tag inpc-tag-num">🔢 ${escHTML(inpExamNum(i))}</span>` : ''}
+        ${(typeof isBreedingInp === 'function' && isBreedingInp(i)) ? '<span class="inpc-tag inpc-tag-breed" title="Үржүүлгийн адуу — тусдаа хоногийн тариф, эзэнд залгах сануулгагүй">🐎 Үржүүлгийн</span>' : ''}
+        ${(typeof asgTagHTML === 'function') ? asgTagHTML(i) : ''}
         <span class="inpc-tag ${d ? '' : 'inpc-tag-none'}">👨‍⚕️ ${escHTML(d ? d.name : (i.docName || 'Эмч заагаагүй'))}</span>
         <span class="inpc-tag ${i.location ? 'inpc-tag-loc' : 'inpc-tag-none'}">📍 ${escHTML(i.location || 'Байрлал заагаагүй')}</span>
         ${watchTags}
@@ -4024,6 +4040,11 @@ function getDailyFee(i) {
   if (i && (i.dailyFee !== undefined && i.dailyFee !== null && i.dailyFee !== '')) {
     return parseFloat(i.dailyFee) || 0;
   }
+  return defaultDailyFeeFor(i);
+}
+// 🐎 Үржүүлгийн адуунд тусдаа хоногийн тариф (Тохиргоо → Үржүүлгийн адуу; анхдагч 40,000₮)
+function defaultDailyFeeFor(i) {
+  if (i && typeof isBreedingInp === 'function' && isBreedingInp(i)) return breedCfg().dailyFee;
   return DEFAULT_DAILY_FEE;
 }
 
@@ -4043,7 +4064,7 @@ function updateDailyFee() {
   const i = STATE.inps.find(x => String(x.id) === String(STATE.selectedI));
   if (!i) return;
   const v = parseFloat($('#inp-daily-fee').value);
-  i.dailyFee = (isNaN(v) || v < 0) ? DEFAULT_DAILY_FEE : v;
+  if (isNaN(v) || v < 0) delete i.dailyFee; else i.dailyFee = v; // хоосон = анхдагч тариф (энгийн / үржүүлгийн)
   i.ms = nowMs();
   saveAll();
   fbSaveRecord('inps', i);
@@ -4128,6 +4149,7 @@ function renderInpInfoTab(i) {
       <div class="fld"><label>Хоног</label><div class="bold">${inpatientDays(i.admittedMs, i.dischargedMs)}</div></div>
       <div class="fld"><label>Зэрэглэл <span class="muted" style="font-weight:400;font-size:10px">(Өдрийн мэдээнд)</span></label><select class="inp" onchange="setInpField('severity', this.value)">${(typeof INP_SEVERITY !== 'undefined' ? INP_SEVERITY : [['', '—'], ['Хүнд', 'Хүнд'], ['Дунд', 'Дунд'], ['Хөнгөн', 'Хөнгөн']]).map(s => `<option value="${escHTML(s[0])}" ${(i.severity || '') === s[0] ? 'selected' : ''}>${escHTML(s[1])}</option>`).join('')}</select></div>
     </div>
+    ${typeof breedInfoRowHTML === 'function' ? breedInfoRowHTML(i) : ''}
     <div class="fld" style="margin-top:8px"><label>Анхны онош ${(() => { const ex = i.examId ? _dxExam(i.examId) : null; return ex ? dxBadgeHTML(ex, { small: true }) + (dxIsOpen(ex) ? ` <a href="#" style="font-size:11px" onclick="openDxModal('${escHTML(ex.id)}');return false;">хянах ›</a>` : '') : ''; })()}</label>
       <div style="background:var(--input);padding:10px;border-radius:8px;font-size:13px">${escHTML(i.diagnosis)}</div>
     </div>
@@ -4162,7 +4184,7 @@ function renderInpInfoTab(i) {
             <div style="font-weight:700;margin-bottom:2px">👨‍⚕️ ${escHTML(l.docName||'—')}</div>
             ${l.diagnosis ? `<div><b>Онош:</b> ${escHTML(l.diagnosis)}</div>` : ''}
             ${l.note ? `<div><b>Эмчилгээ:</b> ${escHTML(l.note)}</div>` : ''}
-            ${(l.temp||l.pulse||l.wt) ? `<div style="color:var(--muted);font-size:11px">T: ${escHTML(l.temp||'—')} · P: ${escHTML(l.pulse||'—')} · W: ${escHTML(l.wt||'—')}</div>` : ''}
+            ${(l.temp||l.pulse||l.resp||l.wt) ? `<div style="color:var(--muted);font-size:11px">T: ${escHTML(l.temp||'—')} · P: ${escHTML(l.pulse||'—')} · R: ${escHTML(l.resp||'—')} · W: ${escHTML(l.wt||'—')}</div>` : ''}
             ${Array.isArray(l.meds) && l.meds.length ? `<div style="font-size:11px;margin-top:4px"><b>Эм:</b> ${l.meds.map(m => escHTML((m.name||m)+(m.note?' — '+m.note:''))).join(', ')}</div>` : ''}
           </div>
         `).join('')}
@@ -4226,7 +4248,7 @@ function renderInpTreatTab(i) {
           </div>
           ${l.diagnosis ? `<div style="font-size:12px;margin-top:6px"><b>Онош:</b> ${escHTML(l.diagnosis)}</div>` : ''}
           ${l.note ? `<div style="font-size:12px;margin-top:4px"><b>Эмчилгээ:</b> ${escHTML(l.note)}</div>` : ''}
-          ${(l.temp||l.pulse||l.wt) ? `<div style="font-size:11px;color:var(--muted);margin-top:4px">T: ${escHTML(l.temp||'—')} · P: ${escHTML(l.pulse||'—')} · W: ${escHTML(l.wt||'—')}</div>` : ''}
+          ${(l.temp||l.pulse||l.resp||l.wt) ? `<div style="font-size:11px;color:var(--muted);margin-top:4px">T: ${escHTML(l.temp||'—')} · P: ${escHTML(l.pulse||'—')} · R: ${escHTML(l.resp||'—')} · W: ${escHTML(l.wt||'—')}</div>` : ''}
           ${Array.isArray(l.services) && l.services.length ? `
             <div style="font-size:11px;margin-top:4px">
               <b>Үйлчилгээ:</b> ${l.services.map(s => escHTML(s.name)+' (' + fmt(parseFloat(s.price)||0) + ')').join(', ')}
@@ -4244,7 +4266,8 @@ function renderInpTreatTab(i) {
 function renderInpFinTab(i) {
   // Daily fee input
   const fee = getDailyFee(i);
-  if ($('#inp-daily-fee')) $('#inp-daily-fee').value = fee;
+  if ($('#inp-daily-fee')) { $('#inp-daily-fee').value = fee; $('#inp-daily-fee').placeholder = defaultDailyFeeFor(i); }
+  try { const h = $('#inp-daily-fee-hint'); if (h) h.innerHTML = 'Анхдагч: ' + fmt(defaultDailyFeeFor(i)) + ' / хоног' + ((typeof isBreedingInp === 'function' && isBreedingInp(i)) ? ' <span class="badge b-g">🐎 үржүүлгийн тариф</span>' : '') + ' <span style="font-weight:400">· хоосон орхивол анхдагч</span>'; } catch (_) {}
 
   // Build day-by-day list with amounts
   // ⚠️ Хоногийн тоо нь гаргах тооцоотой ЯГ ИЖИЛ дүрмээр (inpatientDays: 12:00-оос өмнө бол сүүлийн өдөр тооцохгүй)
@@ -4419,6 +4442,8 @@ function addInpManualItem() {
   const amt = parseFloat(amtEl ? amtEl.value : '');
   if (!amt || amt <= 0) { toast('Дүн оруулна уу', 'err'); if (amtEl) amtEl.focus(); return; }
   const name = ((nameEl ? nameEl.value : '') || '').trim() || (kind === 'med' ? 'Эм (гараар бичсэн дүн)' : 'Эмчилгээ (гараар бичсэн дүн)');
+  // 💊 ERP нэршил мөрдөх горим: гараар бичсэн эмийн нэр каталогт байх ёстой
+  if (kind === 'med' && nameEl && nameEl.value.trim() && typeof medStrict === 'function' && medStrict() && !medCatFind(nameEl.value)) { toast('⛔ «' + nameEl.value.trim() + '» эмийн каталогт алга — дээрх «Эм хайх»-аас сонгоно уу (нэршил ERP-тэй таарах ёстой)', 'err'); return; }
   if (kind === 'med') { INP_DRAFT.meds.push({ name, note: '', price: amt, manual: true }); renderInpDraftMeds(); }
   else { INP_DRAFT.services.push({ name, price: amt, manual: true }); renderInpDraftServices(); }
   recomputeInpDayAmt();
@@ -4519,6 +4544,7 @@ function addInpLog() {
     note: note,
     temp: $('#inp-temp').value,
     pulse: $('#inp-pulse').value,
+    resp: ($('#inp-resp') || {}).value || '',   // 🫁 амьсгалын тоо
     wt: $('#inp-wt').value,
     services: INP_DRAFT.services.slice(),
     meds: INP_DRAFT.meds.slice(),
@@ -4532,7 +4558,7 @@ function addInpLog() {
   saveAll();
   fbSaveRecord('inps', i);
   // Reset form fields
-  $('#inp-temp').value = ''; $('#inp-pulse').value = ''; $('#inp-wt').value = '';
+  $('#inp-temp').value = ''; $('#inp-pulse').value = ''; $('#inp-wt').value = ''; if ($('#inp-resp')) $('#inp-resp').value = '';
   $('#inp-note').value = ''; $('#inp-diag').value = '';
   if ($('#inp-log-date')) $('#inp-log-date').value = i.discharged ? (i.dischargedDate || todayStr()) : todayStr();
   INP_DRAFT = { meds: [], services: [], _inpId: String(i.id) };
@@ -6611,7 +6637,7 @@ function printInpatientCard(inpId) {
   const rows = logs.map((l, idx) => {
     const svcs = Array.isArray(l.services) ? l.services.map(s => escHTML(s.name||'') + (s.price ? ` (${fmt(s.price)})` : '')).join(', ') : '';
     const meds = Array.isArray(l.meds)     ? l.meds.map(m => escHTML((m.name||m) + (m.note ? ' — '+m.note : ''))).join(', ') : '';
-    const vitals = [l.temp?'T:'+l.temp:'', l.pulse?'P:'+l.pulse:'', l.wt?'W:'+l.wt+'кг':''].filter(Boolean).join(' · ');
+    const vitals = [l.temp?'T:'+l.temp:'', l.pulse?'P:'+l.pulse:'', l.resp?'R:'+l.resp:'', l.wt?'W:'+l.wt+'кг':''].filter(Boolean).join(' · ');
     return `<tr>
       <td style="text-align:center">${idx+1}</td>
       <td style="text-align:center;white-space:nowrap">${escHTML(l.date||'—')}</td>
@@ -8785,6 +8811,7 @@ const EXPORT_FIELDS = {
     ['note',      'Тэмдэглэл',        'note',         'Эмчилгээний тэмдэглэл', "Treatment note"],
     ['temp',      'Температур',       'temperature',  '°C', "Temperature (°C)"],
     ['pulse',     'Зүрхний цохилт',   'pulse',        'уд/мин', "Heart rate (bpm)"],
+    ['resp',      'Амьсгалын тоо',    'respiration',  'удаа/мин', "Respiration rate (per min)"],
     ['wt',        'Жин',              'weight_kg',    'кг', "Weight (kg)"],
     ['@services', 'Үйлчилгээ',        'services',     'Үйлчилгээний нэрс', "Services performed"],
     ['@meds',     'Эм',               'medicines',    'Эмийн нэрс', "Medicines given"],
@@ -8913,7 +8940,7 @@ async function fbFetchAllData(onProgress) {
       servicePrices: STATE.servicePrices || {}, customServices: STATE.customServices || [],
       removedServices: STATE.removedServices || [], staffSchedule: STATE.staffSchedule || {},
       labSvcOn: STATE.labSvcOn || [], labSvcOff: STATE.labSvcOff || [],
-      bonusCfg: STATE.bonusCfg || null, examNumCfg: STATE.examNumCfg || null, inpLocations: STATE.inpLocations || null, customRoles: STATE.customRoles || [], callCfg: STATE.callCfg || null,
+      bonusCfg: STATE.bonusCfg || null, examNumCfg: STATE.examNumCfg || null, inpLocations: STATE.inpLocations || null, customRoles: STATE.customRoles || [], callCfg: STATE.callCfg || null, opsCfg: STATE.opsCfg || null,
       medCatalog: STATE.medCatalog || [], employees: STATE.employees || [], dailyCfg: STATE.dailyCfg || null
     };
     return out;
@@ -8991,7 +9018,7 @@ function exBuildRows(D, lang) {
   const ilogs = [];
   mk('inps', (C.inps || []).map(i => {
     const lg = Array.isArray(i.log) ? i.log : [];
-    lg.forEach(l => ilogs.push({ inpId: i.id, horse: i.horse || '', date: l.date || '', docName: l.docName || '', diagnosis: l.diagnosis || '', note: l.note || '', temp: l.temp || '', pulse: l.pulse || '', wt: l.wt || '', '@services': exList(l.services), '@meds': exList(l.meds), amount: parseFloat(l.amount) || 0 }));
+    lg.forEach(l => ilogs.push({ inpId: i.id, horse: i.horse || '', date: l.date || '', docName: l.docName || '', diagnosis: l.diagnosis || '', note: l.note || '', temp: l.temp || '', pulse: l.pulse || '', resp: l.resp || '', wt: l.wt || '', '@services': exList(l.services), '@meds': exList(l.meds), amount: parseFloat(l.amount) || 0 }));
     let days = '';
     try { days = inpatientDays(i.admittedMs, i.dischargedMs); } catch (_) {}
     return Object.assign({}, i, { '@discharged': exYN(!!i.discharged, lang), '@days': days,
@@ -10057,8 +10084,8 @@ function setupPlannedForm() {
   if (ms) ms.oninput = () => {
     const q = ms.value.toLowerCase().trim();
     if (!q) { mdd.classList.remove('show'); return; }
-    const list = MED_LIST.filter(m => m.toLowerCase().includes(q)).slice(0, 40);
-    mdd.innerHTML = (list.map(m => `<div class="dd-item" data-m="${escHTML(m)}">${escHTML(m)}</div>`).join('')) + `<div class="dd-item" data-m="${escHTML(ms.value.trim())}" style="color:var(--muted)">➕ «${escHTML(ms.value.trim())}» гэж нэмэх</div>`;
+    const list = (typeof medNamesFor === 'function') ? medNamesFor(q, 40) : MED_LIST.filter(m => m.toLowerCase().includes(q)).slice(0, 40);
+    mdd.innerHTML = (list.map(m => `<div class="dd-item" data-m="${escHTML(m)}">${escHTML(m)}</div>`).join('')) + ((typeof medStrict === 'function' && medStrict()) ? (list.length ? '' : '<div class="dd-item" style="color:var(--muted);pointer-events:none">Каталогт алга — Эмийн санчид хэлж ERP-ээс нэмүүлнэ</div>') : `<div class="dd-item" data-m="${escHTML(ms.value.trim())}" style="color:var(--muted)">➕ «${escHTML(ms.value.trim())}» гэж нэмэх</div>`);
     mdd.classList.add('show');
     mdd.querySelectorAll('.dd-item').forEach(el => el.onmousedown = ev => { ev.preventDefault(); addPlMed(el.dataset.m); ms.value = ''; mdd.classList.remove('show'); });
   };
@@ -10428,6 +10455,7 @@ function exportHistCSV() {
 // ADMIN
 // ============================================================
 function renderAdmin() {
+  try { if (typeof opsRenderAdmin === 'function') opsRenderAdmin(); } catch(e) { console.error('ops admin', e); } // ⚙️ бүлэг (таб), үржүүлгийн адуу, ERP эм
   try { renderFinPinStatus(); } catch(_) {}
   try { renderBonusCfg(); } catch(_) {}
   try { renderExamNumCfg(); } catch(_) {}
@@ -12087,6 +12115,8 @@ function _admDayStart(i) {
 }
 function inpCallState(i) {
   if (!i || i.discharged) return { due: false };
+  // 🐎 Үржүүлгийн (өөрийн) адуунд эзэн рүү залгах шаардлагагүй
+  if (typeof isBreedingInp === 'function' && isBreedingInp(i) && !breedCfg().callReminder) return { due: false, breeding: true, days: inpatientDays(i.admittedMs) };
   const C = callCfg();
   const first = Math.max(1, parseInt(C.firstDay, 10) || 3), rep = Math.max(0, parseInt(C.repeatDays, 10) || 0);
   const days = inpatientDays(i.admittedMs);
@@ -12258,7 +12288,9 @@ function renderReview() {
   const setN = (id, n, cls) => { const el = $('#' + id); if (el) el.innerHTML = n ? '<span class="badge ' + cls + '" style="margin-left:4px">' + n + '</span>' : ''; };
   setN('rv-n-dx', pendN, 'b-o'); setN('rv-n-treat', missN, 'b-r'); setN('rv-n-call', callN, 'b-r');
   $$('.tab[data-rvtab]').forEach(x => x.classList.toggle('active', x.dataset.rvtab === RV.tab));
-  if (RV.tab === 'treat') body.innerHTML = _rvTreatHTML();
+  try { if (typeof asgUnassignedCount === 'function') setN('rv-n-assign', asgUnassignedCount(today), 'b-o'); } catch (_) {}
+  if (RV.tab === 'assign' && typeof asgHTML === 'function') body.innerHTML = asgHTML();
+  else if (RV.tab === 'treat') body.innerHTML = _rvTreatHTML();
   else if (RV.tab === 'call') body.innerHTML = _rvCallHTML();
   else body.innerHTML = _rvDxHTML(open);
 }
@@ -12501,6 +12533,7 @@ function renderDashAlerts() {
     const miss = (STATE.inps || []).filter(i => !i.discharged && inpTreatStatus(i, todayStr()) === 'missing');
     if (miss.length && h >= 10) out.push(`<div class="d-alert d-alert-p" onclick="RV.tab='treat';RV.tDate='';RV.tMode='day';nav('review')"><span>📝 Өнөөдөр эмчилгээ бичигдээгүй адуу: <b>${miss.length}</b> <small>· ${escHTML([...new Set(miss.map(i => { const d = inpDoctorOf(i); return d ? d.name : 'эмчгүй'; }))].join(', '))}</small></span><span>Хянах ›</span></div>`);
   }
+  try { if (typeof opsDashAlerts === 'function') opsDashAlerts(out); } catch (e) { console.error('ops alerts', e); }
   box.innerHTML = out.length ? '<div class="d-alerts">' + out.join('') + '</div>' : '';
 }
 // Шинэ онош ирэх / 3 хоносон адуу гарах үед дэлгэцэн дээр мэдэгдэл (нэг сессэд нэг удаа)
@@ -12776,7 +12809,8 @@ document.addEventListener('DOMContentLoaded', () => {
       if ($('#drawer-sub')) $('#drawer-sub').textContent = STATE.user.role;
       initApp();
       applyRolePermissions();
-      if (!canAccess(STATE.activePage || 'dashboard')) nav('dashboard');
+      if (typeof opsLanding === 'function') opsLanding();
+      else if (!canAccess(STATE.activePage || 'dashboard')) nav('dashboard');
     }
   } catch(e) { console.error('auto-login failed', e); }
 });
@@ -12850,7 +12884,9 @@ const PAGE_DEPS = {
   review:    ['exams', 'inps', 'fins', 'users', 'doctors', 'config'],
   pharmacy:  ['inps', 'exams', 'doctors', 'config'],
   timesheet: ['staff', 'doctors', 'config'],
-  admin:     ['users', 'staff', 'logs', 'deletedExams', 'doctors', 'config']
+  admin:     ['users', 'staff', 'logs', 'deletedExams', 'doctors', 'config'],
+  my:        ['inps', 'exams', 'waiting', 'doctors', 'users', 'config'],
+  breeding:  ['inps', 'exams', 'fins', 'horses', 'config']
 };
 const __dirtyCols = new Set();
 function _markDirty(col) { __dirtyCols.add(col); __stateVer++; }
@@ -12996,6 +13032,7 @@ function fbSaveClinicConfig() {
     medCatalog:      Array.isArray(STATE.medCatalog) ? STATE.medCatalog : [],
     employees:       Array.isArray(STATE.employees) ? STATE.employees : [],
     dailyCfg:        STATE.dailyCfg || null,
+    opsCfg:          STATE.opsCfg || null,   // 🐎 үржүүлгийн адуу, 💊 ERP эмийн нэршил
     _updatedAt: ms,
     _writer: window.__fbDeviceId || 'unknown'
   });
@@ -13149,6 +13186,8 @@ function fbApplyRecord(colName, docData) {
       if (Array.isArray(docData.employees)) { STATE.employees = docData.employees.slice(); lsSet('mt_employees', STATE.employees); try { if (STATE.activePage === 'timesheet' && typeof renderTimesheet === 'function') renderTimesheet(); } catch(_) {} }
       // 📋 Өдрийн мэдээний тохиргоо
       if (docData.dailyCfg && typeof docData.dailyCfg === 'object') { STATE.dailyCfg = docData.dailyCfg; lsSet('mt_daily_cfg', STATE.dailyCfg); }
+      // 🐎 Үржүүлгийн адуу + 💊 ERP эмийн нэршлийн тохиргоо
+      if (docData.opsCfg && typeof docData.opsCfg === 'object') { STATE.opsCfg = docData.opsCfg; lsSet('mt_ops_cfg', STATE.opsCfg); try { if (STATE.activePage === 'admin' && typeof renderOpsCfg === 'function') renderOpsCfg(); } catch(_) {} }
       // Шилжилтийн үе: нэгтгэсэн үр дүнг сервэрт нэг удаа буцаан бичиж
       // бүх төхөөрөмжийн тохиргоог нийлүүлнэ (дараа нь _localMs тэглэгдэхгүй).
       if (!_localMs && _localCount > 0) { try { fbSaveClinicConfig(); } catch(e){} }

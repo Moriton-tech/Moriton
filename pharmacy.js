@@ -20,7 +20,8 @@ const PH_EDIT_ROLES = ['Эмийн санч', 'Ерөнхий эмч', 'Ахла
 // ── Каталог ──────────────────────────────────────────────────
 function medCatalog() { return (Array.isArray(STATE.medCatalog) ? STATE.medCatalog : []).filter(m => m && !m.deleted); }
 function medKey(n) { return String(n == null ? '' : n).trim().toLowerCase().replace(/\s+/g, ' '); }
-function medCatFind(name) { const k = medKey(name); if (!k) return null; return medCatalog().find(m => medKey(m.name) === k) || null; }
+// ERP-д нэр солигдсон эмийн хуучин нэр (aliases) -ээр ч олдоно — өмнөх бичлэгийн үнэ, нэгж алдагдахгүй
+function medCatFind(name) { const k = medKey(name); if (!k) return null; const c = medCatalog(); return c.find(m => medKey(m.name) === k) || c.find(m => Array.isArray(m.aliases) && m.aliases.some(a => medKey(a) === k)) || null; }
 function medUnitPrice(name) { const m = medCatFind(name); return m ? (parseFloat(m.price) || 0) : 0; }
 function medUnitOf(name) { const m = medCatFind(name); return (m && m.unit) ? m.unit : ''; }
 function canEditMedCatalog() {
@@ -64,8 +65,9 @@ function deleteMedCatalogItem(id) {
 function medSearchAll(q, limit) {
   q = medKey(q); if (!q) return [];
   const seen = new Set(), out = [];
-  medCatalog().forEach(m => { if (medKey(m.name).includes(q) && !seen.has(medKey(m.name))) { seen.add(medKey(m.name)); out.push({ name: m.name, unit: m.unit || '', price: parseFloat(m.price) || 0, inCat: true }); } });
-  (typeof MED_LIST !== 'undefined' ? MED_LIST : []).forEach(n => { if (medKey(n).includes(q) && !seen.has(medKey(n))) { seen.add(medKey(n)); out.push({ name: n, unit: '', price: 0, inCat: false }); } });
+  const strict = (typeof medStrict === 'function') && medStrict(); // 💊 зөвхөн каталог (ERP нэршил)
+  medCatalog().forEach(m => { if ((medKey(m.name).includes(q) || (m.code && medKey(m.code).includes(q))) && !seen.has(medKey(m.name))) { seen.add(medKey(m.name)); out.push({ name: m.name, unit: m.unit || '', price: parseFloat(m.price) || 0, inCat: true }); } });
+  (typeof MED_LIST !== 'undefined' && !strict ? MED_LIST : []).forEach(n => { if (medKey(n).includes(q) && !seen.has(medKey(n))) { seen.add(medKey(n)); out.push({ name: n, unit: '', price: 0, inCat: false }); } });
   return out.slice(0, limit || 12);
 }
 function fmtQty(n) { n = parseFloat(n) || 0; return (Math.round(n * 100) / 100).toLocaleString('en-US'); }
@@ -232,6 +234,7 @@ function addInpCourse() {
   const dose = parseFloat(v('inp-crs-dose')), days = parseInt(v('inp-crs-days')), perDay = parseInt(v('inp-crs-perday')) || 1;
   const start = v('inp-crs-start') || todayStr();
   if (!med) { toast('Эм сонгоно уу', 'err'); return; }
+  if (typeof medStrict === 'function' && medStrict() && !medCatFind(med)) { toast('⛔ «' + med + '» эмийн каталогт алга — жагсаалтаас сонгоно уу (нэршил ERP-тэй таарах ёстой)', 'err'); return; }
   if (!(dose > 0)) { toast('Тун оруулна уу', 'err'); return; }
   if (!(days >= 1)) { toast('Хоногийн тоо оруулна уу', 'err'); return; }
   if (i.admittedDate && start < i.admittedDate) { toast('Эхлэх огноо орсон огнооноос өмнө байж болохгүй', 'err'); return; }
@@ -384,7 +387,7 @@ function renderPharmacy() {
 function renderMedCatalog(box, q) {
   const canEdit = canEditMedCatalog();
   let list = medCatalog().slice().sort((a, b) => a.name.localeCompare(b.name));
-  if (q) list = list.filter(m => medKey(m.name + ' ' + (m.note || '')).includes(q));
+  if (q) list = list.filter(m => medKey(m.name + ' ' + (m.note || '') + ' ' + (m.code || '')).includes(q));
   // Курс/бичлэгт хэрэглэгдсэн атал каталогт үнэгүй эмүүд — эмийн санч эхлээд эдгээрийг оруулна
   const used = new Set();
   (STATE.inps || []).forEach(i => { inpCourses(i).forEach(c => used.add(c.med)); (i.log || []).forEach(l => (l.meds || []).forEach(m => m && used.add(m.name || String(m)))); });
@@ -403,8 +406,8 @@ function renderMedCatalog(box, q) {
       ${missing.length ? `<div style="margin-top:8px;font-size:12px;background:var(--orange-soft);border-radius:8px;padding:8px 10px"><b>⚠ Хэрэглэгдэж байгаа ч үнэгүй эмүүд (${missing.length}):</b> ${missing.map(n => `<a href="#" onclick="phCatPrefill('${escHTML(n)}');return false;">${escHTML(n)}</a>`).join(', ')}</div>` : ''}
     </div>` : '<div class="muted" style="font-size:12px;margin-bottom:8px">Каталог засах эрх: Эмийн санч, Ахлах эмч, Ерөнхий эмч, Админ.</div>'}
     <div class="card" style="padding:12px"><div class="ch">📚 Эмийн каталог <span class="ch-r">${list.length}</span></div>
-      ${list.length ? `<div class="tbl-wrap"><table><thead><tr><th>Эм</th><th>Нэгж</th><th style="text-align:right">Нэгжийн үнэ</th><th>Тайлбар</th><th>Засварласан</th>${canEdit ? '<th></th>' : ''}</tr></thead><tbody>
-        ${list.map(m => `<tr><td class="bold">${escHTML(m.name)}</td><td>${escHTML(m.unit || '—')}</td><td style="text-align:right" class="bold">${fmt(parseFloat(m.price) || 0)}</td><td class="muted" style="font-size:11px">${escHTML(m.note || '')}</td><td class="muted" style="font-size:11px">${escHTML(m.by || '')} ${m.ms ? escHTML(fmtDateTime(m.ms)) : ''}</td>${canEdit ? `<td><span class="row" style="gap:4px"><button class="btn btn-xs" type="button" onclick="phCatEdit('${escHTML(m.id)}')">✎</button><button class="btn btn-r btn-xs" type="button" onclick="deleteMedCatalogItem('${escHTML(m.id)}')">✕</button></span></td>` : ''}</tr>`).join('')}
+      ${list.length ? `<div class="tbl-wrap"><table><thead><tr><th>Эм</th><th>ERP код</th><th>Нэгж</th><th style="text-align:right">Нэгжийн үнэ</th><th>Тайлбар</th><th>Засварласан</th>${canEdit ? '<th></th>' : ''}</tr></thead><tbody>
+        ${list.map(m => `<tr><td class="bold">${escHTML(m.name)}</td><td class="muted" style="font-size:11.5px">${m.src === 'erp' ? escHTML(m.code || 'ERP') : '<span title="ERP-ийн жагсаалтад байхгүй, гараар нэмсэн">гараар</span>'}</td><td>${escHTML(m.unit || '—')}</td><td style="text-align:right" class="bold">${fmt(parseFloat(m.price) || 0)}</td><td class="muted" style="font-size:11px">${escHTML(m.note || '')}</td><td class="muted" style="font-size:11px">${escHTML(m.by || '')} ${m.ms ? escHTML(fmtDateTime(m.ms)) : ''}</td>${canEdit ? `<td><span class="row" style="gap:4px"><button class="btn btn-xs" type="button" onclick="phCatEdit('${escHTML(m.id)}')">✎</button><button class="btn btn-r btn-xs" type="button" onclick="deleteMedCatalogItem('${escHTML(m.id)}')">✕</button></span></td>` : ''}</tr>`).join('')}
       </tbody></table></div>` : '<div class="empty" style="padding:16px;font-size:12px">Каталог хоосон — дээрх маягтаар эм нэмж нэгжийн үнийг оруулна. Эмчийн курс, өдрийн бичлэгийн үнэ эндээс автоматаар бодогдоно.</div>'}
     </div>`;
 }

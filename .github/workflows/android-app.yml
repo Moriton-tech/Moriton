@@ -1,0 +1,58 @@
+# Морьтон Эмч — Android апп автоматаар бүтээх.
+# GitHub → Actions → «Android апп (Морьтон Эмч)» → Run workflow.
+# Гаралт (Artifacts): app-debug.apk (утсанд шууд суулгаж турших)
+#                     app-release.aab (Play Console-д оруулах; ANDROID_KEYSTORE_* нууцууд тохируулсан үед)
+name: Android апп (Морьтон Эмч)
+on:
+  workflow_dispatch:
+    inputs:
+      version_name:
+        description: 'Хувилбар (ж: 1.0.1)'
+        required: false
+  push:
+    branches: [main]
+    paths: ['mobile/**', '.github/workflows/android-app.yml']
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      VERSION_CODE: ${{ github.run_number }}
+      KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: 21 }
+      - name: Төсөл бэлтгэх
+        working-directory: mobile
+        run: |
+          if [ -n "${{ inputs.version_name }}" ]; then export VERSION_NAME="${{ inputs.version_name }}"; fi
+          VERSION_CODE=$((100 + VERSION_CODE)) ./scripts/prepare.sh android
+      - name: Debug APK
+        working-directory: mobile/android
+        run: ./gradlew --no-daemon assembleDebug
+      - name: Release AAB (keystore тохируулсан бол)
+        if: env.KEYSTORE_B64 != ''
+        working-directory: mobile/android
+        env:
+          KS_PASS: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASS: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/moriton.keystore"
+          ./gradlew --no-daemon bundleRelease \
+            -Pandroid.injected.signing.store.file="$RUNNER_TEMP/moriton.keystore" \
+            -Pandroid.injected.signing.store.password="$KS_PASS" \
+            -Pandroid.injected.signing.key.alias="$KEY_ALIAS" \
+            -Pandroid.injected.signing.key.password="$KEY_PASS"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: moriton-vet-android
+          path: |
+            mobile/android/app/build/outputs/apk/debug/app-debug.apk
+            mobile/android/app/build/outputs/bundle/release/app-release.aab
+          if-no-files-found: warn

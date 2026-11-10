@@ -31,7 +31,7 @@
      ============================================================ -->
 <script type="module" src="firebase.js?v=20260925"></script>
 
-<link rel="stylesheet" href="style.css?v=20261029d">
+<link rel="stylesheet" href="style.css?v=20261110a">
 <link rel="stylesheet" href="halloween.css?v=20261030"><!-- 🎃 2026-10-31 хүртэл; дараа нь энэ мөр, доорх halloween.js мөрийг устгаж болно -->
 </head>
 <body>
@@ -96,6 +96,7 @@
     <nav class="sb" id="sb">
       <div class="sb-section">Үндсэн</div>
       <div class="sb-list">
+        <div class="ni" data-page="my" style="display:none"><div class="ni-icon">📱</div><div class="ni-label">Миний ажил</div><span class="ni-badge b-p" data-bdg="my" style="display:none">0</span></div>
         <div class="ni active" data-page="dashboard"><div class="ni-icon">📊</div><div class="ni-label">Хяналтын самбар</div></div>
         <div class="ni" data-page="register"><div class="ni-icon">🐴</div><div class="ni-label">Адуу бүртгэл</div></div>
       </div>
@@ -108,6 +109,7 @@
         <div class="ni" data-page="lab"><div class="ni-icon">🧪</div><div class="ni-label">Шинжилгээ</div><span class="ni-badge b-a" id="bdg-lab">0</span></div>
         <div class="ni" data-page="review"><div class="ni-icon">👁️</div><div class="ni-label">Ахлах эмчийн хяналт</div><span class="ni-badge" id="bdg-rv" style="display:none">0</span></div>
         <div class="ni" data-page="pharmacy"><div class="ni-icon">💊</div><div class="ni-label">Эмийн сан</div><span class="ni-badge b-p" id="bdg-ph" style="display:none">0</span></div>
+        <div class="ni" data-page="breeding"><div class="ni-icon">🐎</div><div class="ni-label">Үржүүлгийн адуу</div><span class="ni-badge b-g" data-bdg="breed" style="display:none">0</span></div>
       </div>
       <div class="sb-section">Бүртгэл</div>
       <div class="sb-list">
@@ -137,6 +139,7 @@
       </div>
       <div class="sb-section" style="color:var(--gold);opacity:0.85">Үндсэн</div>
       <div class="sb-list">
+        <div class="ni" data-page="my" style="display:none"><div class="ni-icon">📱</div><div class="ni-label">Миний ажил</div><span class="ni-badge b-p" data-bdg="my" style="display:none">0</span></div>
         <div class="ni" data-page="dashboard"><div class="ni-icon">📊</div><div class="ni-label">Хяналтын самбар</div></div>
         <div class="ni" data-page="register"><div class="ni-icon">🐴</div><div class="ni-label">Адуу бүртгэл</div></div>
       </div>
@@ -149,6 +152,7 @@
         <div class="ni" data-page="lab"><div class="ni-icon">🧪</div><div class="ni-label">Шинжилгээ</div><span class="ni-badge b-a" id="bdg-lab2">0</span></div>
         <div class="ni" data-page="review"><div class="ni-icon">👁️</div><div class="ni-label">Ахлах эмчийн хяналт</div><span class="ni-badge" id="bdg-rv2" style="display:none">0</span></div>
         <div class="ni" data-page="pharmacy"><div class="ni-icon">💊</div><div class="ni-label">Эмийн сан</div><span class="ni-badge b-p" id="bdg-ph2" style="display:none">0</span></div>
+        <div class="ni" data-page="breeding"><div class="ni-icon">🐎</div><div class="ni-label">Үржүүлгийн адуу</div><span class="ni-badge b-g" data-bdg="breed" style="display:none">0</span></div>
       </div>
       <div class="sb-section" style="color:var(--gold);opacity:0.85">Бүртгэл</div>
       <div class="sb-list">
@@ -492,6 +496,7 @@
           <div class="fg" style="margin-bottom:10px;grid-template-columns:repeat(auto-fit,minmax(150px,1fr))">
             <div class="fld"><label>Эмч</label><select class="inp" id="inp-f-doc" onchange="renderInpatient()"></select></div>
             <div class="fld"><label>Байрлал</label><select class="inp" id="inp-f-loc" onchange="renderInpatient()"></select></div>
+            <div class="fld"><label>Төрөл</label><select class="inp" id="inp-f-kind" onchange="INP_PAGE=1;renderInpatient()"><option value="">Бүгд</option><option value="client">Үйлчлүүлэгчийн</option><option value="breed">🐎 Үржүүлгийн</option></select></div>
             <div class="fld"><label>📅 Хоног</label><select class="inp" id="inp-f-days" onchange="INP_DAYS_F=this.value;INP_PAGE=1;renderInpatient()"></select></div>
             <div class="fld"><label>Хайх</label><input class="inp" id="inp-f-q" placeholder="Бүх утгаар: зүс, эзэн, утас, онош, үзлэгийн №, эмч, эм, тэмдэглэл, огноо..." title="Хэд хэдэн үг бичвэл бүгдийг нь агуулсан адууг олно" oninput="renderInpatient()"></div>
             <div class="fld"><label>Эрэмбэ</label>
@@ -559,10 +564,11 @@
                 <select class="inp" id="inp-log-slot"><option value="">— заагаагүй —</option><option>Өглөө</option><option>Өдөр</option><option>Орой</option><option>Шөнө</option></select>
               </div>
             </div>
-            <div class="fg r3">
-              <div class="fld"><label>Темп (°C)</label><input class="inp" type="number" step="0.1" id="inp-temp" placeholder="38.0"></div>
-              <div class="fld"><label>Зүрхний цохилт</label><input class="inp" type="number" id="inp-pulse" placeholder="40"></div>
-              <div class="fld"><label>Жин (кг)</label><input class="inp" type="number" id="inp-wt" placeholder="350"></div>
+            <div class="fg" style="grid-template-columns:repeat(auto-fit,minmax(120px,1fr))">
+              <div class="fld"><label>Темп (°C)</label><input class="inp" type="number" step="0.1" inputmode="decimal" id="inp-temp" placeholder="38.0"></div>
+              <div class="fld"><label>Зүрхний цохилт</label><input class="inp" type="number" inputmode="numeric" id="inp-pulse" placeholder="40"></div>
+              <div class="fld"><label>Амьсгалын тоо <span style="font-size:10px;color:var(--muted);font-weight:400">(1 минутад)</span></label><input class="inp" type="number" inputmode="numeric" id="inp-resp" placeholder="12"></div>
+              <div class="fld"><label>Жин (кг)</label><input class="inp" type="number" inputmode="numeric" id="inp-wt" placeholder="350"></div>
             </div>
             <div class="fld"><label>Онош / Биеийн байдал</label>
               <textarea class="inp" id="inp-diag" rows="2" placeholder="Тухайн өдрийн биеийн байдал, шинж тэмдэг..."></textarea>
@@ -634,7 +640,7 @@
               </div>
               <div class="fld" style="justify-content:flex-end">
                 <label>&nbsp;</label>
-                <div style="font-size:12px;color:var(--muted);font-weight:600">Анхдагч: ₮80,000 / хоног</div>
+                <div style="font-size:12px;color:var(--muted);font-weight:600" id="inp-daily-fee-hint">Анхдагч: ₮80,000 / хоног</div>
               </div>
             </div>
 
@@ -740,11 +746,12 @@
         <div class="ph">
           <div class="ph-l">
             <div class="ph-title">👁️ Ахлах эмчийн хяналт</div>
-            <div class="ph-sub">Онош батлах · өдрийн эмчилгээ бичсэн эсэх · эзэнд мэдээлэх</div>
+            <div class="ph-sub">Өглөөний хуваарилалт · онош батлах · өдрийн эмчилгээ бичсэн эсэх · эзэнд мэдээлэх</div>
           </div>
         </div>
         <div class="card">
           <div class="tabs" style="margin-bottom:12px">
+            <button class="tab" data-rvtab="assign" onclick="setReviewTab('assign')">🌅 Өглөөний хуваарилалт<span id="rv-n-assign"></span></button>
             <button class="tab active" data-rvtab="dx" onclick="setReviewTab('dx')">🩺 Онош батлах<span id="rv-n-dx"></span></button>
             <button class="tab" data-rvtab="treat" onclick="setReviewTab('treat')">📝 Өдрийн эмчилгээ<span id="rv-n-treat"></span></button>
             <button class="tab" data-rvtab="call" onclick="setReviewTab('call')">📞 Эзэнд мэдээлэх<span id="rv-n-call"></span></button>
@@ -1157,16 +1164,54 @@
       </section>
 
       <!-- ====== ADMIN ====== -->
+      <!-- ====== 📱 МИНИЙ АЖИЛ (эмчийн апп-ын нүүр) ====== -->
+      <section class="page" id="page-my">
+        <div id="my-body"></div>
+      </section>
+
+      <!-- ====== 🐎 ҮРЖҮҮЛГИЙН АДУУ ====== -->
+      <section class="page" id="page-breeding">
+        <div class="ph">
+          <div class="ph-l">
+            <div class="ph-title">🐎 Үржүүлгийн адуу</div>
+            <div class="ph-sub" id="br-sub">Эмнэлэгт байрлаж буй болон эмчлүүлсэн үржүүлгийн адуу, тооцоо</div>
+          </div>
+        </div>
+        <div id="br-body"></div>
+      </section>
+
       <section class="page" id="page-admin">
         <div class="ph">
           <div class="ph-l">
             <div class="ph-title">⚙️ Системийн тохиргоо</div>
-            <div class="ph-sub">Эмч, өгөгдөл, sync</div>
+            <div class="ph-sub" id="adm-sub">Хэрэглэгч, эмнэлэг, үнэ, эм, дата</div>
           </div>
         </div>
 
-        <div class="col2">
-          <div class="card">
+        <div class="adm-bar">
+          <div class="adm-tabs" id="adm-tabs">
+            <button type="button" class="adm-tab on" data-ag="people" onclick="setAdminTab('people')"><span>👥</span> Хэрэглэгч ба эрх</button>
+            <button type="button" class="adm-tab" data-ag="clinic" onclick="setAdminTab('clinic')"><span>🏥</span> Эмнэлэг</button>
+            <button type="button" class="adm-tab" data-ag="finance" onclick="setAdminTab('finance')"><span>💰</span> Үнэ ба урамшуулал</button>
+            <button type="button" class="adm-tab" data-ag="med" onclick="setAdminTab('med')"><span>💊</span> Эм ба шинжилгээ</button>
+            <button type="button" class="adm-tab" data-ag="data" onclick="setAdminTab('data')"><span>💾</span> Дата ба нөөц</button>
+            <button type="button" class="adm-tab" data-ag="system" onclick="setAdminTab('system')"><span>🛠</span> Лог ба оношилгоо</button>
+          </div>
+          <input class="inp adm-search" id="adm-search" type="search" placeholder="🔍 Тохиргоо хайх (ж: урамшуулал, дугаар, нөөц)" oninput="admSearch(this.value)">
+        </div>
+        <div class="adm-desc" id="adm-desc"></div>
+
+        <div class="adm-grid" id="adm-grid">
+          <div class="card adm-card adm-wide" data-ag="people" id="user-mgmt-card">
+            <div class="ch">🔐 Нэвтрэх эрх (хэрэглэгч)</div>
+            <div style="background:var(--orange-soft);color:var(--orange-dark);padding:8px 12px;border-radius:8px;font-size:12px;font-weight:700;margin-bottom:10px">
+              Энд нэмсэн хэрэглэгч бүх төхөөрөмж дээр нэвтэрч чадна. Код өөрчлөх шаардлагагүй.
+            </div>
+            <button class="btn btn-p btn-sm" onclick="openUserModal()">+ Хэрэглэгч нэмэх</button>
+            <div class="ch" style="margin-top:14px">Бүртгэлтэй хэрэглэгчид <span class="muted" id="user-count" style="font-weight:600"></span></div>
+            <div class="list" id="a-user-list"></div>
+          </div>
+          <div class="card adm-card" data-ag="people">
             <div class="ch">👨‍⚕️ Эмч нэмэх</div>
             <div class="fg r2">
               <div class="fld"><label>Нэр</label><input class="inp" id="a-doc-name"></div>
@@ -1183,7 +1228,12 @@
             <div class="ch" style="margin-top:14px">Бүртгэлтэй эмч нар</div>
             <div class="list" id="a-doc-list"></div>
           </div>
-          <div class="card" id="inp-loc-card">
+          <div class="card adm-card" data-ag="people" id="staff-link-card">
+            <div class="ch">🧑‍🤝‍🧑 Ажилтны жагсаалт ба цаг</div>
+            <div class="muted" style="font-size:12px;margin-bottom:8px">Цагийн бүртгэлд орох бүх ажилтан (эмч, туслах, жолооч гэх мэт), албан тушаал, эмчтэй холбох тохиргоо «Цагийн бүртгэл» цэсэнд байна.</div>
+            <button class="btn btn-sm" onclick="nav('timesheet')">🕒 Цагийн бүртгэл рүү</button>
+          </div>
+          <div class="card adm-card" data-ag="clinic" id="inp-loc-card">
             <div class="ch">📍 Байрлан эмчлүүлэх байрлалууд <span class="muted" style="font-weight:600;text-transform:none">— зүчээ, нарлагаа</span></div>
             <div class="muted" style="font-size:12px;margin-bottom:8px">Мөр бүрд нэг байрлал. Байрлан эмчлүүлэх хуудсан дээр адуу бүрд байрлал сонгож, «Байрлалаар» харах горимд чөлөөтэй/эзэнтэй байрлал харагдана.</div>
             <textarea class="inp" id="inp-loc-list" rows="6" style="font-family:inherit"></textarea>
@@ -1193,7 +1243,7 @@
               <span class="muted" style="font-size:11px" id="inp-loc-status"></span>
             </div>
           </div>
-          <div class="card" id="call-cfg-card">
+          <div class="card adm-card" data-ag="clinic" id="call-cfg-card">
             <div class="ch">📞 Эзэнд мэдээлэх сануулга <span class="muted" style="font-weight:600;text-transform:none">— байрлан эмчлүүлэх</span></div>
             <div class="muted" style="font-size:12px;margin-bottom:8px">Адуу энэ хоног хоноход эмчлэгч эмчид «эзэнд залгах» сануулга гарна (карт, самбар, Ахлах эмчийн хяналт). Эмч «✅ Ярьсан» тэмдэглэл бичмэгц сануулга арилна.</div>
             <div class="fg r2">
@@ -1202,7 +1252,24 @@
             </div>
             <button class="btn btn-p btn-sm" style="margin-top:8px" onclick="saveCallCfgFromForm()">💾 Хадгалах</button>
           </div>
-          <div class="card" id="examnum-cfg-card">
+          <div class="card adm-card" data-ag="clinic" id="breed-cfg-card">
+            <div class="ch">🐎 Үржүүлгийн адуу <span class="muted" style="font-weight:600;text-transform:none">— өөрийн группын адуу</span></div>
+            <div class="muted" style="font-size:12px;margin-bottom:8px">Үржүүлгийн адуу байрлан эмчлүүлэхэд тусдаа хоногийн тариф бодогдож, «эзэнд залгах» сануулга гарахгүй. «Үржүүлгийн адуу» цэсэнд үржүүлгийн менежер, нягтлан бодогч нар тусад нь харна.</div>
+            <div class="fg r2">
+              <div class="fld"><label>Хоногийн төлбөр ₮</label><input class="inp" type="number" id="breed-cfg-fee" min="0" step="1000" placeholder="40000"></div>
+              <div class="fld"><label>Эзэнд залгах сануулга</label>
+                <select class="inp" id="breed-cfg-call"><option value="0">Гаргахгүй (зөвлөмж)</option><option value="1">Бусад адуутай адил гаргана</option></select></div>
+            </div>
+            <div class="fld" style="margin-top:8px"><label>Эзний нэрээр автоматаар таних <span class="muted" style="font-weight:400;text-transform:none">— мөр бүрд нэг нэр / түлхүүр үг</span></label>
+              <textarea class="inp" id="breed-cfg-owners" rows="3" style="font-family:inherit" placeholder="ж:&#10;Морьтон үржүүлэг&#10;Үржүүлэг"></textarea></div>
+            <div class="muted" style="font-size:11px;margin-top:4px">Эзний нэрэнд эдгээр үг орсон адуу автоматаар үржүүлгийнх гэж тооцогдоно. Адуу бүр дээр гараар асааж/унтрааж бас болно (Байрлан эмчлүүлэх → Адууны мэдээлэл).</div>
+            <div class="row" style="gap:8px;margin-top:8px;align-items:center;flex-wrap:wrap">
+              <button class="btn btn-p btn-sm" onclick="saveBreedCfgFromForm()">💾 Хадгалах</button>
+              <button class="btn btn-sm" onclick="nav('breeding')">🐎 Үржүүлгийн адуу цэс рүү</button>
+              <span class="muted" style="font-size:11px" id="breed-cfg-info"></span>
+            </div>
+          </div>
+          <div class="card adm-card" data-ag="clinic" id="examnum-cfg-card">
             <div class="ch">🔢 Үзлэгийн хуудасны дугаарлалт</div>
             <div class="muted" style="font-size:12px;margin-bottom:8px">Адуу бүртгэхэд дугаар автоматаар: <b>max(эхлэх дугаар, бүртгэгдсэн хамгийн их дугаар) + 1</b>. Эхлэх дугаараас доош хуучин цувралын дугаарууд тооцогдохгүй — шинэ цуврал эхлүүлэхдээ энд сүүлийн дугаараа бичнэ.</div>
             <div class="fg r2">
@@ -1215,7 +1282,12 @@
             <div id="en-cfg-info" style="margin-top:8px;font-size:13px"></div>
             <button class="btn btn-p btn-sm" style="margin-top:8px" onclick="saveExamNumCfgFromForm()">💾 Хадгалах</button>
           </div>
-          <div class="card" id="bonus-cfg-card">
+          <div class="card adm-card" data-ag="finance" id="price-link-card">
+            <div class="ch">💵 Үйлчилгээний үнэ</div>
+            <div class="muted" style="font-size:12px;margin-bottom:8px">Үзлэг, эмчилгээ, шинжилгээний үйлчилгээний жагсаалт ба үнэ. Шинэ үйлчилгээ нэмэх, хасах, үнэ засах.</div>
+            <button class="btn btn-p btn-sm" onclick="openServicePrices()">💵 Үнэ оруулах цонх нээх</button>
+          </div>
+          <div class="card adm-card adm-wide" data-ag="finance" id="bonus-cfg-card">
             <div class="ch">🎁 Эмчийн үзлэгийн урамшуулал</div>
             <div class="muted" style="font-size:12px;margin-bottom:8px">Санхүү → Урамшуулал цэсэнд сар бүрийн урамшууллыг үзлэгийн бүртгэлээс автоматаар тооцно. Нэг үзлэг (нэг адуу) бүрд:</div>
             <div class="fg r3">
@@ -1251,7 +1323,7 @@
             </div>
             <button class="btn btn-p btn-sm" style="margin-top:8px" onclick="saveBonusCfgFromForm()">💾 Хадгалах</button>
           </div>
-          <div class="card" id="fin-pin-card">
+          <div class="card adm-card" data-ag="finance" id="fin-pin-card">
             <div class="ch">🔒 Мөнгөн дүн харах код</div>
             <div class="muted" style="font-size:12px;margin-bottom:8px">Тайлан болон KPI самбар дээр мөнгөн дүн анхдагчаар нуугдана. Энэ кодыг оруулсан хүн 30 минут дүнг харна. Код бүх төхөөрөмжид нэг.</div>
             <div id="a-fin-pin-status" style="margin-bottom:8px"></div>
@@ -1261,23 +1333,30 @@
             </div>
             <button class="btn btn-p btn-sm" style="margin-top:8px" onclick="saveFinPin()">💾 Код хадгалах</button>
           </div>
-          <div class="card" id="user-mgmt-card">
-            <div class="ch">🔐 Нэвтрэх эрх (хэрэглэгч)</div>
-            <div style="background:var(--orange-soft);color:var(--orange-dark);padding:8px 12px;border-radius:8px;font-size:12px;font-weight:700;margin-bottom:10px">
-              Энд нэмсэн хэрэглэгч бүх төхөөрөмж дээр нэвтэрч чадна. Код өөрчлөх шаардлагагүй.
+          <div class="card adm-card adm-wide" data-ag="med" id="erp-med-card">
+            <div class="ch">💊 Эм тарианы нэршил — ERP-ээс <span class="muted" style="font-weight:600;text-transform:none">— нэршил зөрөхгүй байх</span></div>
+            <div class="muted" style="font-size:12px;margin-bottom:8px;line-height:1.55">ERP-ээс барааны (эмийн) жагсаалтыг Excel-ээр гаргаж энд оруулна. Нэр, код, нэгж, үнэ эмийн каталогт нэгдэж, эмч нар эмээ зөвхөн тэр жагсаалтаас сонгоно. ERP-д нэр өөрчлөгдвөл файлаа дахин оруулахад кодоор нь таньж шинэчилнэ.</div>
+            <div id="erp-med-status" style="margin-bottom:8px"></div>
+            <div class="row" style="gap:8px;flex-wrap:wrap;align-items:center">
+              <button class="btn btn-p btn-sm" onclick="document.getElementById('erp-med-file').click()">⬆ ERP-ийн Excel оруулах</button>
+              <input type="file" id="erp-med-file" accept=".xlsx,.xls,.csv" style="display:none" onchange="erpMedFileChosen(event)">
+              <button class="btn btn-sm" onclick="erpMedTemplate()">⬇ Загвар файл</button>
+              <button class="btn btn-sm" onclick="PH_TAB='catalog';nav('pharmacy')">📚 Эмийн каталог харах</button>
             </div>
-            <button class="btn btn-p btn-sm" onclick="openUserModal()">+ Хэрэглэгч нэмэх</button>
-            <div class="ch" style="margin-top:14px">Бүртгэлтэй хэрэглэгчид <span class="muted" id="user-count" style="font-weight:600"></span></div>
-            <div class="list" id="a-user-list"></div>
+            <label class="row" style="gap:8px;margin-top:10px;align-items:center;cursor:pointer;font-size:13px;font-weight:700">
+              <input type="checkbox" id="erp-med-strict" onchange="setMedStrict(this.checked)" style="width:18px;height:18px">
+              Зөвхөн каталогийн нэрээр эм бичих <span class="muted" style="font-weight:600;font-size:11.5px">— асаавал хуучин чөлөөт жагсаалт, гараар бичсэн нэр хаагдана</span>
+            </label>
+            <div id="erp-med-preview" style="margin-top:10px"></div>
           </div>
-          <div class="card">
+          <div class="card adm-card" data-ag="med">
             <div class="ch">🧪 Шинжилгээ үзэх эрхтэй <span class="muted" id="lab-perm-count" style="font-weight:600"></span></div>
             <div style="background:var(--orange-soft);color:var(--orange-dark);padding:8px 12px;border-radius:8px;font-size:12px;font-weight:700;margin-bottom:10px">
               "Шинжилгээ" хуудсын эрхтэй хэрэглэгчид. Дээрх "Нэвтрэх эрх" хэсгээс өөрчилнө.
             </div>
             <div class="list" id="a-lab-perm-list"></div>
           </div>
-          <div class="card" id="lab-svc-card">
+          <div class="card adm-card" data-ag="med" id="lab-svc-card">
             <div class="ch">🧬 Аль үйлчилгээ нь шинжилгээ вэ</div>
             <div style="background:var(--orange-soft);color:var(--orange-dark);padding:8px 12px;border-radius:8px;font-size:12px;font-weight:700;margin-bottom:10px">
               Нэрэндээ "шинжилгээ" гэсэн үгтэй үйлчилгээг автоматаар таньдаг. Доороос нэмж/хасаж болно.
@@ -1285,18 +1364,7 @@
             <input class="inp" id="lab-svc-search" placeholder="🔍 Үйлчилгээ хайх" oninput="renderLabSvcConfig()" style="margin-bottom:8px">
             <div style="max-height:340px;overflow:auto" id="lab-svc-list"></div>
           </div>
-          <div class="card">
-            <div class="ch">📋 Үйлдлийн лог</div>
-            <div class="list" id="a-log-list"><div class="empty"><div class="empty-em">📋</div>Sync хийсний дараа харагдана</div></div>
-          </div>
-          <div class="card" id="deleted-exams-card">
-            <div class="ch">🗑️ Устгасан үзлэгийн архив <span class="muted" id="del-exam-count" style="font-weight:600"></span></div>
-            <div style="background:var(--orange-soft);color:var(--orange-dark);padding:8px 12px;border-radius:8px;font-size:12px;font-weight:700;margin-bottom:10px">
-              Устгагдсан үзлэгийн хуудсыг зөвхөн харах боломжтой (сэргээх боломжгүй).
-            </div>
-            <div class="list" id="a-deleted-exam-list"></div>
-          </div>
-          <div class="card" id="export-card">
+          <div class="card adm-card adm-wide" data-ag="data" id="export-card">
             <div class="ch">☁️ Бүх дата татах <span class="muted" style="font-weight:600;text-transform:none">— Firebase-ээс шууд</span></div>
             <div style="background:var(--gold-soft,#f6efdc);padding:8px 12px;border-radius:8px;font-size:12px;margin-bottom:10px;line-height:1.55">
               Системийн <b>бүх</b> өгөгдлийг (адуу, үзлэг, санхүү, төлбөр, байрлан эмчлүүлэх, шинжилгээ, эмч, хэрэглэгч, хуваарь, үнэ, лог, устгасан архив) Firestore-оос эх хувиар нь татна. Excel нь хуудас бүрд задарсан, англи/монгол баганатай ба <b>талбарын тайлбар</b> хуудастай — өөр систем рүү шилжүүлэх, гуравдагч талд өгөхөд тохиромжтой.
@@ -1318,7 +1386,52 @@
             <div id="ex-summary" style="margin-top:6px"></div>
             <div class="muted" style="font-size:11px;margin-top:8px">⚠️ Экспортод нууц үгийн hash, мөнгөн дүн харах код орохгүй. Үзлэгийн зурагнууд Firebase Storage-д үлдэх бөгөөд экспортод зөвхөн тэдгээрийн холбоос (URL) орно.</div>
           </div>
-          <div class="card" id="storage-diag-card">
+          <div class="card adm-card" data-ag="data">
+            <div class="ch">💾 Хялбар нөөц <span class="muted" style="font-weight:600;text-transform:none">— энэ төхөөрөмж дээрх хуулбар</span></div>
+            <div class="muted" style="font-size:12px;margin-bottom:8px">Түргэн нөөц авах. Бүрэн, эх хувийн экспортыг «Бүх дата татах»-аас авна.</div>
+            <div class="row" style="gap:6px;flex-wrap:wrap">
+              <button class="btn btn-sm" onclick="exportAll()">⬇ JSON татах</button>
+              <button class="btn btn-sm btn-p" onclick="exportExcel()">📊 Excel татах</button>
+            </div>
+          </div>
+          <details class="card adm-card adm-wide adm-danger" data-ag="data" id="adm-danger">
+            <summary>⚠️ Аюултай бүс — өгөгдөл дарж бичих, устгах, хуучин шилжүүлгийн хэрэгсэл <span class="muted" style="font-weight:600">(дарж нээнэ)</span></summary>
+            <div style="background:var(--red-soft);color:var(--red);padding:8px 12px;border-radius:8px;font-size:12px;font-weight:700;margin:10px 0">
+              Доорх үйлдлүүд бүх төхөөрөмжийн өгөгдөлд нөлөөлж, буцаах боломжгүй байж болно. Юу хийж байгаагаа мэдэхгүй бол бүү дар.
+            </div>
+            <div class="ch">Өгөгдөл оруулах / устгах</div>
+            <div class="row" style="gap:6px;flex-wrap:wrap">
+              <button class="btn btn-sm" onclick="document.getElementById('imp-f').click()">⬆ JSON оруулах</button>
+              <input type="file" id="imp-f" accept=".json" style="display:none" onchange="importJSON(event)">
+              <button class="btn btn-r btn-sm" onclick="resetAll()">🗑️ Бүх өгөгдлийг устгах</button>
+            </div>
+            <div class="ch" style="margin-top:14px">Хуучин sync / шилжүүлэг <span class="muted" style="font-weight:600;text-transform:none">— одоо систем Firebase дээр ажилладаг, өдөр тутам хэрэггүй</span></div>
+            <div class="fld"><label>Sync URL <span class="muted" style="font-weight:600;text-transform:none">(зөвхөн өөрчлөх шаардлагатай үед)</span></label>
+              <input class="inp" id="a-url" placeholder="Oracle ORDS URL">
+            </div>
+            <div class="row" style="margin-top:8px;gap:6px;flex-wrap:wrap">
+              <button class="btn btn-sm" onclick="saveSyncURL()">💾 Хадгалах</button>
+              <button class="btn btn-sm" onclick="resetSyncURL()">↻ Default рүү буцаах</button>
+              <button class="btn btn-sm" onclick="manualSync()">🔄 Татах</button>
+              <button class="btn btn-sm" onclick="fbForcePush()">☁️ Firebase руу бичих</button>
+            </div>
+            <div class="row" style="margin-top:8px;gap:6px;flex-wrap:wrap">
+              <button class="btn btn-sm" onclick="if(confirm('Google Sheets-ээс бүх датаг татаж Firebase руу бичих үү? Энэ нь одоогийн датаг Sheets-ийн датагаар солино.')) migrateSheetsToFirebase()">⬇️ Sheets-ээс татаж Firebase руу зөөх</button>
+              <button class="btn btn-sm" onclick="migrateImagesToStorage()">🖼️ Хуучин зургийг Storage руу зөөх</button>
+            </div>
+          </details>
+          <div class="card adm-card" data-ag="system">
+            <div class="ch">📋 Үйлдлийн лог</div>
+            <div class="list" id="a-log-list"><div class="empty"><div class="empty-em">📋</div>Sync хийсний дараа харагдана</div></div>
+          </div>
+          <div class="card adm-card" data-ag="system" id="deleted-exams-card">
+            <div class="ch">🗑️ Устгасан үзлэгийн архив <span class="muted" id="del-exam-count" style="font-weight:600"></span></div>
+            <div style="background:var(--orange-soft);color:var(--orange-dark);padding:8px 12px;border-radius:8px;font-size:12px;font-weight:700;margin-bottom:10px">
+              Устгагдсан үзлэгийн хуудсыг зөвхөн харах боломжтой (сэргээх боломжгүй).
+            </div>
+            <div class="list" id="a-deleted-exam-list"></div>
+          </div>
+          <div class="card adm-card" data-ag="system" id="storage-diag-card">
             <div class="ch">🖼️ Зураг байршуулах оношилгоо <span class="muted" style="font-weight:600;text-transform:none">— Storage холболт шалгах</span></div>
             <div style="background:var(--gold-soft,#f6efdc);padding:8px 12px;border-radius:8px;font-size:12px;margin-bottom:10px;line-height:1.55">
               «Зураг илгээж чадсангүй» алдаа гарвал энд дарна. Нэвтрэлт, bucket, үзлэгийн зураг (<code>exam-images/</code>), шинжилгээний хариу (<code>lab-results/</code>) гурвыг тусад нь шалгаж, <b>яг юу буруу байгааг</b> хэлнэ. Туршилтын жижиг зураг илгээгээд шууд устгана.
@@ -1326,38 +1439,12 @@
             <button class="btn btn-sm btn-p" onclick="runStorageDiag()">🔍 Шалгах</button>
             <div id="sd-out" style="margin-top:10px"></div>
           </div>
-          <div class="card">
-            <div class="ch">💾 Өгөгдөл <span class="muted" style="font-weight:600;text-transform:none">— хялбар нөөц</span></div>
-            <div class="row">
-              <button class="btn btn-sm" onclick="exportAll()">⬇ JSON татах</button>
-              <button class="btn btn-sm btn-p" onclick="exportExcel()">📊 Excel татах</button>
-              <button class="btn btn-sm" onclick="document.getElementById('imp-f').click()">⬆ JSON оруулах</button>
-              <input type="file" id="imp-f" accept=".json" style="display:none" onchange="importJSON(event)">
-            </div>
-            <div class="row" style="margin-top:10px">
-              <button class="btn btn-r btn-sm" onclick="resetAll()">🗑️ Бүх өгөгдлийг устгах</button>
-            </div>
-
-            <div class="ch" style="margin-top:14px">☁️ Oracle Sync</div>
-            <div style="background:var(--green-soft);color:var(--green);padding:8px 12px;border-radius:8px;font-size:12px;font-weight:700;margin-bottom:10px">
-              ✅ Oracle Cloud-тай холбогдсон
-            </div>
-            <div class="fld"><label>Sync URL <span class="muted" style="font-weight:600;text-transform:none">(зөвхөн өөрчлөх шаардлагатай үед)</span></label>
-              <input class="inp" id="a-url" placeholder="Oracle ORDS URL">
-            </div>
-            <div class="row" style="margin-top:8px">
-              <button class="btn btn-sm" onclick="saveSyncURL()">💾 Хадгалах</button>
-              <button class="btn btn-sm" onclick="resetSyncURL()">↻ Default рүү буцаах</button>
-              <button class="btn btn-sm btn-p" onclick="manualSync()">🔄 Татах</button>
-              <button class="btn btn-sm btn-p" onclick="fbForcePush()">☁️ Firebase руу бичих</button>
-            </div>
-            <div class="row" style="margin-top:8px">
-              <button class="btn btn-sm btn-p" style="background:#16a34a;border-color:#16a34a" onclick="if(confirm('Google Sheets-ээс бүх датаг татаж Firebase руу бичих үү? Энэ нь одоогийн датаг Sheets-ийн датагаар солино.')) migrateSheetsToFirebase()">⬇️ Sheets-ээс татаж Firebase руу зөөх</button>
-            </div>
-            <div class="row" style="margin-top:8px">
-              <button class="btn btn-sm btn-p" style="background:#7c3aed;border-color:#7c3aed" onclick="migrateImagesToStorage()">🖼️ Хуучин зургийг Storage руу зөөх</button>
-            </div>
+          <div class="card adm-card" data-ag="system" id="adm-ver-card">
+            <div class="ch">ℹ️ Програмын хувилбар</div>
+            <div id="adm-ver-info" class="muted" style="font-size:12.5px;line-height:1.7"></div>
+            <button class="btn btn-sm" style="margin-top:8px" onclick="openSyncStatus()">🟢 Синкийн төлөв</button>
           </div>
+          <div class="empty hidden" id="adm-empty"><div class="empty-em">🔍</div>Ийм тохиргоо олдсонгүй</div>
         </div>
       </section>
 
@@ -1366,6 +1453,11 @@
 
   <!-- BOTTOM NAV (mobile) -->
   <nav class="bn" id="bn">
+    <button class="bn-i" data-page="my" style="display:none">
+      <span class="bn-dot" id="bn-dot-my"></span>
+      <span class="bn-ic"><svg class="bn-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3 8-8"/><path d="M20 12v7a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h9"/></svg></span>
+      <span class="bn-lbl">Миний ажил</span>
+    </button>
     <button class="bn-i active" data-page="dashboard">
       <span class="bn-ic"><svg class="bn-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10.5 12 3l9 7.5"/><path d="M5 9.5V20a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V9.5"/><path d="M9.5 21v-6h5v6"/></svg></span>
       <span class="bn-lbl">Самбар</span>
@@ -1819,11 +1911,12 @@
 
 <div id="print-area"></div>
 
-<script src="app.js?v=20261029e"></script>
+<script src="app.js?v=20261110a"></script>
 <script src="lab.js?v=20261023"></script>
-<script src="pharmacy.js?v=20261023"></script>
+<script src="pharmacy.js?v=20261110a"></script>
 <script src="timesheet.js?v=20261023"></script>
 <script src="dailyreport.js?v=20261023"></script>
+<script src="ops.js?v=20261110a"></script>
 <script src="halloween.js?v=20261030"></script>
 
 <!-- PWA: service worker бүртгэх, автомат шинэчлэлт, суулгах товч -->
