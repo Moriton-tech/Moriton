@@ -4,8 +4,8 @@
   "webDir": "www",
   "backgroundColor": "#022438",
   "server": {
-    "url": "https://moriton-4ecc0.web.app/?app=vet",
-    "allowNavigation": ["moriton-4ecc0.web.app", "moriton-4ecc0.firebaseapp.com"],
+    "url": "https://moriton-tech.github.io/Moriton/?app=vet",
+    "allowNavigation": ["moriton-tech.github.io"],
     "errorPath": "offline.html"
   },
   "android": { "appendUserAgent": "MoritonVet/1.0", "allowMixedContent": false },
