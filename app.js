@@ -2588,6 +2588,7 @@ function autoFillOwnerByPhone() {
     const opt = Array.from(provEl.options).find(o => o.value === prev.province);
     if (opt) provEl.value = prev.province;
   }
+  if (typeof mnSumRefresh === 'function') mnSumRefresh('r-soum');
   toast('👤 ' + (prev.owner || 'Өмнөх эзэн') + '-ийн мэдээлэл бөглөгдлөө', 'ok');
 }
 
@@ -2604,6 +2605,7 @@ function initRegPage() {
     });
   }
   if (!$('#r-date').value) $('#r-date').value = todayStr();
+  if (typeof mnSumBind === 'function') mnSumBind('r-prov', 'r-soum', 'r-soum-hint', 'r-soum-dl');
   // Auto-fill exam number if empty
   if (!$('#r-examnum').value) autoFillExamNum();
   // Дугаар бичих явцад давхардлыг шалгаж анхааруулна
@@ -2744,6 +2746,7 @@ function findExamNumDuplicate(examNum, excludeId) {
 
 function clearReg() {
   ['r-name','r-age','r-breed','r-mark','r-owner','r-phone','r-phone2','r-soum','r-symp','r-extra','r-iabd'].forEach(id => { const el = $('#'+id); if (el) el.value = ''; });
+  if (typeof mnSumRefresh === 'function') mnSumRefresh('r-soum');
   $('#r-prov').value = '';
   $('#r-urg').value = 'green';
   $('#r-date').value = todayStr();
@@ -2779,7 +2782,7 @@ async function submitReg() {
     breed: $('#r-breed').value.trim(),
     mark: $('#r-mark').value.trim(),
     province: $('#r-prov').value,
-    soum: $('#r-soum').value.trim(),
+    soum: typeof mnSumCanon === 'function' ? mnSumCanon($('#r-prov').value, $('#r-soum').value) : $('#r-soum').value.trim(),
     date: $('#r-date').value || todayStr(),
     extra: $('#r-extra').value.trim(),
     createdAt: nowMs(),
@@ -9553,7 +9556,45 @@ function plxAnalysisHTML() {
 }
 function plxRenderAnalysis() { const b = $('#pl-analysis-body'); if (b) { b.innerHTML = plxAnalysisHTML(); b.dataset.open = '1'; } }
 
+// ── 🗺️ Явцууд / Газрын зураг горим ─────────────────────────
+// Газрын зургийн код (plmap.js) зөвхөн анх нээхэд ачаалагдана — системийн нээгдэх хурдад нөлөөлөхгүй.
+let __plMapLoading = null;
+function ensurePlMap() {
+  if (typeof renderPlMap === 'function') return Promise.resolve(true);
+  if (__plMapLoading) return __plMapLoading;
+  __plMapLoading = new Promise(res => {
+    const sc = document.createElement('script');
+    sc.src = 'plmap.js?v=20261112a';
+    sc.onload = () => res(true);
+    sc.onerror = () => { __plMapLoading = null; toast('⚠️ Газрын зургийг ачаалж чадсангүй — интернэтээ шалгана уу', 'err'); res(false); };
+    document.head.appendChild(sc);
+  });
+  return __plMapLoading;
+}
+function plApplyView() {
+  const map = STATE.plView === 'map';
+  const mh = $('#pl-map-host'), tv = $('#pl-trips-view');
+  if (mh) mh.style.display = map ? '' : 'none';
+  if (tv) tv.style.display = map ? 'none' : 'grid';
+  const b1 = $('#pl-v-trips'), b2 = $('#pl-v-map');
+  if (b1) b1.classList.toggle('btn-p', !map);
+  if (b2) b2.classList.toggle('btn-p', map);
+  return map;
+}
+function plSetView(v) {
+  STATE.plView = v === 'map' ? 'map' : 'trips';
+  try { sessionStorage.setItem('mt_pl_view', STATE.plView); } catch (_) { }
+  renderPlanned(true);
+}
 function renderPlanned(fresh) {
+  if (STATE.plView === undefined) { try { STATE.plView = sessionStorage.getItem('mt_pl_view') || 'trips'; } catch (_) { STATE.plView = 'trips'; } }
+  if (plApplyView()) {
+    // Газрын зураг горим — явцын маягтыг зурахгүй (бөглөж буй маягт байхгүй)
+    const mh = $('#pl-map-host');
+    if (typeof renderPlMap === 'function') renderPlMap();
+    else { if (mh && !mh.innerHTML) mh.innerHTML = '<div class="card"><div class="empty"><div class="empty-em">🗺️</div>Газрын зургийг ачаалж байна…</div></div>'; ensurePlMap().then(ok => { if (ok && STATE.activePage === 'planned' && STATE.plView === 'map') renderPlMap(); }); }
+    return;
+  }
   // Өөр таблет үзлэг хадгалахад sync-ээр энэ хуудас дахин зурагддаг — бөглөж буй маягтыг алдахгүйн тулд хадгалж сэргээнэ
   const snap = fresh ? null : plFormSnapshot();
   if (!Array.isArray(STATE.trips)) STATE.trips = [];
@@ -9581,6 +9622,8 @@ function renderPlanned(fresh) {
     else if (snap.draft && snap.draft.waitId) { PL_DRAFT.waitId = snap.draft.waitId; PL_DRAFT.qNo = snap.draft.qNo; plServingRender(); }
     Object.keys(snap.q || {}).forEach(id => { const el = $('#' + id); if (el && (snap.qdirty || id === 'pl-q-owner' || id === 'pl-q-phone')) el.value = snap.q[id]; });
   }
+  // Сумыг аймгаас хамаарсан жагсаалтаас санал болгож, буруу бичвэл анхааруулна
+  if (typeof mnSumBind === 'function') mnSumBind('pl-e-prov', 'pl-e-soum', 'pl-soum-hint', 'pl-soum-dl');
 }
 
 // ── Бөглөж буй маягтыг sync дахин зурахад алдахгүй хамгаалах ──
@@ -10200,7 +10243,8 @@ async function _savePlannedExam(opts) {
   if (dup) { toast('⚠️ ' + examNum + ' дугаар аль хэдийн байна (' + (dup.rec.horse || '') + ')', 'err'); $('#pl-e-num').focus(); return; }
   if (!PL_DRAFT.services.length && !confirm('Үйлчилгээ сонгоогүй байна. Үйлчилгээгүйгээр хадгалах уу?')) return;
   const owner = v('pl-e-owner'), phone = v('pl-e-phone');
-  const province = v('pl-e-prov'), soum = v('pl-e-soum');
+  const province = v('pl-e-prov');
+  const soum = typeof mnSumCanon === 'function' ? mnSumCanon(province, v('pl-e-soum')) : v('pl-e-soum');
   if (!province) { toast('Аймаг сонгоно уу', 'err'); $('#pl-e-prov').focus(); return; }
   const date = v('pl-e-date') || t.date, time = v('pl-e-time');
   const doc = (STATE.doctors || []).find(d => String(d.id) === v('pl-e-doc'));

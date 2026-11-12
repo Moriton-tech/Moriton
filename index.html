@@ -31,7 +31,7 @@
      ============================================================ -->
 <script type="module" src="firebase.js?v=20260925"></script>
 
-<link rel="stylesheet" href="style.css?v=20261110a">
+<link rel="stylesheet" href="style.css?v=20261112a">
 <link rel="stylesheet" href="halloween.css?v=20261030"><!-- 🎃 2026-10-31 хүртэл; дараа нь энэ мөр, доорх halloween.js мөрийг устгаж болно -->
 </head>
 <body>
@@ -767,8 +767,15 @@
             <div class="ph-title">🗓️ Төлөвлөгөөт үзлэг</div>
             <div class="ph-sub">Хээрийн явц — 3 эмчийн баг, 3–5 аймаг; цаасан маягтыг системд шивэх</div>
           </div>
+          <div class="ph-r">
+            <div class="pl-viewtog" role="tablist">
+              <button class="btn btn-sm" id="pl-v-trips" onclick="plSetView('trips')">📋 Явцууд</button>
+              <button class="btn btn-sm" id="pl-v-map" onclick="plSetView('map')">🗺️ Газрын зураг</button>
+            </div>
+          </div>
         </div>
-        <div class="grid2" style="display:grid;grid-template-columns:360px 1fr;gap:14px;align-items:start">
+        <div id="pl-map-host" style="display:none"></div>
+        <div class="grid2" id="pl-trips-view" style="display:grid;grid-template-columns:360px 1fr;gap:14px;align-items:start">
           <div>
             <div class="card">
               <div class="ch">➕ Шинэ явц</div>
@@ -1911,7 +1918,8 @@
 
 <div id="print-area"></div>
 
-<script src="app.js?v=20261110a"></script>
+<script src="mn-sums.js?v=20261112a"></script>
+<script src="app.js?v=20261112a"></script>
 <script src="lab.js?v=20261023"></script>
 <script src="pharmacy.js?v=20261110a"></script>
 <script src="timesheet.js?v=20261023"></script>
