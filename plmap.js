@@ -82,6 +82,7 @@ function plmapBuild(exams) {
   return { places, trips: tinfo, tmap: Object.fromEntries(tinfo.map(x => [x.id, x])) };
 }
 
+function plmapTripName(t) { return (t && (t.route || t.location || t.province)) || '—'; }
 function plmapRouteAimags(t) {
   return String(t.route || t.location || t.province || '').split(/[,;\/]+/).map(s => s.trim()).filter(Boolean);
 }
@@ -90,19 +91,18 @@ function plmapNotes(B) {
   B.trips.forEach(T => {
     const t = T.t; if (!t || !t.id) return;
     const rec = t.date || '', recEnd = t.endDate || t.date || '';
-    if (T.from && (T.from < rec || T.to > recEnd)) N.push(`«${plmapEsc(t.route || t.location || '—')}» явцын огноо ${rec} → ${recEnd} боловч үзлэгүүд ${T.from} → ${T.to} хооронд хийгдсэн — явцын огноог засна уу.`);
+    if (T.from && (T.from < rec || T.to > recEnd)) N.push(`«${plmapEsc(plmapTripName(t))}» явцын огноо ${rec} → ${recEnd} боловч үзлэгүүд ${T.from} → ${T.to} хооронд хийгдсэн — явцын огноог засна уу.`);
     const route = plmapRouteAimags(t);
     const ubLike = a => a === 'Улаанбаатар' ? route.some(r => /багануур|налайх|багахангай|улаанбаатар|уб/i.test(r)) : false;
     const extra = T.aimags.filter(a => a !== '—' && !route.includes(a) && !ubLike(a));
     const miss = route.filter(r => PROVS.includes(r) && !T.aimags.includes(r));
-    if (extra.length) N.push(`«${plmapEsc(t.route || '—')}» явцын маршрутад ороогүй ${plmapEsc(extra.join(', '))} аймагт үзлэг бүртгэгдсэн.`);
-    if (miss.length) N.push(`«${plmapEsc(t.route || '—')}» явцын маршрутад ${plmapEsc(miss.join(', '))} байгаа ч тэнд үзлэг бүртгэгдээгүй.`);
+    if (extra.length) N.push(`«${plmapEsc(plmapTripName(t))}» явцын маршрутад ороогүй ${plmapEsc(extra.join(', '))} аймагт үзлэг бүртгэгдсэн.`);
+    if (miss.length) N.push(`«${plmapEsc(plmapTripName(t))}» явцын маршрутад ${plmapEsc(miss.join(', '))} байгаа ч тэнд үзлэг бүртгэгдээгүй.`);
   });
   const by = s => B.places.filter(p => p.status === s);
   const sum = arr => arr.reduce((a, p) => a + p.n, 0);
   const em = by('empty'); if (em.length) N.push(`<b>${sum(em)}</b> үзлэгт сум бичигдээгүй (${plmapEsc([...new Set(em.map(p => p.aimag))].join(', '))}) — аймгийн төвд тавив.`);
-  by('fixed').forEach(p => N.push(`${plmapEsc(p.aimag)}: «${plmapEsc(p.raw.join('», «'))}» → «${plmapEsc(p.soum)}» гэж нэгтгэв (бичлэгийн жижиг ялгаа).`));
-  by('fuzzy').forEach(p => N.push(`${plmapEsc(p.aimag)}: «${plmapEsc(p.raw.join('», «'))}» гэж бичсэнийг «${plmapEsc(p.soum)}» гэж үзэв (үсгийн алдаа байх магадлалтай).`));
+  B.places.filter(p => p.raw.length).forEach(p => N.push(`${plmapEsc(p.aimag)}: «${plmapEsc(p.raw.join('», «'))}» гэж бичсэнийг «${plmapEsc(p.soum)}» сумтай нэгтгэв (бичлэгийн ялгаа / үсгийн алдаа).`));
   by('other').forEach(p => N.push(`${plmapEsc(p.aimag)} · «${plmapEsc(p.soum)}» (${p.n} үзлэг): энэ нь ${plmapEsc(p.look.others.join(', '))} аймгийн сум — аймаг эсвэл сум буруу байж магадгүй; аймгийн төвд тавив.`));
   by('unknown').forEach(p => N.push(`${plmapEsc(p.aimag)} · «${plmapEsc(p.soum)}» (${p.n} үзлэг): сумын жагсаалтад алга — аймгийн төвд тавив.`));
   const na = by('noaimag'); if (na.length) N.push(`<b>${sum(na)}</b> үзлэгт аймаг бичигдээгүй — газрын зураг дээр гарахгүй.`);
@@ -131,7 +131,7 @@ function renderPlMap(force) {
   const trips = new Set(P.map(p => p.trip));
   const tc = id => (B.tmap[id] || {}).color || '#888';
 
-  const chips = [['all', 'Бүх явц', '']].concat(B.trips.slice().reverse().map(T => [T.id, (T.from || T.t.date || '').slice(5) + ' · ' + (T.aimags.filter(a => a !== '—').join(', ') || T.t.route || '—'), T.color]));
+  const chips = [['all', 'Бүх явц', '']].concat(B.trips.slice().reverse().map(T => [T.id, (T.from || T.t.date || '').slice(5) + ' · ' + (T.aimags.filter(a => a !== '—').join(', ') || T.plmapTripName(t)), T.color]));
   const kpi = [['📋 Үзлэг', n, 'accent'], ['🐎 Адуу', h, ''], ['📍 Аймаг', aim.size, 'purple'], ['🏘 Сум', soum.size, ''], ['📅 Хээрийн өдөр', new Set(ds).size, 'green'], ['🚙 Явц', trips.size, '']];
   if (fin) kpi.push(['💰 Нийт дүн', fmtCompact(amt), 'green']);
 
@@ -139,7 +139,7 @@ function renderPlMap(force) {
     <div class="card">
       <div class="row" style="justify-content:space-between;gap:8px;flex-wrap:wrap;align-items:center">
         <div><div class="ph-title" style="font-size:16px">🗺️ Төлөвлөгөөт үзлэг — газрын зураг</div>
-          <div class="muted" style="font-size:12px">${PLMAP.filt === 'all' ? 'Бүх явц' : 'Явц: ' + plmapEsc((B.tmap[PLMAP.filt].t || {}).route || '—')}${ds.length ? ' · ' + ds[0] + ' – ' + ds[ds.length - 1] : ''}${PLMAP.loadedAt ? ' · ' + new Date(PLMAP.loadedAt).toTimeString().slice(0, 5) + '-д татав' : ''}</div></div>
+          <div class="muted" style="font-size:12px">${PLMAP.filt === 'all' ? 'Бүх явц' : 'Явц: ' + plmapEsc(plmapTripName(B.tmap[PLMAP.filt].t))}${ds.length ? ' · ' + ds[0] + ' – ' + ds[ds.length - 1] : ''}${PLMAP.loadedAt ? ' · ' + new Date(PLMAP.loadedAt).toTimeString().slice(0, 5) + '-д татав' : ''}</div></div>
         <div class="row" style="gap:6px;flex-wrap:wrap;align-items:center">
           <span id="plm-fin-lock"></span>
           <button class="btn btn-sm" onclick="plmapRefresh()" ${PLMAP.loading ? 'disabled' : ''}>🔄 Шинэчлэх</button>
@@ -213,9 +213,9 @@ function renderPlMap(force) {
   const sp = PLMAP.sel ? P.find(p => p.key === PLMAP.sel) : null;
   if (sp) {
     const T = B.tmap[sp.trip];
-    const st = { other: `«${plmapEsc(sp.soum)}» нь ${plmapEsc((sp.look.others || []).join(', '))} аймгийн сум — аймгийн төвд тавив`, unknown: `«${plmapEsc(sp.soum)}» сумын жагсаалтад алга — аймгийн төвд тавив`, empty: 'Сум бичигдээгүй — аймгийн төвд тавив', fuzzy: `«${plmapEsc(sp.raw.join('», «'))}» гэж бичсэнийг «${plmapEsc(sp.soum)}» гэж үзэв`, fixed: `«${plmapEsc(sp.raw.join('», «'))}» → «${plmapEsc(sp.soum)}» гэж нэгтгэв`, noaimag: 'Аймаг бичигдээгүй' }[sp.status];
+    const st = sp.raw.length && !['other','unknown','empty'].includes(sp.status) ? `«${plmapEsc(sp.raw.join('», «'))}» гэж бичсэнийг «${plmapEsc(sp.soum)}»-тэй нэгтгэв` : { other: `«${plmapEsc(sp.soum)}» нь ${plmapEsc((sp.look.others || []).join(', '))} аймгийн сум — аймгийн төвд тавив`, unknown: `«${plmapEsc(sp.soum)}» сумын жагсаалтад алга — аймгийн төвд тавив`, empty: 'Сум бичигдээгүй — аймгийн төвд тавив', fuzzy: `«${plmapEsc(sp.raw.join('», «'))}» гэж бичсэнийг «${plmapEsc(sp.soum)}» гэж үзэв`, fixed: `«${plmapEsc(sp.raw.join('», «'))}» → «${plmapEsc(sp.soum)}» гэж нэгтгэв`, noaimag: 'Аймаг бичигдээгүй' }[sp.status];
     const exs = sp.ex.slice().sort((a, b) => (a.date || '') < (b.date || '') ? -1 : 1);
-    panel.innerHTML = `<div class="muted" style="font-size:12px"><i class="plm-sw" style="background:${tc(sp.trip)}"></i>${plmapEsc((T.t || {}).route || '—')}</div>
+    panel.innerHTML = `<div class="muted" style="font-size:12px"><i class="plm-sw" style="background:${tc(sp.trip)}"></i>${plmapEsc(plmapTripName(T.t))}</div>
       <div class="plm-big">${plmapEsc(sp.aimag)}${sp.soum ? ' · ' + plmapEsc(sp.soum) : ' <span class="muted" style="font-size:12px;font-weight:600">(сум бичигдээгүй)</span>'}</div>
       <div class="muted" style="font-size:12px">${sp.dates.join(', ')}</div>
       ${st ? `<div class="plm-flag">${st}</div>` : ''}
@@ -239,7 +239,7 @@ function renderPlMap(force) {
   plmapTable('plm-t-trip', [['Явц'], ['Огноо (бодит)'], ['Хүрсэн аймаг'], ['Үзлэг', 1], ['Адуу', 1]].concat(fin ? [['Дүн', 1]] : []), TT.map(T => {
     const t = T.t || {}; const dd = t.date && (T.from < t.date || T.to > (t.endDate || t.date));
     return { v: [t.route || '', T.from, T.aimags.length, T.n, T.h, T.amt], click: `plmapFilter('${plmapEsc(T.id)}')`,
-      cells: [`<i class="plm-sw" style="background:${T.color}"></i>${plmapEsc(t.route || t.location || '—')}<div class="muted" style="font-size:11px">${plmapEsc(T.docs.map(d => d[0]).join(', '))}</div>`,
+      cells: [`<i class="plm-sw" style="background:${T.color}"></i>${plmapEsc(plmapTripName(t))}<div class="muted" style="font-size:11px">${plmapEsc(T.docs.map(d => d[0]).join(', '))}</div>`,
         `<span style="white-space:nowrap">${T.from.slice(5)} → ${T.to.slice(5)}</span>${dd ? `<div class="plm-diff">явцад: ${(t.date || '').slice(5)} → ${(t.endDate || t.date || '').slice(5)}</div>` : ''}`,
         plmapEsc(T.aimags.join(' → ')), T.n, T.h].concat(fin ? [fmtCompact(T.amt)] : []) };
   }), 1);
@@ -248,7 +248,7 @@ function renderPlMap(force) {
     cells: [[...a.t].map(t => `<i class="plm-sw" style="background:${tc(t)}"></i>`).join('') + plmapEsc(k), [...a.s].map(plmapEsc).join(', ') || '<span class="muted">—</span>', a.n, a.h].concat(fin ? [fmtCompact(a.amt)] : []) })), 2);
   plmapTable('plm-t-place', [['Аймаг'], ['Сум / байршил'], ['Огноо'], ['Үзлэг', 1], ['Адуу', 1]].concat(fin ? [['Дүн', 1]] : []).concat([['Гол үйлчилгээ'], ['Эмч']]), P.map(p => ({
     v: [p.aimag, p.soum, p.dates[0] || '', p.n, p.h].concat(fin ? [p.amt] : []).concat(['', '']), click: `PLMAP.sel='${plmapEsc(p.key).replace(/'/g, "\\'")}';renderPlMap();window.scrollTo({top:0,behavior:'smooth'})`,
-    cells: [`<i class="plm-sw" style="background:${tc(p.trip)}"></i>${plmapEsc(p.aimag)}`, (p.soum ? plmapEsc(p.soum) : '<span class="muted">бичигдээгүй</span>') + (['fixed', 'fuzzy', 'other', 'unknown'].includes(p.status) ? ' <span class="plm-diff">⚠</span>' : ''),
+    cells: [`<i class="plm-sw" style="background:${tc(p.trip)}"></i>${plmapEsc(p.aimag)}`, (p.soum ? plmapEsc(p.soum) : '<span class="muted">бичигдээгүй</span>') + (p.raw.length || ['other', 'unknown'].includes(p.status) ? ' <span class="plm-diff">⚠</span>' : ''),
       `<span style="white-space:nowrap">${p.dates.map(d => d.slice(5)).join(', ')}</span>`, p.n, p.h].concat(fin ? [fmtCompact(p.amt)] : [])
       .concat([`<span style="font-size:11px">${p.svL.slice(0, 2).map(([k, v]) => plmapEsc(k) + ' (' + v + ')').join('<br>')}</span>`, `<span style="font-size:11px">${plmapEsc(p.dcL.map(d => d[0]).join(', '))}</span>`]) })), 3);
 }

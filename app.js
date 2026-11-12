@@ -9564,7 +9564,7 @@ function ensurePlMap() {
   if (__plMapLoading) return __plMapLoading;
   __plMapLoading = new Promise(res => {
     const sc = document.createElement('script');
-    sc.src = 'plmap.js?v=20261112a';
+    sc.src = 'plmap.js?v=20261112b';
     sc.onload = () => res(true);
     sc.onerror = () => { __plMapLoading = null; toast('⚠️ Газрын зургийг ачаалж чадсангүй — интернэтээ шалгана уу', 'err'); res(false); };
     document.head.appendChild(sc);
