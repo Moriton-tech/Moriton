@@ -2632,6 +2632,7 @@ function initRegPage() {
     phoneInp.dataset.lookupBound = '1';
     phoneInp.addEventListener('blur', () => autoFillOwnerByPhone());
   }
+  if (typeof regBreedInit === 'function') regBreedInit(); // 🐎 үржүүлгийн адууны горим
 }
 
 // ============================================================
@@ -2751,9 +2752,12 @@ function clearReg() {
   $('#r-urg').value = 'green';
   $('#r-date').value = todayStr();
   autoFillExamNum();
+  if (typeof regBreedReset === 'function') regBreedReset();
 }
 
 async function submitReg() {
+  // 🐎 Үржүүлгийн адуу: үзлэгийн хуудасны дугаар олгохгүй, шууд «Үржүүлгийн адуу» хэсэгт (ops.js)
+  if (typeof regBreedOn === 'function' && regBreedOn()) return submitBreedingIntake();
   const name = $('#r-name').value.trim();
   const owner = $('#r-owner').value.trim();
   const phone = $('#r-phone').value.trim();
@@ -2800,6 +2804,7 @@ async function submitReg() {
     urgency: $('#r-urg').value,
     examNum: examNum,
     ms: nowMs(),
+    iabd: horse.iabd || '',
     age: horse.age, breed: horse.breed, province: horse.province, soum: horse.soum
   };
   STATE.waiting.push(wait);
@@ -2863,7 +2868,12 @@ function renderWDetail() {
   if (actions) actions.style.display = 'flex';
   $('#w-detail-title').innerHTML = `📌 ${escHTML(w.horse)} - ${escHTML(w.owner)}` +
     (w.examNum ? ` <span class="badge b-o" style="margin-left:8px">${escHTML(w.examNum)}</span>` : '');
+  // 🏷 Ирсэн адууны бүртгэлийн дугаар (ИАБД) — адууны картаас (засвал шинэчлэгдэнэ), байхгүй бол бүртгэх үеийн хуулбар
+  const wHorse = w.horseId ? horseById(w.horseId) : null;
+  const wIabd = (wHorse && wHorse.iabd) || w.iabd || '';
   $('#w-detail-body').innerHTML = `
+    <div class="fld" style="margin-bottom:8px"><label>ИАБД <span style="font-weight:400;color:var(--muted,#999);font-size:11px">(Ирсэн адууны бүртгэлийн дугаар)</span></label>
+      <div class="bold" style="font-size:15px;letter-spacing:.3px">${wIabd ? escHTML(wIabd) : '<span class="muted" style="font-weight:600">— бүртгээгүй</span>'}</div></div>
     <div class="fg r2">
       <div class="fld"><label>Эзэн</label><div class="bold">${escHTML(w.owner)}</div></div>
       <div class="fld"><label>Утас</label><div class="bold">${escHTML(w.phone)}</div></div>
@@ -3678,7 +3688,7 @@ function _inpCardHTML(i) {
         <span class="inpc-tag ${i.location ? 'inpc-tag-loc' : 'inpc-tag-none'}">📍 ${escHTML(i.location || 'Байрлал заагаагүй')}</span>
         ${watchTags}
       </div>
-      <div class="inpc-diag">${escHTML(i.diagnosis || '—')}</div>
+      <div class="inpc-diag">${escHTML(i.diagnosis || i.anamnesis || '—')}</div>
       <div class="inpc-foot">
         <span class="inpc-adm">${escHTML(i.admittedDate || '')}</span>
         <span class="inpc-pay ${due > 0 ? 'inpc-pay-due' : 'inpc-pay-ok'}">${due > 0 ? fmt(due) + ' дутуу' : 'Төлбөр бүрэн'}</span>
@@ -4142,10 +4152,13 @@ function renderInpInfoTab(i) {
   const num = inpExamNum(i);
   $('#inp-info-body').innerHTML = `
     ${i.fromExam ? `<div style="background:var(--purple-soft);color:var(--purple);padding:8px 12px;border-radius:8px;margin-bottom:8px;font-size:12.5px;font-weight:700">🔁 Түүхээс үзлэгээс шилжүүлсэн · ${escHTML(i.fromExam.by || '')} · ${escHTML(fmtDateTime(i.fromExam.ms))}${i.fromExam.paid ? ' · ' + fmt(i.fromExam.paid) + ' урьдчилгаа болсон' : ''}</div>` : ''}
-    <div style="background:var(--orange-soft);padding:8px 12px;border-radius:8px;margin-bottom:10px;font-weight:800;color:var(--orange-dark);font-size:14px">🔢 Үзлэгийн хуудасны дугаар: ${num ? escHTML(num) : '<span class="muted" style="font-weight:600">— олдсонгүй (үзлэг холбогдоогүй)</span>'}</div>
+    ${i.direct && !num
+      ? `<div style="background:var(--green-soft);padding:8px 12px;border-radius:8px;margin-bottom:10px;font-weight:800;color:var(--green);font-size:13.5px">🐎 Үржүүлгийн адуу — үзлэгийн хуудасны дугааргүй, шууд хүлээн авсан <span style="font-weight:600">· ${escHTML(i.admittedBy || '')} · ${escHTML(fmtDateTime(i.admittedMs))}</span></div>`
+      : `<div style="background:var(--orange-soft);padding:8px 12px;border-radius:8px;margin-bottom:10px;font-weight:800;color:var(--orange-dark);font-size:14px">🔢 Үзлэгийн хуудасны дугаар: ${num ? escHTML(num) : '<span class="muted" style="font-weight:600">— олдсонгүй (үзлэг холбогдоогүй)</span>'}</div>`}
     <div class="fg r2">
       <div class="fld"><label>Эзэн</label><div class="bold">${escHTML(i.owner)}</div></div>
-      <div class="fld"><label>Утас</label><div class="bold">${escHTML(i.phone)}</div></div>
+      <div class="fld"><label>Утас</label><div class="bold">${escHTML(i.phone || '—')}</div></div>
+      ${i.direct ? `<div class="fld"><label>ИАБД <span class="muted" style="font-weight:400;font-size:10px">(ирсэн адууны бүртгэлийн дугаар)</span></label><div class="bold">${escHTML((typeof inpIabd === 'function' && inpIabd(i)) || '—')}</div></div>` : ''}
       <div class="fld"><label>Эмчлэгч эмч</label><select class="inp" onchange="setInpField('docId', this.value)">${docOpts}</select></div>
       <div class="fld"><label>📍 Байрлал</label><select class="inp" onchange="setInpField('location', this.value)">${locOpts}</select></div>
       <div class="fld"><label>Орсон огноо</label><div class="bold">${escHTML(i.admittedDate)}${i.discharged ? ' → ' + escHTML(i.dischargedDate || '') : ''}</div></div>
@@ -4154,8 +4167,9 @@ function renderInpInfoTab(i) {
     </div>
     ${typeof breedInfoRowHTML === 'function' ? breedInfoRowHTML(i) : ''}
     <div class="fld" style="margin-top:8px"><label>Анхны онош ${(() => { const ex = i.examId ? _dxExam(i.examId) : null; return ex ? dxBadgeHTML(ex, { small: true }) + (dxIsOpen(ex) ? ` <a href="#" style="font-size:11px" onclick="openDxModal('${escHTML(ex.id)}');return false;">хянах ›</a>` : '') : ''; })()}</label>
-      <div style="background:var(--input);padding:10px;border-radius:8px;font-size:13px">${escHTML(i.diagnosis)}</div>
+      <div style="background:var(--input);padding:10px;border-radius:8px;font-size:13px">${i.diagnosis ? escHTML(i.diagnosis) : (i.direct ? '<span class="muted">— эхний эмчилгээний бичлэгт онош бичихэд энд бөглөгдөнө</span>' : '')}</div>
     </div>
+    ${i.direct && i.anamnesis ? `<div class="fld" style="margin-top:8px"><label>📝 Ирсэн шалтгаан / анамнез</label><div style="background:var(--input);padding:10px;border-radius:8px;font-size:13px;white-space:pre-wrap">${escHTML(i.anamnesis)}</div></div>` : ''}
   `;
 
   // Day-by-day list (NO amounts) — эмчилгээний бичлэг + тухайн өдрийн төлөвлөгөө
@@ -4557,6 +4571,8 @@ function addInpLog() {
   if (i.discharged && i.dischargedDate && date > i.dischargedDate) { toast('Гарсан огноо (' + i.dischargedDate + ')-оос хойш бичлэг оруулах боломжгүй — эхлээд «🗓 Гарсан огноо засах»', 'err'); return; }
   if (!Array.isArray(i.log)) i.log = [];
   i.log.push(log);
+  // 🐎 Шууд хүлээн авсан (үзлэггүй) адуу: анхны онош хоосон тул эхний бичлэгийн оношоор бөглөнө
+  if (i.direct && !i.diagnosis && diag) i.diagnosis = diag;
   i.ms = nowMs();
   saveAll();
   fbSaveRecord('inps', i);
@@ -4700,10 +4716,13 @@ function cancelInpatient() {
   if (!i) return;
   // 🏥 Түүхээс шилжүүлсэн адуу: хүлээлт рүү БИШ — анхны үзлэг/нэхэмжлэхийг сэргээнэ (үзлэг устгагдахгүй)
   if (i.fromExam) { revertInpToExam(i.id); return; }
-  if (!confirm(
-    'Энэ байрлагчийг хүлээлт рүү буцаах уу?\n\n' +
-    'Байрлан эмчилгээний бичлэг бүрмөсөн арилна.\n' +
-    'Холбогдох үзлэг болон нэхэмжлэхүүд устгагдана.'
+  if (!confirm(i.direct
+    ? '🐎 Энэ үржүүлгийн адууны шууд бүртгэлийг цуцалж хүлээлт рүү буцаах уу?\n\n' +
+      'Байрлан эмчилгээний бичлэг (өдрийн эмчилгээний хамт) бүрмөсөн арилна.\n' +
+      'Хүлээлтээс үзлэг эхлүүлбэл үзлэгийн хуудасны дугаар автоматаар олгогдоно.'
+    : 'Энэ байрлагчийг хүлээлт рүү буцаах уу?\n\n' +
+      'Байрлан эмчилгээний бичлэг бүрмөсөн арилна.\n' +
+      'Холбогдох үзлэг болон нэхэмжлэхүүд устгагдана.'
   )) return;
 
   // Find related exam
@@ -4723,7 +4742,7 @@ function cancelInpatient() {
     horse: i.horse,
     owner: i.owner,
     phone: i.phone,
-    symptoms: i.diagnosis || (exam && exam.diagnosis) || '',
+    symptoms: i.diagnosis || (exam && exam.diagnosis) || i.anamnesis || '',
     urgency: 'green',
     examNum: exam && exam.examNum ? exam.examNum : '',
     ms: nowMs(),
@@ -4914,6 +4933,7 @@ function confirmDischarge() {
     id: uid(),
     examId: i.examId,
     examNum: examNum,
+    ...(i.horseId ? { horseId: i.horseId } : {}), // адууны карт (ИАБД) руу зүсээр биш id-аар холбоно
     horse: i.horse, owner: i.owner, phone: i.phone,
     docName: i.docName,
     amount: grandTotal,
@@ -6510,7 +6530,7 @@ function printInpBook(inpId) {
   if (!i) { toast('Байрлан эмчилгээний бичлэг олдсонгүй', 'err'); return; }
   const ex = i.examId ? recById('exams', i.examId) : null;
   const h = (ex && horseOf(ex)) || horseOf(i);
-  const an = ex ? examAnamnesis(ex) : { text: '', symptoms: [] };
+  const an = ex ? examAnamnesis(ex) : { text: i.anamnesis || '', symptoms: [] }; // 🐎 шууд хүлээн авсан адуу: бүртгэх үеийн шалтгаан
   const logs = Array.isArray(i.log) ? [...i.log].sort((a, b) => ((a.date || '') + (a.ms || 0)) > ((b.date || '') + (b.ms || 0)) ? 1 : -1) : [];
   const days = inpatientDays(i.admittedMs, i.dischargedMs);
   const admDate = i.admittedDate || (i.admittedMs ? localDateStr(new Date(i.admittedMs)) : '—');
@@ -8799,6 +8819,9 @@ const EXPORT_FIELDS = {
     ['@discharged',   'Гарсан эсэх',     'is_discharged',   'Тийм/Үгүй', "Whether discharged"],
     ['@days',         'Хоног',           'days',            'Байрласан хоног', "Days hospitalised"],
     ['initialAmount', 'Анхны дүн',       'initial_amount',  'Хүлээн авах үеийн дүн ₮', "Amount charged on admission (MNT)"],
+    ['breeding',      'Үржүүлгийн адуу', 'is_breeding',     'true/false (хоосон = эзний нэрээр автомат)', "Breeding-farm horse flag (blank = auto by owner)"],
+    ['direct',        'Шууд хүлээн авсан','direct_intake',  'Үзлэгийн хуудасны дугааргүй шууд бүртгэсэн', "Admitted directly without an exam sheet number"],
+    ['anamnesis',     'Ирсэн шалтгаан',  'intake_reason',   'Шууд бүртгэх үеийн анамнез', "Reason / anamnesis recorded at direct intake"],
     ['@logAmount',    'Өдрийн эмчилгээний дүн','daily_treatment_amount','Өдрийн бичлэгүүдийн нийлбэр ₮', "Sum of daily treatment charges (MNT)"],
     ['@logCount',     'Өдрийн бичлэгийн тоо','log_entries', 'Өдрийн бичлэгийн тоо', "Number of daily log entries"],
     ['admittedMs',    'Орсон (ms)',      'admitted_at_ms',  'Орсон агшин', "Admitted at (epoch ms)"],

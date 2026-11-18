@@ -31,7 +31,7 @@
      ============================================================ -->
 <script type="module" src="firebase.js?v=20260925"></script>
 
-<link rel="stylesheet" href="style.css?v=20261112a">
+<link rel="stylesheet" href="style.css?v=20261118a">
 <link rel="stylesheet" href="halloween.css?v=20261030"><!-- 🎃 2026-10-31 хүртэл; дараа нь энэ мөр, доорх halloween.js мөрийг устгаж болно -->
 </head>
 <body>
@@ -247,7 +247,22 @@
           </div>
         </div>
 
-        <div class="card" style="border:2px solid var(--orange);background:var(--orange-soft)">
+        <!-- 🐎 Үржүүлгийн адуу: үзлэгийн хуудасны дугаар олгохгүй, шууд «Үржүүлгийн адуу» хэсэгт -->
+        <div class="card reg-brd" id="r-brd-card">
+          <label class="reg-brd-l">
+            <input type="checkbox" id="r-brd-on" onchange="regBreedToggle(this.checked, true)">
+            <span><b>🐎 Үржүүлгийн адуу</b> <span class="reg-brd-sub">— үзлэгийн хуудасны дугаар олгохгүй, шууд «Үржүүлгийн адуу» хэсэгт нэмнэ</span></span>
+          </label>
+          <div id="r-brd-extra" class="hidden">
+            <div class="fg r2" style="margin-top:10px">
+              <div class="fld"><label>📍 Байрлал</label><select class="inp" id="r-brd-loc"></select></div>
+              <div class="fld"><label>Эмчлэгч эмч</label><select class="inp" id="r-brd-doc"></select></div>
+            </div>
+            <div class="reg-brd-hint" id="r-brd-hint"></div>
+          </div>
+        </div>
+
+        <div class="card" id="r-examnum-card" style="border:2px solid var(--orange);background:var(--orange-soft)">
           <div class="ch">🔢 Үзлэгийн хуудасны дугаар</div>
           <div class="fg r2">
             <div class="fld">
@@ -279,7 +294,7 @@
           <div class="ch">👤 Эзний мэдээлэл</div>
           <div class="fg r3">
             <div class="fld"><label>Эзний нэр <span class="req">*</span></label><input class="inp" id="r-owner" placeholder="Овог нэр"></div>
-            <div class="fld"><label>Утас <span class="req">*</span></label><input class="inp" id="r-phone" placeholder="9999-9999" inputmode="tel"></div>
+            <div class="fld"><label>Утас <span class="req" id="r-phone-req">*</span></label><input class="inp" id="r-phone" placeholder="9999-9999" inputmode="tel"></div>
             <div class="fld"><label>Нэмэлт утас</label><input class="inp" id="r-phone2" placeholder="" inputmode="tel"></div>
           </div>
           <div class="fg r2">
@@ -295,7 +310,7 @@
         <div class="card">
           <div class="ch">📝 Анамнез</div>
           <div class="fg">
-            <div class="fld"><label>Шинж тэмдэг <span class="req">*</span></label>
+            <div class="fld"><label>Шинж тэмдэг <span class="req" id="r-symp-req">*</span></label>
               <textarea class="inp" id="r-symp" rows="3" placeholder="Юу болсон, хэзээ эхэлсэн..."></textarea>
             </div>
           </div>
@@ -311,7 +326,7 @@
           </div>
           <div class="row" style="justify-content:flex-end;margin-top:8px">
             <button class="btn" onclick="clearReg()">🔄 Цэвэрлэх</button>
-            <button class="btn btn-p" onclick="submitReg()">✅ Бүртгэж хүлээлгэнд оруулах</button>
+            <button class="btn btn-p" id="r-submit-btn" onclick="submitReg()">✅ Бүртгэж хүлээлгэнд оруулах</button>
           </div>
         </div>
       </section>
@@ -1183,6 +1198,7 @@
             <div class="ph-title">🐎 Үржүүлгийн адуу</div>
             <div class="ph-sub" id="br-sub">Эмнэлэгт байрлаж буй болон эмчлүүлсэн үржүүлгийн адуу, тооцоо</div>
           </div>
+          <div class="ph-r"><button class="btn btn-p btn-sm" id="br-add-btn" style="display:none" onclick="brNewIntake()" title="Ирсэн үржүүлгийн адууг үзлэгийн хуудасны дугааргүйгээр шууд бүртгэнэ">＋ Адуу хүлээн авах</button></div>
         </div>
         <div id="br-body"></div>
       </section>
@@ -1919,12 +1935,12 @@
 <div id="print-area"></div>
 
 <script src="mn-sums.js?v=20261112a"></script>
-<script src="app.js?v=20261112b"></script>
+<script src="app.js?v=20261118a"></script>
 <script src="lab.js?v=20261023"></script>
 <script src="pharmacy.js?v=20261110a"></script>
 <script src="timesheet.js?v=20261023"></script>
 <script src="dailyreport.js?v=20261023"></script>
-<script src="ops.js?v=20261110a"></script>
+<script src="ops.js?v=20261118a"></script>
 <script src="halloween.js?v=20261030"></script>
 
 <!-- PWA: service worker бүртгэх, автомат шинэчлэлт, суулгах товч -->

@@ -12,6 +12,8 @@
 //   clinic_config.opsCfg = { breed:{dailyFee, owners[], callReminder}, medStrict, erp:{ms,by,file,count} }
 //   inps.breeding  = true | false | (байхгүй → эзний нэрээр автомат)
 //   horses.breeding = true | false
+//   inps.direct = true — үзлэгийн хуудасны дугааргүй шууд хүлээн авсан үржүүлгийн адуу (2026-11-18);
+//                        inps.anamnesis = ирсэн шалтгаан, inps.examId = 'br-…' (үзлэгийн бичлэггүй)
 //   inps.assigns   = { 'YYYY-MM-DD': { docId, docName, task, by, ms } }
 //   clinic_config.medCatalog[] += { code, src:'erp', aliases[], cat }
 // ============================================================
@@ -171,6 +173,125 @@ function brStatus(i) {
 }
 function breedingInps() { return (STATE.inps || []).filter(isBreedingInp); }
 
+// ════════════════════════════════════════════════════════════
+// 🐎 ҮРЖҮҮЛГИЙН АДУУГ ШУУД ХҮЛЭЭН АВАХ (2026-11-18)
+// ------------------------------------------------------------
+// Үржүүлгийн адуу ирэхэд үзлэгийн хуудасны дугаар ОЛГОХГҮЙ (адуугүй
+// сорьцын шинжилгээтэй адил) — хүлээлт, үзлэгийн алхмыг алгасаж шууд
+// байрлагчийн бичлэг (inps) болж «Үржүүлгийн адуу» хэсэгт орно.
+//   inps: breeding:true, direct:true, examNum:'', initialAmount:0,
+//         anamnesis (ирсэн шалтгаан), examId:'br-…' (үзлэгийн бичлэггүй;
+//         гарах үеийн нэхэмжлэхтэй холбох ГАНЦ түлхүүр — хоосон орхивол
+//         бусад шууд бүртгэлийн нэхэмжлэхтэй холилдоно)
+//   horses: breeding:true
+// Онош: эхний өдрийн эмчилгээний бичлэгийн оношоор бөглөгдөнө (addInpLog).
+// Андуурсан бол байрлагчийн «Хүлээлт рүү буцаах» → үзлэг эхлүүлэхэд
+// дугаар автоматаар олгогдоно.
+// ════════════════════════════════════════════════════════════
+let __regBrdManual = false; // хэрэглэгч чагтыг өөрөө дарсан бол эзний нэрээр автоматаар солихгүй
+function inpIabd(i) {
+  const h = (i && i.horseId && typeof horseById === 'function') ? horseById(i.horseId) : null;
+  return (h && h.iabd) || (i && i.iabd) || '';
+}
+function regBreedOn() { const el = document.getElementById('r-brd-on'); return !!(el && el.checked); }
+function regBreedToggle(on, manual, hint) {
+  on = !!on;
+  if (manual) __regBrdManual = true;
+  const cb = document.getElementById('r-brd-on'); if (cb) cb.checked = on;
+  const show = (id, v) => { const el = document.getElementById(id); if (el) el.classList.toggle('hidden', !v); };
+  show('r-examnum-card', !on); show('r-brd-extra', on); show('r-phone-req', !on); show('r-symp-req', !on);
+  const card = document.getElementById('r-brd-card'); if (card) card.classList.toggle('on', on);
+  const btn = document.getElementById('r-submit-btn'); if (btn) btn.textContent = on ? '🐎 Үржүүлгийн адуу хэсэгт нэмэх' : '✅ Бүртгэж хүлээлгэнд оруулах';
+  const h = document.getElementById('r-brd-hint');
+  if (h) h.textContent = on ? ((hint ? hint + ' ' : '') + 'Хоногийн төлбөр ' + fmt(breedCfg().dailyFee) + ' · эмчилгээг «Байрлан эмчлүүлэх» хэсэгт өдөр бүр бичнэ.') : '';
+  if (on) {
+    const loc = document.getElementById('r-brd-loc'), doc = document.getElementById('r-brd-doc');
+    if (loc) { const cur = loc.value; loc.innerHTML = '<option value="">— заагаагүй —</option>' + inpLocations().map(l => '<option>' + escHTML(l) + '</option>').join(''); loc.value = cur; }
+    if (doc) { const cur = doc.value; doc.innerHTML = '<option value="">— заагаагүй —</option>' + (STATE.doctors || []).map(d => '<option value="' + escHTML(d.id) + '">' + escHTML(d.name) + '</option>').join(''); doc.value = cur; }
+  }
+}
+// Эзний нэр тохиргооны түлхүүр үгтэй таарвал горим автоматаар асна (гараар унтрааж болно)
+function regBreedAuto() {
+  if (__regBrdManual) return;
+  const o = String((document.getElementById('r-owner') || {}).value || '').trim();
+  const m = !!o && breedOwnerMatch(o);
+  if (m !== regBreedOn()) regBreedToggle(m, false, m ? '✓ Эзний нэрээр үржүүлгийн адуу гэж танигдлаа — биш бол чагтыг авна уу.' : '');
+}
+function regBreedReset() {
+  __regBrdManual = false;
+  ['r-brd-loc', 'r-brd-doc'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
+  regBreedToggle(false, false);
+}
+function regBreedInit() {
+  const o = document.getElementById('r-owner');
+  if (o && !o.dataset.brdBound) {
+    o.dataset.brdBound = '1';
+    o.addEventListener('input', regBreedAuto);
+    o.addEventListener('blur', regBreedAuto);
+    // Утсаар өмнөх эзэн автоматаар бөглөгдсөний дараа мөн шалгана
+    const ph = document.getElementById('r-phone'); if (ph) ph.addEventListener('blur', () => setTimeout(regBreedAuto, 0));
+  }
+  regBreedToggle(regBreedOn(), false);
+}
+// «Үржүүлгийн адуу» хуудасны «＋ Адуу хүлээн авах» товч
+function brNewIntake() {
+  if (!canAccess('register')) { toast('⛔ Адуу бүртгэх эрх алга', 'err'); return; }
+  nav('register');
+  regBreedToggle(true, true);
+  setTimeout(() => { const n = document.getElementById('r-name'); if (n) n.focus(); }, 100);
+}
+function submitBreedingIntake() {
+  const v = id => { const el = document.getElementById(id); return el ? String(el.value || '').trim() : ''; };
+  const name = v('r-name'), owner = v('r-owner'), phone = v('r-phone'), symp = v('r-symp'), iabd = v('r-iabd');
+  if (!name || !owner) { toast('Адууны зүс / нэр болон эзний нэрийг оруулна уу', 'err'); return; }
+  const date = v('r-date') || todayStr();
+  if (date > todayStr()) { toast('Ирсэн огноо ирээдүйд байж болохгүй', 'err'); return; }
+  // Давхар бүртгэлээс сэргийлнэ: ижил ИАБД-тай адуу байрлаж байвал хориглоно, ижил зүс+эзэн бол анхааруулна
+  const act = (STATE.inps || []).filter(i => i && !i.discharged);
+  if (iabd) {
+    const same = act.find(i => _opsKey(inpIabd(i)) === _opsKey(iabd));
+    if (same) { toast('⛔ ИАБД ' + iabd + ' дугаартай адуу («' + (same.horse || '') + '») одоо байрлаж байна (орсон: ' + (same.admittedDate || '') + ')', 'err'); return; }
+  }
+  const twin = act.find(i => _opsKey(i.horse) === _opsKey(name) && _opsKey(i.owner) === _opsKey(owner));
+  const docId = v('r-brd-doc');
+  const doc = (STATE.doctors || []).find(d => String(d.id) === String(docId));
+  const loc = v('r-brd-loc');
+  if (!confirm('🐎 Үржүүлгийн адууг хүлээн авах уу?\n\nАдуу: ' + name + (iabd ? ' (ИАБД ' + iabd + ')' : '') + '\nЭзэн: ' + owner +
+      '\n\nҮзлэгийн хуудасны дугаар олгохгүй — шууд «Үржүүлгийн адуу» хэсэгт (байрлагчийн жагсаалтад) нэмэгдэнэ. Хоногийн төлбөр ' + fmt(breedCfg().dailyFee) + '.' +
+      (twin ? '\n\n⚠ Ижил зүс, эзэнтэй адуу одоо байрлаж байна (орсон: ' + (twin.admittedDate || '') + '). Өөр адуу мөн бол үргэлжлүүлнэ үү.' : ''))) return;
+  const now = nowMs(), me = (STATE.user && STATE.user.name) || '';
+  const prov = v('r-prov');
+  const horse = {
+    id: uid(), name, owner, phone, phone2: v('r-phone2'), iabd,
+    age: v('r-age'), breed: v('r-breed'), mark: v('r-mark'),
+    province: prov, soum: (typeof mnSumCanon === 'function') ? mnSumCanon(prov, v('r-soum')) : v('r-soum'),
+    date, extra: v('r-extra'), breeding: true, createdAt: now, ms: now
+  };
+  const inp = {
+    id: uid(), examId: 'br-' + uid(), horseId: horse.id,
+    horse: name, owner, phone,
+    diagnosis: '', anamnesis: symp, examNum: '',
+    docId: doc ? doc.id : '', docName: doc ? doc.name : '',
+    location: loc,
+    admittedMs: date === todayStr() ? now : new Date(date + 'T12:00:00').getTime(), admittedDate: date, admittedBy: me,
+    initialAmount: 0, services: [], meds: [], log: [], discharged: false,
+    breeding: true, direct: true, urgency: v('r-urg') || 'green',
+    ms: now
+  };
+  STATE.horses.push(horse);
+  STATE.inps.push(inp);
+  saveAll();
+  fbSaveRecord('horses', horse);
+  fbSaveRecord('inps', inp);
+  writeLog('Үржүүлгийн адуу хүлээн авав', inp.id, name + ' — ' + owner,
+    'Үзлэгийн хуудасны дугааргүй, шууд байрлуулав' + (iabd ? ' · ИАБД ' + iabd : '') + (loc ? ' · ' + loc : '') + (symp ? ' · ' + symp : '') + ' · ' + ((typeof _deviceLabel === 'function') ? _deviceLabel() : ''));
+  toast('🐎 ' + name + ' «Үржүүлгийн адуу» хэсэгт нэмэгдлээ (үзлэгийн дугааргүй)', 'ok');
+  clearReg();
+  updateBadges();
+  if (canAccess('breeding')) { BR.tab = 'in'; nav('breeding'); }
+  else if (canAccess('inpatient')) nav('inpatient');
+}
+
 const BR = { tab: 'in', month: '', q: '' };
 function setBrTab(t) { BR.tab = t; renderBreeding(); }
 function renderBreeding() {
@@ -186,8 +307,9 @@ function renderBreeding() {
   const cfg = breedCfg();
   const sub = document.getElementById('br-sub');
   if (sub) sub.textContent = 'Хоногийн тариф ' + fmt(cfg.dailyFee) + ' · одоо ' + act.length + ' адуу байрлаж байна';
+  const addBtn = document.getElementById('br-add-btn'); if (addBtn) addBtn.style.display = canAccess('register') ? '' : 'none';
   const q = _opsKey(BR.q);
-  const hit = i => !q || _opsKey([i.horse, i.owner, i.diagnosis, i.location, i.docName, inpExamNum(i)].join(' ')).includes(q);
+  const hit = i => !q || _opsKey([i.horse, i.owner, i.diagnosis, i.anamnesis, i.location, i.docName, inpExamNum(i), inpIabd(i)].join(' ')).includes(q);
   let html = `
     <div class="br-sum">
       <div class="br-sum-c"><div class="br-sum-n">${act.length}</div><div class="br-sum-l">🛏 Одоо байрлаж буй</div></div>
@@ -213,13 +335,14 @@ function renderBreeding() {
       const total = getInpFullTotal(i);
       return `<div class="br-item" onclick="brOpen('${escHTML(i.id)}')">
         <div class="br-item-h"><span class="br-horse">🐎 ${escHTML(i.horse || '')}</span><span class="br-days">${days} хоног</span></div>
-        <div class="br-meta">👤 ${escHTML(i.owner || '—')} · 📍 ${escHTML(i.location || 'байрлал заагаагүй')} · 👨‍⚕️ ${escHTML(a ? a.docName : (d ? d.name : (i.docName || '—')))} · орсон ${escHTML(i.admittedDate || '')}</div>
-        <div class="br-diag">${escHTML(i.diagnosis || '—')}</div>
+        <div class="br-meta">👤 ${escHTML(i.owner || '—')}${inpIabd(i) ? ' · 🏷 ИАБД ' + escHTML(inpIabd(i)) : ''} · 📍 ${escHTML(i.location || 'байрлал заагаагүй')} · 👨‍⚕️ ${escHTML(a ? a.docName : (d ? d.name : (i.docName || '—')))} · орсон ${escHTML(i.admittedDate || '')}</div>
+        <div class="br-diag">${escHTML(i.diagnosis || i.anamnesis || '—')}</div>
         <div class="br-item-f"><span class="badge ${ts === 'done' ? 'b-g' : ts === 'missing' ? 'b-r' : ''}">${ts === 'done' ? '📝 Өнөөдөр эмчилгээ хийсэн' : ts === 'missing' ? '📝 Өнөөдөр бичээгүй' : '📝 Орсон өдөр'}</span>
           ${i.severity ? '<span class="badge b-o">' + escHTML(i.severity) + '</span>' : ''}
+          ${i.direct && !inpExamNum(i) ? '<span class="badge" title="Үзлэгийн хуудасны дугааргүй, шууд хүлээн авсан">🔢 дугааргүй</span>' : ''}
           <span class="br-amt">${fmt(total)} <small>хуримтлагдсан</small></span></div>
       </div>`; }).join('')}</div>`
-      : '<div class="empty"><div class="empty-em">🐎</div>Одоо байрлаж буй үржүүлгийн адуу алга<div class="muted" style="font-size:12px;margin-top:6px">Адууг «Байрлан эмчлүүлэх → Адууны мэдээлэл» дээр 🐎 гэж тэмдэглэх, эсвэл Тохиргоо → Эмнэлэг → Үржүүлгийн адуу хэсэгт эзний нэрийг оруулна.</div></div>';
+      : '<div class="empty"><div class="empty-em">🐎</div>Одоо байрлаж буй үржүүлгийн адуу алга<div class="muted" style="font-size:12px;margin-top:6px">Ирсэн адууг «Адуу бүртгэл» дээр 🐎 Үржүүлгийн адуу гэж чагтлаад бүртгэхэд (үзлэгийн дугааргүй) шууд энд орно. Аль хэдийн байрлаж буй адууг «Байрлан эмчлүүлэх → Адууны мэдээлэл» дээр 🐎 гэж тэмдэглэнэ.</div></div>';
   } else if (BR.tab === 'month') {
     const list = rows.filter(x => hit(x.i)).sort((a, b) => String(a.c.admDate).localeCompare(String(b.c.admDate)));
     const T = list.reduce((t, x) => { ['days', 'accom', 'svc', 'med', 'exam', 'home', 'total'].forEach(k => t[k] = (t[k] || 0) + x.c[k]); return t; }, {});
@@ -261,9 +384,11 @@ function brOpen(inpId) {
       <div class="fld"><label>Төлөв</label><div><span class="badge ${st.cls}">${escHTML(st.t)}</span></div></div>
       <div class="fld"><label>Байрлал</label><div class="bold">${escHTML(i.location || '—')}</div></div>
       <div class="fld"><label>Эмчлэгч эмч</label><div class="bold">${escHTML(d ? d.name : (i.docName || '—'))}</div></div>
-      <div class="fld"><label>Үзлэгийн №</label><div class="bold">${escHTML(inpExamNum(i) || '—')}</div></div>
+      <div class="fld"><label>Үзлэгийн №</label><div class="bold">${escHTML(inpExamNum(i) || (i.direct ? '— (дугааргүй, шууд хүлээн авсан)' : '—'))}</div></div>
+      <div class="fld"><label>ИАБД</label><div class="bold">${escHTML(inpIabd(i) || '—')}</div></div>
     </div>
     <div class="fld" style="margin-top:8px"><label>Онош</label><div style="background:var(--input);padding:8px 10px;border-radius:8px;font-size:13px">${escHTML(i.diagnosis || '—')}</div></div>
+    ${i.anamnesis ? `<div class="fld" style="margin-top:8px"><label>📝 Ирсэн шалтгаан / анамнез</label><div style="background:var(--input);padding:8px 10px;border-radius:8px;font-size:13px;white-space:pre-wrap">${escHTML(i.anamnesis)}</div></div>` : ''}
     <div class="ch" style="margin-top:12px">💰 Тооцоо</div>
     <div class="tbl-wrap"><table><tbody>
       <tr><td>Анхны үзлэг</td><td style="text-align:right">${fmt(exam)}</td></tr>
@@ -287,8 +412,8 @@ function _brMonthRows() {
     .sort((a, b) => String(a.c.admDate).localeCompare(String(b.c.admDate)));
 }
 function brExportCSV() {
-  const rows = [['Адуу', 'Эзэн', 'Үзлэгийн №', 'Орсон', 'Гарсан', 'Сарын хоног', 'Хоногийн тариф', 'Хоногийн хөлс', 'Үзлэг', 'Эмчилгээ', 'Эм', 'Нийт', 'Төлөв']];
-  _brMonthRows().forEach(({ i, c }) => rows.push([i.horse, i.owner, inpExamNum(i), c.admDate, c.outDate, c.days, c.fee, c.accom, c.exam, c.svc, c.med + c.home, c.total, brStatus(i).t]));
+  const rows = [['Адуу', 'Эзэн', 'ИАБД', 'Үзлэгийн №', 'Орсон', 'Гарсан', 'Сарын хоног', 'Хоногийн тариф', 'Хоногийн хөлс', 'Үзлэг', 'Эмчилгээ', 'Эм', 'Нийт', 'Төлөв']];
+  _brMonthRows().forEach(({ i, c }) => rows.push([i.horse, i.owner, inpIabd(i), inpExamNum(i), c.admDate, c.outDate, c.days, c.fee, c.accom, c.exam, c.svc, c.med + c.home, c.total, brStatus(i).t]));
   _opsCSV('urjuulgiin-aduu-' + BR.month + '.csv', rows);
 }
 function brPrintMonth() {

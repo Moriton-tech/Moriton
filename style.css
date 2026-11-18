@@ -1908,3 +1908,12 @@ details.adm-danger[open] > summary::before { content: '▾ '; }
 .mn-sum-hint { display: block; font-size: 11px; margin-top: 3px; color: var(--green); }
 .mn-sum-hint.warn { color: #a15c00; }
 .mn-sum-hint a { color: inherit; font-weight: 700; text-decoration: underline; }
+
+/* 🐎 Бүртгэл: үржүүлгийн адууны горим (2026-11-18) */
+.reg-brd { border: 2px solid var(--border); transition: background .15s, border-color .15s; }
+.reg-brd.on { border-color: var(--green); background: var(--green-soft); }
+.reg-brd-l { display: flex; gap: 10px; align-items: center; cursor: pointer; font-size: 14px; line-height: 1.4; }
+.reg-brd-l input { width: 20px; height: 20px; flex-shrink: 0; accent-color: var(--green); }
+.reg-brd-sub { color: var(--muted); font-weight: 600; font-size: 12.5px; }
+.reg-brd-hint { font-size: 12px; font-weight: 700; color: var(--green); margin-top: 8px; line-height: 1.5; }
+.reg-brd-hint:empty { display: none; }
