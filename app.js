@@ -3534,6 +3534,120 @@ function setInpField(field, value) {
   renderInpatient();
   toast('✅ Хадгалагдлаа', 'ok');
 }
+// ============================================================
+// 🔪 МЭС ЗАСАЛД ХҮЛЭЭГДЭЖ БУЙ — мэс засалд орох адууг өмнөх өдөр нь
+// барьж байрлуулдаг тул байрлагчдаас тусад нь ялгаж харуулна.
+// inps.surgery = { pending:true, date:'YYYY-MM-DD', note, by, ms }
+// Хийгдсэн / цуцалсан үед inps.surgeryLog[]-д түүх болж үлдэнэ.
+// ============================================================
+function inpSurgPending(i) { return !!(i && !i.discharged && i.surgery && i.surgery.pending); }
+function inpSurgList(list) {
+  return (list || STATE.inps || []).filter(inpSurgPending)
+    .sort((a, b) => String(a.surgery.date || '9999').localeCompare(String(b.surgery.date || '9999')) || (a.surgery.ms || 0) - (b.surgery.ms || 0));
+}
+function inpSurgWhen(s) {
+  const d = s && s.date; if (!d) return { txt: 'огноо товлоогүй', cls: '' };
+  const t = todayStr(), tm = addDaysStr(t, 1);
+  if (d < t) return { txt: d.slice(5) + ' · хоцорсон', cls: 'late' };
+  if (d === t) return { txt: 'өнөөдөр', cls: 'now' };
+  if (d === tm) return { txt: 'маргааш', cls: 'soon' };
+  return { txt: d.slice(5), cls: '' };
+}
+function ensureSurgStyles() {
+  if (document.getElementById('surg-styles')) return;
+  const st = document.createElement('style'); st.id = 'surg-styles';
+  st.textContent = `
+  .inpc.inpc-surg{border-left-color:#d9480f;background:linear-gradient(180deg,#fff4ec 0,var(--card,#fff) 46px)}
+  .inpc-tag.inpc-tag-surg{background:#ffe8d9;color:#b63b06;border-color:#f6c3a3;font-weight:800}
+  .inpc-tag.inpc-tag-surg.late,.inpc-tag.inpc-tag-surg.now{background:#d9480f;color:#fff;border-color:#d9480f}
+  .inp-surg-group{grid-column:1/-1;background:#fff4ec;border:1.5px solid #f6c3a3;border-radius:14px;padding:10px 12px 12px;margin-bottom:4px}
+  .inp-surg-group .inp-group-h{background:#ffe1cc;color:#8f2e05}
+  .surg-box{border-radius:10px;padding:10px 12px;margin-bottom:10px;font-size:13px;line-height:1.5}
+  .surg-box.on{background:#fff4ec;border:1.5px solid #f6c3a3;color:#8f2e05}
+  .surg-box.off{background:var(--input,#faf9fc);border:1px dashed var(--border,#e9e6f0)}
+  .surg-box .row{gap:6px;flex-wrap:wrap;margin-top:8px}
+  .d-alert.d-alert-surg{background:#fff4ec;border-color:#f6c3a3;color:#8f2e05}
+  @media (max-width:700px){.surg-box .row .btn{flex:1;min-height:40px}}`;
+  document.head.appendChild(st);
+}
+function inpSurgTagHTML(i) {
+  if (!inpSurgPending(i)) return '';
+  const w = inpSurgWhen(i.surgery);
+  return `<span class="inpc-tag inpc-tag-surg ${w.cls}" title="${escHTML(i.surgery.note || 'Мэс засалд орохоор хүлээгдэж буй')}">🔪 Мэс засал · ${escHTML(w.txt)}</span>`;
+}
+function renderInpSurgBlock(i) {
+  ensureSurgStyles();
+  const box = $('#inp-surg-block'); if (!box) return;
+  if (i.discharged) { box.innerHTML = ''; return; }
+  const can = canEditData();
+  const hist = (Array.isArray(i.surgeryLog) ? i.surgeryLog : []).slice().reverse();
+  const histHTML = hist.length ? `<div class="muted" style="font-size:11.5px;margin-top:6px">${hist.map(h => (h.status === 'done' ? '✅ Мэс засал хийгдсэн ' + escHTML(h.doneDate || '') : '✕ Цуцалсан ' + escHTML(h.doneDate || '')) + (h.note ? ' · ' + escHTML(h.note) : '') + ' · ' + escHTML(h.doneBy || '')).join('<br>')}</div>` : '';
+  if (inpSurgPending(i)) {
+    const s = i.surgery, w = inpSurgWhen(s);
+    box.innerHTML = `<div class="surg-box on">
+      <div style="font-weight:900;font-size:14px">🔪 Мэс засалд орохоор хүлээгдэж буй</div>
+      <div>📅 Товлосон: <b>${escHTML(s.date || '—')}</b> <span class="inpc-tag inpc-tag-surg ${w.cls}" style="display:inline-block">${escHTML(w.txt)}</span></div>
+      ${s.note ? `<div>📝 ${escHTML(s.note)}</div>` : ''}
+      <div class="muted" style="font-size:11.5px">Тэмдэглэсэн: ${escHTML(s.by || '')} · ${escHTML(fmtDateTime(s.ms))}</div>
+      ${can ? `<div class="row">
+        <button class="btn btn-sm btn-p" type="button" onclick="inpSurgDone()">✅ Мэс засал хийгдсэн</button>
+        <button class="btn btn-sm" type="button" onclick="inpSurgOpenForm()">✏️ Засах</button>
+        <button class="btn btn-sm" type="button" onclick="inpSurgCancel()">✕ Цуцлах</button>
+      </div>` : ''}
+      <div id="inp-surg-form"></div>${histHTML}
+    </div>`;
+  } else {
+    box.innerHTML = `<div class="surg-box off">
+      ${can ? `<button class="btn btn-sm" type="button" onclick="inpSurgOpenForm()">🔪 Мэс засалд оруулахаар тэмдэглэх</button>
+      <span class="muted" style="font-size:11.5px;margin-left:4px">Маргааш мэс засалд орох адууг тэмдэглэвэл жагсаалтын дээд хэсэгт ялгарч харагдана.</span>` : '<span class="muted" style="font-size:12px">🔪 Мэс засал товлоогүй</span>'}
+      <div id="inp-surg-form"></div>${histHTML}
+    </div>`;
+  }
+}
+function inpSurgOpenForm() {
+  const i = STATE.inps.find(x => String(x.id) === String(STATE.selectedI)); if (!i) return;
+  const f = $('#inp-surg-form'); if (!f) return;
+  const s = inpSurgPending(i) ? i.surgery : {};
+  f.innerHTML = `<div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:10px;background:var(--card,#fff);border:1px solid var(--border,#e9e6f0);border-radius:10px;padding:10px">
+    <div class="fld" style="flex:0 1 170px;min-width:140px"><label>📅 Мэс засал хийх өдөр</label><input class="inp" type="date" id="inp-surg-date" value="${escHTML(s.date || addDaysStr(todayStr(), 1))}"></div>
+    <div class="fld" style="flex:1 1 220px"><label>Тэмдэглэл <span class="muted" style="font-weight:400;font-size:10px">(заавал биш)</span></label><input class="inp" id="inp-surg-note" value="${escHTML(s.note || '')}" placeholder="ж: Кастрация, хоол өгөхгүй байх, 08:00-д бэлэн болгох..."></div>
+    <div class="row" style="gap:6px;width:100%">
+      <button class="btn btn-sm btn-p" type="button" onclick="inpSurgSave()">💾 Хадгалах</button>
+      <button class="btn btn-sm" type="button" onclick="document.getElementById('inp-surg-form').innerHTML=''">Болих</button>
+    </div></div>`;
+}
+function _inpSurgCommit(i, logTitle, detail) {
+  i.ms = nowMs();
+  saveAll(); fbSaveRecord('inps', i);
+  writeLog(logTitle, i.id, i.horse, detail);
+  renderInpatient(); renderIDetail();
+  try { if (STATE.activePage === 'dashboard' && typeof renderDashAlerts === 'function') renderDashAlerts(); } catch (_) {}
+}
+function inpSurgSave() {
+  const i = STATE.inps.find(x => String(x.id) === String(STATE.selectedI)); if (!i) return;
+  if (!canEditData()) { toast('⛔ Засах эрхгүй', 'err'); return; }
+  const date = ($('#inp-surg-date') || {}).value || '';
+  const note = (($('#inp-surg-note') || {}).value || '').trim();
+  if (!date) { toast('Мэс засал хийх өдрийг сонгоно уу', 'err'); return; }
+  const was = inpSurgPending(i);
+  i.surgery = Object.assign({}, was ? i.surgery : { by: STATE.user ? STATE.user.name : '', ms: nowMs() }, { pending: true, date, note });
+  if (was) { i.surgery.editedBy = STATE.user ? STATE.user.name : ''; i.surgery.editedMs = nowMs(); }
+  _inpSurgCommit(i, was ? 'Мэс засал товлолт засав' : 'Мэс засалд хүлээгдэж буй болгов', date + (note ? ' · ' + note : ''));
+  toast('🔪 Мэс засалд хүлээгдэж буй — ' + date, 'ok');
+}
+function _inpSurgClose(status) {
+  const i = STATE.inps.find(x => String(x.id) === String(STATE.selectedI)); if (!inpSurgPending(i)) return;
+  if (!canEditData()) { toast('⛔ Засах эрхгүй', 'err'); return; }
+  if (!confirm(status === 'done' ? i.horse + ' — мэс засал хийгдсэн гэж тэмдэглэх үү?' : i.horse + ' — мэс засал товлолтыг цуцлах уу?')) return;
+  if (!Array.isArray(i.surgeryLog)) i.surgeryLog = [];
+  const s = Object.assign({}, i.surgery, { pending: false, status, doneDate: todayStr(), doneBy: STATE.user ? STATE.user.name : '', doneMs: nowMs() });
+  i.surgeryLog.push(s); i.surgery = null; // delete биш — бусад төхөөрөмжийн Object.assign sync-д арилах ёстой
+  _inpSurgCommit(i, status === 'done' ? 'Мэс засал хийгдсэн' : 'Мэс засал товлолт цуцлав', (s.date || '') + (s.note ? ' · ' + s.note : ''));
+  toast(status === 'done' ? '✅ Тэмдэглэгдлээ — өнөөдрийн эмчилгээний бичлэгт мэс заслаа бичнэ үү' : '✕ Товлолт цуцлагдлаа', 'ok');
+}
+function inpSurgDone() { _inpSurgClose('done'); }
+function inpSurgCancel() { _inpSurgClose('cancel'); }
+
 function renderInpLocCfg() {
   const ta = $('#inp-loc-list'); if (!ta) return;
   ta.value = inpLocations().join('\n');
@@ -3566,6 +3680,7 @@ function _inpDaysOk(i, f) {
   if (f === 'call') return inpCallState(i).due;
   if (f === 'notreat') return inpTreatStatus(i, todayStr()) === 'missing';
   if (f === 'noplan') return !inpPlanFor(i, addDaysStr(todayStr(), 1));
+  if (f === 'surg') return inpSurgPending(i);
   return true;
 }
 // Хоногийн шүүлтийн select ба «хэдэн хоногтой хэдэн адуу» чипсийг тоотой нь шинэчилнэ
@@ -3581,7 +3696,7 @@ function _inpRenderDaysUI(active) {
     sel.innerHTML = opt('', 'Бүх хоног', active.length) +
       '<optgroup label="Яг хэдэн хоног">' + ds.map(d => opt('eq:' + d, d + ' хоног', cnt[d])).join('') + '</optgroup>' +
       '<optgroup label="Хоорондох">' + INP_DAY_RANGES.map(r => opt(r[0], r[1], active.filter(i => { const d = inpatientDays(i.admittedMs); return d >= r[2] && d <= r[3]; }).length)).join('') + '</optgroup>' +
-      '<optgroup label="Хяналт">' + opt('call', '📞 Эзэнд залгах', callN) + opt('notreat', '📝 Өнөөдөр эмчилгээ бичээгүй', noTreatN) + opt('noplan', '🗓 Маргаашийн төлөвлөгөөгүй', noPlanN) + '</optgroup>';
+      '<optgroup label="Хяналт">' + opt('call', '📞 Эзэнд залгах', callN) + opt('notreat', '📝 Өнөөдөр эмчилгээ бичээгүй', noTreatN) + opt('noplan', '🗓 Маргаашийн төлөвлөгөөгүй', noPlanN) + opt('surg', '🔪 Мэс засалд хүлээгдэж буй', active.filter(inpSurgPending).length) + '</optgroup>';
     if (INP_DAYS_F && sel.value !== INP_DAYS_F) { // хүчингүй болсон шүүлт (ж: тэр хоногтой адуу үлдээгүй)
       sel.insertAdjacentHTML('afterbegin', opt(INP_DAYS_F, INP_DAYS_F.startsWith('eq:') ? INP_DAYS_F.slice(3) + ' хоног' : INP_DAYS_F, 0)); sel.value = INP_DAYS_F;
     }
@@ -3671,9 +3786,9 @@ function _inpCardHTML(i) {
     (ts === 'done' ? '<span class="inpc-tag inpc-tag-ok">📝 Өнөөдөр бичсэн</span>' : ts === 'missing' ? '<span class="inpc-tag" title="Өнөөдрийн эмчилгээ хараахан бичигдээгүй">📝 Өнөөдөр бичээгүй</span>' : '') +
     (tmr ? `<span class="inpc-tag inpc-tag-ok" title="${escHTML(tmr.text)}">🗓 Маргааш ✓</span>` : '');
   return `
-    <div class="inpc ${due > 0 ? 'inpc-due' : ''}" data-id="${i.id}">
+    <div class="inpc ${due > 0 ? 'inpc-due' : ''} ${inpSurgPending(i) ? 'inpc-surg' : ''}" data-id="${i.id}">
       <div class="inpc-top">
-        <div class="inpc-av">🐴</div>
+        <div class="inpc-av">${inpSurgPending(i) ? '🔪' : '🐴'}</div>
         <div class="inpc-names">
           <div class="inpc-horse">${escHTML(i.horse)}</div>
           <div class="inpc-owner">Эзэн: <b>${escHTML(i.owner)}</b></div>
@@ -3681,6 +3796,7 @@ function _inpCardHTML(i) {
         <div class="inpc-days ${dClass}">${days} хоног</div>
       </div>
       <div class="inpc-tags">
+        ${inpSurgTagHTML(i)}
         ${inpExamNum(i) ? `<span class="inpc-tag inpc-tag-num">🔢 ${escHTML(inpExamNum(i))}</span>` : ''}
         ${(typeof isBreedingInp === 'function' && isBreedingInp(i)) ? '<span class="inpc-tag inpc-tag-breed" title="Үржүүлгийн адуу — тусдаа хоногийн тариф, эзэнд залгах сануулгагүй">🐎 Үржүүлгийн</span>' : ''}
         ${(typeof asgTagHTML === 'function') ? asgTagHTML(i) : ''}
@@ -3773,6 +3889,7 @@ function _renderInpOutView(list, F) {
 
 function renderInpatient() {
   ensureInpCardStyles();
+  ensureSurgStyles();
   ensureReviewStyles();
   ensureInpDrawer();
   const active = STATE.inps.filter(i => !i.discharged);
@@ -3804,8 +3921,10 @@ function renderInpatient() {
     const longN = active.filter(i => inpatientDays(i.admittedMs) > 20).length;
     const callN = active.filter(i => inpCallState(i).due).length;
     const noTreatN = active.filter(i => inpTreatStatus(i, todayStr()) === 'missing').length;
+    const surgN = active.filter(inpSurgPending).length;
     sum.innerHTML = `
       <div class="inp-sum-card"><div class="inp-sum-n">${active.length}</div><div class="inp-sum-l">байрлаж байна</div></div>
+      <div class="inp-sum-card" style="cursor:pointer;${surgN ? 'background:#fff4ec;border-color:#f6c3a3' : ''}" onclick="setInpDaysF('surg')" title="Мэс засалд орохоор хүлээгдэж буй адуу"><div class="inp-sum-n" style="${surgN ? 'color:#b63b06' : ''}">${surgN}</div><div class="inp-sum-l">🔪 мэс засал хүлээж буй</div></div>
       <div class="inp-sum-card ${callN ? 'inp-sum-warn' : ''}" style="cursor:pointer" onclick="setInpDaysF('call')" title="${callCfg().firstDay}+ хоносон, эзэнд нь мэдээлээгүй адуу"><div class="inp-sum-n">${callN}</div><div class="inp-sum-l">📞 эзэнд залгах</div></div>
       <div class="inp-sum-card" style="cursor:pointer" onclick="setInpDaysF('notreat')" title="Өнөөдрийн эмчилгээ хараахан бичигдээгүй адуу"><div class="inp-sum-n">${noTreatN}</div><div class="inp-sum-l">📝 өнөөдөр бичээгүй</div></div>
       <div class="inp-sum-card"><div class="inp-sum-n">${used.size}<span class="muted">/${locs.length}</span></div><div class="inp-sum-l">байрлал ашиглалт</div></div>
@@ -3826,7 +3945,12 @@ function renderInpatient() {
     return;
   }
   const filtered = _inpApplyFilter(active, F);
-  const filteredNote = filtered.length !== active.length ? `<div class="muted" style="grid-column:1/-1;font-size:11.5px">Шүүлтээр ${filtered.length} / ${active.length} адуу</div>` : '';
+  let filteredNote = filtered.length !== active.length ? `<div class="muted" style="grid-column:1/-1;font-size:11.5px">Шүүлтээр ${filtered.length} / ${active.length} адуу</div>` : '';
+  // 🔪 Мэс засалд хүлээгдэж буй — бүх харагдацын дээд талд тусад нь
+  const surgItems = inpSurgList(filtered);
+  if (surgItems.length) filteredNote += `<div class="inp-surg-group">
+      <div class="inp-group-h"><span>🔪 Мэс засалд орохоор хүлээгдэж буй</span><span>${surgItems.length} адуу</span></div>
+      <div class="inp-group-grid">${surgItems.map(_inpCardHTML).join('')}</div></div>`;
 
   if (INP_VIEW === 'loc') {
     const locs = inpLocations(); const byLoc = {}; filtered.forEach(i => { const k = i.location && locs.includes(i.location) ? i.location : '__none'; (byLoc[k] = byLoc[k] || []).push(i); });
@@ -3846,11 +3970,12 @@ function renderInpatient() {
     list.innerHTML = filteredNote + names.map(n => _inpGroupHTML('👨‍⚕️ ' + escHTML(n), byDoc[n])).join('') +
       ((byDoc.__none || []).length ? _inpGroupHTML('❔ Эмч заагаагүй', byDoc.__none) : '') + (!names.length && !(byDoc.__none || []).length ? '<div class="empty" style="grid-column:1/-1">Шүүлтэд тохирох адуу алга</div>' : '');
   } else {
-    // ===== Карт + хуудаслалт =====
-    const totalPages = Math.max(1, Math.ceil(filtered.length / INP_PER_PAGE));
+    // ===== Карт + хуудаслалт ===== (мэс заслынх дээр тусдаа харагдсан тул давхардуулахгүй)
+    const rest = filtered.filter(i => !inpSurgPending(i));
+    const totalPages = Math.max(1, Math.ceil(rest.length / INP_PER_PAGE));
     if (INP_PAGE > totalPages) INP_PAGE = totalPages;
     if (INP_PAGE < 1) INP_PAGE = 1;
-    const pageItems = filtered.slice((INP_PAGE - 1) * INP_PER_PAGE, INP_PAGE * INP_PER_PAGE);
+    const pageItems = rest.slice((INP_PAGE - 1) * INP_PER_PAGE, INP_PAGE * INP_PER_PAGE);
     let pagerHTML = '';
     if (totalPages > 1) {
       const nums = [];
@@ -3858,9 +3983,9 @@ function renderInpatient() {
       pagerHTML = `<div class="inpc-pager" style="grid-column:1/-1">
         <button type="button" class="inpc-pg" ${INP_PAGE <= 1 ? 'disabled' : ''} onclick="inpGoPage(${INP_PAGE - 1})">‹</button>${nums.join('')}
         <button type="button" class="inpc-pg" ${INP_PAGE >= totalPages ? 'disabled' : ''} onclick="inpGoPage(${INP_PAGE + 1})">›</button>
-        <span class="inpc-pg-info">${(INP_PAGE - 1) * INP_PER_PAGE + 1}–${Math.min(INP_PAGE * INP_PER_PAGE, filtered.length)} / ${filtered.length}</span></div>`;
+        <span class="inpc-pg-info">${(INP_PAGE - 1) * INP_PER_PAGE + 1}–${Math.min(INP_PAGE * INP_PER_PAGE, rest.length)} / ${rest.length}</span></div>`;
     }
-    list.innerHTML = filteredNote + (pageItems.length ? pageItems.map(_inpCardHTML).join('') : '<div class="empty" style="grid-column:1/-1">Шүүлтэд тохирох адуу алга</div>') + pagerHTML;
+    list.innerHTML = filteredNote + (pageItems.length ? pageItems.map(_inpCardHTML).join('') : (surgItems.length ? '' : '<div class="empty" style="grid-column:1/-1">Шүүлтэд тохирох адуу алга</div>')) + pagerHTML;
   }
 
   // Карт дарахад drawer нээж дэлгэрэнгүйг харуулна
@@ -3899,6 +4024,8 @@ function ensureInpDrawer() {
   drawer.id = 'inp-drawer';
   drawer.innerHTML = `
     <div id="inp-drawer-head">
+      <div id="inp-drawer-hname"></div>
+      <button id="inp-drawer-quick" type="button" onclick="inpJumpToTreat()" title="Өдрийн эмчилгээний маягт руу очих">📝 Эмчилгээ бичих</button>
       <button id="inp-drawer-close" type="button">✕ Хаах</button>
     </div>
     <div id="inp-drawer-body"></div>`;
@@ -3923,6 +4050,16 @@ function openInpDrawer() {
   const o = $('#inp-drawer-overlay'), w = $('#inp-drawer');
   if (o) o.classList.add('open');
   if (w) { w.classList.add('open'); w.scrollTop = 0; }
+}
+
+// 📝 Drawer-ийн наалддаг толгойн товч — хаанаас ч эмчилгээний маягт руу шууд
+function inpJumpToTreat() {
+  $$('.tab[data-itab]').forEach(x => x.classList.toggle('active', x.dataset.itab === 'treat'));
+  $$('.itab').forEach(x => x.classList.toggle('hidden', x.dataset.itab !== 'treat'));
+  const w = $('#inp-drawer'), f = $('#inp-log-date'), h = $('#inp-drawer-head');
+  if (!w || !f) return;
+  const top = f.getBoundingClientRect().top - w.getBoundingClientRect().top + w.scrollTop - ((h && h.offsetHeight) || 0) - 40;
+  w.scrollTo({ top: Math.max(0, top), behavior: 'smooth' });
 }
 
 function closeInpDrawer() {
@@ -4009,14 +4146,33 @@ function ensureInpCardStyles() {
   #inp-drawer{position:fixed;top:0;right:0;height:100%;width:min(680px,100vw);
     background:var(--bg,#f5f4f8);box-shadow:-8px 0 30px rgba(30,22,55,.18);
     transform:translateX(100%);transition:transform .25s ease;z-index:391;
-    overflow-y:auto;padding:12px 16px 40px;box-sizing:border-box}
+    overflow-y:auto;-webkit-overflow-scrolling:touch;overscroll-behavior:contain;
+    padding:0 16px calc(40px + env(safe-area-inset-bottom));box-sizing:border-box}
   #inp-drawer.open{transform:translateX(0)}
-  #inp-drawer-head{display:flex;justify-content:flex-end;position:sticky;top:0;z-index:2;padding:2px 0 8px}
+  /* 📱 iPhone PWA (black-translucent + viewport-fit=cover): статус мөр / notch-ийн доор
+     толгой нуугдахгүйн тулд safe-area-аар доош түлхэж, наалддаг толгойд дэвсгэр өгнө */
+  #inp-drawer-head{display:flex;justify-content:flex-end;align-items:center;gap:8px;position:sticky;top:0;z-index:5;
+    margin:0 -16px 8px;padding:calc(8px + env(safe-area-inset-top)) 16px 8px;
+    background:var(--bg,#f5f4f8);border-bottom:1px solid var(--border,#e9e6f0)}
+  #inp-drawer-hname{flex:1;min-width:0;font-weight:800;font-size:13.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  #inp-drawer-quick{border:1px solid var(--purple,#7c5cbf);background:var(--purple,#7c5cbf);color:#fff;border-radius:9px;
+    padding:7px 12px;font-size:12.5px;font-weight:800;cursor:pointer;font-family:inherit;white-space:nowrap}
   #inp-drawer-close{border:1px solid var(--border,#e9e6f0);background:var(--card,#fff);
     color:var(--muted,#5b5468);border-radius:9px;padding:7px 14px;font-size:12.5px;font-weight:700;
     cursor:pointer;font-family:inherit;box-shadow:0 2px 8px rgba(30,22,55,.12)}
   #inp-drawer-close:hover{border-color:var(--red,#c0483f);color:var(--red,#c0483f)}
   #inp-drawer #inp-detail-card{margin:0}
+  /* 📱 Утсан дээр: 3 таб бүгд харагдана (өмнө нь «Эмчилгээний бүртгэл» баруун талдаа тасарч нуугддаг байв) */
+  @media (max-width:700px){
+    #inp-drawer{padding-left:10px;padding-right:10px}
+    #inp-drawer-head{margin-left:-10px;margin-right:-10px;padding-left:10px;padding-right:10px}
+    #inp-drawer #inp-detail-card{padding:12px}
+    #inp-drawer #inp-detail-card > div:first-child{flex-wrap:wrap;gap:8px}
+    #inp-drawer #inp-detail-title{width:100%;font-size:15px}
+    #inp-drawer #inp-detail-card .tabs{display:grid !important;grid-template-columns:repeat(3,1fr);gap:4px;overflow:visible}
+    #inp-drawer #inp-detail-card .tab[data-itab]{white-space:normal;text-align:center;font-size:12px;line-height:1.25;padding:8px 4px;min-height:44px;min-width:0}
+    #inp-drawer #inp-detail-card .tab[data-itab="treat"]:not(.active){color:var(--purple,#7c5cbf);font-weight:800}
+  }
   `;
   document.head.appendChild(st);
 }
@@ -4090,6 +4246,7 @@ function renderIDetail() {
   if (!i) { $('#inp-detail-card').classList.add('hidden'); return; }
   $('#inp-detail-card').classList.remove('hidden');
   const days = inpatientDays(i.admittedMs, i.dischargedMs);
+  const hn = $('#inp-drawer-hname'); if (hn) hn.textContent = (inpSurgPending(i) ? '🔪 ' : '🐴 ') + (i.horse || '');
 
   $('#inp-detail-title').innerHTML = `📌 ${escHTML(i.horse)} <span class="muted" style="font-size:11px;font-weight:600">· ${escHTML(i.owner)} · ${days} хоног</span>${inpExamNum(i) ? ' <span class="badge b-o" style="font-size:11px;font-weight:800;margin-left:6px">🔢 ' + escHTML(inpExamNum(i)) + '</span>' : ''}${i.discharged ? ' <span class="badge b-g" style="font-size:11px;font-weight:800;margin-left:6px">🚪 Гарсан · ' + escHTML(i.dischargedDate || '') + '</span>' : ''}`;
 
@@ -4129,6 +4286,7 @@ function renderIDetail() {
 
   // === TAB 1: INFO ===
   renderInpInfoTab(i);
+  try { renderInpSurgBlock(i); } catch (e) { console.error('surg block', e); }
 
   // 📞 Эзэнд мэдээлсэн тэмдэглэл (Мэдээлэл таб)
   try { renderInpCallBlock(i); } catch (e) { console.error('call block', e); }
@@ -4151,6 +4309,7 @@ function renderInpInfoTab(i) {
   const locOpts = '<option value="">— заагаагүй —</option>' + locs.map(l => `<option ${l === i.location ? 'selected' : ''}>${escHTML(l)}</option>`).join('');
   const num = inpExamNum(i);
   $('#inp-info-body').innerHTML = `
+    <div id="inp-surg-block"></div>
     ${i.fromExam ? `<div style="background:var(--purple-soft);color:var(--purple);padding:8px 12px;border-radius:8px;margin-bottom:8px;font-size:12.5px;font-weight:700">🔁 Түүхээс үзлэгээс шилжүүлсэн · ${escHTML(i.fromExam.by || '')} · ${escHTML(fmtDateTime(i.fromExam.ms))}${i.fromExam.paid ? ' · ' + fmt(i.fromExam.paid) + ' урьдчилгаа болсон' : ''}</div>` : ''}
     ${i.direct && !num
       ? `<div style="background:var(--green-soft);padding:8px 12px;border-radius:8px;margin-bottom:10px;font-weight:800;color:var(--green);font-size:13.5px">🐎 Үржүүлгийн адуу — үзлэгийн хуудасны дугааргүй, шууд хүлээн авсан <span style="font-weight:600">· ${escHTML(i.admittedBy || '')} · ${escHTML(fmtDateTime(i.admittedMs))}</span></div>`
@@ -12589,6 +12748,8 @@ function renderDashAlerts() {
   const minePend = open.filter(e => e.dxStatus === 'pending' && _isMyExam(e) && !canApproveDx());
   if (minePend.length) out.push(`<div class="d-alert d-alert-p" onclick="openDxModal('${escHTML(minePend[0].id)}')"><span>⏳ Таны <b>${minePend.length}</b> онош ахлах эмчээр хянагдаж байна <small>· батлагдсаны дараа хуудсанд онош хэвлэгдэнэ</small></span><span>›</span></div>`);
   if (canAccess('inpatient')) {
+    const sg = inpSurgList();
+    if (sg.length) { ensureSurgStyles(); out.push(`<div class="d-alert d-alert-surg" onclick="INP_VIEW='cards';INP_DAYS_F='surg';nav('inpatient')"><span>🔪 Мэс засалд орохоор хүлээгдэж буй: <b>${sg.length}</b> <small>· ${escHTML(sg.map(i => i.horse + ' (' + inpSurgWhen(i.surgery).txt + ')').join(', ').slice(0, 160))}</small></span><span>Харах ›</span></div>`); }
     const due = callDueList();
     if (due.length) {
       const mine = due.filter(_myInp);

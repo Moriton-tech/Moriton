@@ -653,6 +653,7 @@ function renderMyWork() {
       </div>
       <div class="my-task-meta">📍 ${escHTML(i.location || 'байрлалгүй')} · ${inpatientDays(i.admittedMs)} дахь хоног · 👤 ${escHTML(i.owner || '—')}${i.severity ? ' · <b>' + escHTML(i.severity) + '</b>' : ''}</div>
       <div class="my-task-diag">${escHTML(i.diagnosis || '—')}</div>
+      ${(typeof inpSurgPending === 'function' && inpSurgPending(i)) ? `<div class="my-note" style="background:#fff4ec;color:#8f2e05;font-weight:700">🔪 Мэс засалд хүлээгдэж буй · ${escHTML(i.surgery.date || '')} (${escHTML(inpSurgWhen(i.surgery).txt)})${i.surgery.note ? ' — ' + escHTML(i.surgery.note) : ''}</div>` : ''}
       ${a && a.task ? `<div class="my-note my-note-o">📌 <b>Ахлах эмчийн даалгавар:</b> ${escHTML(a.task)}</div>` : ''}
       ${plan ? `<div class="my-note my-note-p">🗓 <b>Өнөөдрийн төлөвлөгөө:</b> <span style="white-space:pre-wrap">${escHTML(plan.text)}</span></div>` : ''}
       ${crs.length ? `<div class="my-note">💊 <b>Курс:</b> ${escHTML(crs.map(m => m.name + (m.note ? ' (' + m.note + ')' : '')).join(' · '))}</div>` : ''}
