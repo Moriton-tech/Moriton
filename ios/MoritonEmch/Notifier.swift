@@ -65,6 +65,15 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
         }
     }
 
+    // Чимээгүй мэдэгдэл (сервэр «дата өөрчлөгдлөө» гэж дохиход) — шууд шинэчилнэ
+    func application(_ application: UIApplication, didReceiveRemoteNotification userInfo: [AnyHashable: Any],
+                     fetchCompletionHandler completionHandler: @escaping (UIBackgroundFetchResult) -> Void) {
+        Task { @MainActor in
+            await AppStore.shared.refresh()
+            completionHandler(.newData)
+        }
+    }
+
     // Апп нээлттэй үед ч мэдэгдлийг харуулна
     func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification,
                                 withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {

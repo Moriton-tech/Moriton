@@ -268,6 +268,159 @@ final class AppStore: ObservableObject {
         return out
     }
 
+    // ── Эрх (вэбийн canAccess()-тай ижил: хэрэглэгчийн pages, байхгүй бол дүрийн анхдагч) ──
+    var pages: [String] {
+        guard let u = user else { return [] }
+        if let p = u["pages"] as? [Any] { return p.compactMap { $0 as? String } }
+        if let other = users.first(where: { $0.s("role") == role && $0["pages"] is [Any] }), let p = other["pages"] as? [Any] {
+            return p.compactMap { $0 as? String }
+        }
+        return Catalog.rolePages[role] ?? ["dashboard"]
+    }
+    func can(_ page: String) -> Bool {
+        if pages.contains(page) { return true }
+        if page == "review" { return canReviewActs || ["Ерөнхий эмч", "Админ"].contains(role) }
+        return false
+    }
+    /// Үзлэг хийх: «Үзлэг» хуудасны эрхтэй, эмчийн бүртгэлтэй холбогдсон хэрэглэгч
+    var canExam: Bool { me != nil && can("exam") }
+    /// Өдрийн эмчилгээ бичих, зураг нэмэх: «Байрлан эмчлүүлэх» хуудасны эрхтэй эмч
+    var canTreat: Bool { me != nil && can("inpatient") }
+    /// Өглөөний хуваарилалт хийх (вэбийн asgCanAssign())
+    var canAssign: Bool { canReviewActs || ["Ерөнхий эмч", "Ахлах эмч", "Админ", "Менежер"].contains(role) }
+    var isSenior: Bool { canReviewActs || canAssign }
+
+    // ── Ахлах эмчийн хяналт ──
+    @Published var reviewExams: [Exam] = []      // батлагдахыг хүлээж буй бүх эмчийн онош
+    var pendingReview: [Exam] { reviewExams.filter { $0.raw.s("dxStatus") == "pending" && !$0.isPlanned }.sorted { $0.raw.d("ms") < $1.raw.d("ms") } }
+    var hospitalToday: [Inp] { inps.filter { !$0.discharged && $0.inHospital(on: Day.today) }.sorted { $0.location < $1.location } }
+    var unassigned: [Inp] { hospitalToday.filter { $0.assign(on: Day.today) == nil } }
+    /// Өнөөдөр хуваарилагдсан ч эмчилгээ бичигдээгүй адуунууд
+    var notWritten: [Inp] { hospitalToday.filter { $0.assign(on: Day.today) != nil && !$0.done(on: Day.today) } }
+    var actsToReview: Int { canReviewActs ? duties.filter { $0.sent && !$0.reviewed }.count : 0 }
+
+    private func stampNow() -> Rec { ["ms": Day.nowMs, "_updatedAt": Day.nowMs, "_writer": deviceId] }
+    private func logWrite(action: String, target: String, name: String, details: String, examNum: String) async -> [String: Any] {
+        let now = Day.nowMs
+        var log: Rec = ["id": "log_" + String(Int64(now)) + "_" + String(Day.uid().suffix(4)), "user_name": userName, "user_role": role]
+        log["action"] = action
+        log["target_id"] = target
+        log["target_name"] = name
+        log["exam_id"] = examNum
+        log["details"] = details + " · утасны аппаас"
+        log["log_date"] = Day.today
+        log["log_ms"] = now
+        log["_updatedAt"] = now
+        log["_writer"] = deviceId
+        return ["update": ["name": await fs.docName("logs", log.s("id")), "fields": FSValue.encodeFields(log)], "currentDocument": ["exists": false]]
+    }
+
+    /// Онош батлах (засаж баталж болно) — вэбийн approveDx()
+    func approveDx(_ e: Exam, text: String) async -> Bool {
+        guard canReviewActs else { errorText = "Онош батлах эрх ахлах эмчид байна"; return false }
+        let before = e.diagnosis
+        let newText = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !newText.isEmpty else { errorText = "Онош хоосон байна"; return false }
+        let changed = newText != before
+        let now = Day.nowMs
+        var data = stampNow()
+        data["diagnosis"] = newText
+        data["dxStatus"] = "approved"
+        data["dxApprovedBy"] = userName
+        data["dxApprovedMs"] = now
+        data["dxAuto"] = false
+        data["dxReturnNote"] = ""
+        var mask = ["ms", "_updatedAt", "_writer", "diagnosis", "dxStatus", "dxApprovedBy", "dxApprovedMs", "dxAuto", "dxReturnNote"]
+        if changed && e.raw.s("dxOriginal").isEmpty { data["dxOriginal"] = before; mask.append("dxOriginal") }
+        var hist: Rec = ["ms": now, "by": userName, "action": changed ? "approve_edit" : "approve", "text": newText]
+        if changed { hist["prev"] = before }
+        var writes: [[String: Any]] = [[
+            "update": ["name": await fs.docName("exams", e.id), "fields": FSValue.encodeFields(data)],
+            "updateMask": ["fieldPaths": mask],
+            "updateTransforms": [["fieldPath": "dxHistory", "appendMissingElements": ["values": [FSValue.encode(hist)]]]],
+            "currentDocument": ["exists": true]
+        ]]
+        // Онош өөрчлөгдвөл холбогдох байрлан эмчилгээний «анхны онош»-ийг мөн шинэчилнэ
+        if changed {
+            for i in inps where i.raw.s("examId") == e.id && (i.diagnosis.isEmpty || i.diagnosis == before) {
+                var d = stampNow()
+                d["diagnosis"] = newText
+                writes.append(["update": ["name": await fs.docName("inps", i.id), "fields": FSValue.encodeFields(d)],
+                               "updateMask": ["fieldPaths": ["ms", "_updatedAt", "_writer", "diagnosis"]],
+                               "currentDocument": ["exists": true]])
+            }
+        }
+        writes.append(await logWrite(action: changed ? "Онош засаж баталсан" : "Онош баталсан", target: e.id,
+                                     name: e.horse + " — " + e.docName,
+                                     details: changed ? "«" + before + "» → «" + newText + "»" : "Онош: " + newText, examNum: e.examNum))
+        return await sendReview(writes, examId: e.id)
+    }
+    /// Онош буцаах — вэбийн returnDx()
+    func returnDx(_ e: Exam, note: String) async -> Bool {
+        guard canReviewActs else { errorText = "Онош буцаах эрх ахлах эмчид байна"; return false }
+        let reason = note.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !reason.isEmpty else { errorText = "Буцаах шалтгаанаа бичнэ үү"; return false }
+        let now = Day.nowMs
+        var data = stampNow()
+        data["dxStatus"] = "returned"
+        data["dxReturnNote"] = reason
+        data["dxReturnedBy"] = userName
+        data["dxReturnedMs"] = now
+        let hist: Rec = ["ms": now, "by": userName, "action": "return", "text": e.diagnosis, "note": reason]
+        var writes: [[String: Any]] = [[
+            "update": ["name": await fs.docName("exams", e.id), "fields": FSValue.encodeFields(data)],
+            "updateMask": ["fieldPaths": ["ms", "_updatedAt", "_writer", "dxStatus", "dxReturnNote", "dxReturnedBy", "dxReturnedMs"]],
+            "updateTransforms": [["fieldPath": "dxHistory", "appendMissingElements": ["values": [FSValue.encode(hist)]]]],
+            "currentDocument": ["exists": true]
+        ]]
+        writes.append(await logWrite(action: "Онош буцаасан", target: e.id, name: e.horse + " — " + e.docName,
+                                     details: "Шалтгаан: " + reason, examNum: e.examNum))
+        return await sendReview(writes, examId: e.id)
+    }
+    private func sendReview(_ writes: [[String: Any]], examId: String) async -> Bool {
+        do {
+            try await fs.commit(writes)
+            reviewExams.removeAll { $0.id == examId }
+            errorText = nil
+            Task { await refresh() }
+            return true
+        } catch {
+            errorText = "Хадгалагдсангүй: \(error.localizedDescription)"
+            return false
+        }
+    }
+
+    /// Өглөөний хуваарилалт — вэбийн asgSave(): зөвхөн тухайн өдрийн хуваарилалтын талбарыг бичнэ
+    func saveAssignments(_ rows: [(inp: Inp, docId: String, task: String)]) async -> Bool {
+        guard canAssign else { errorText = "Хуваарилах эрхгүй (ахлах эмч, менежер, админ)"; return false }
+        let date = Day.today, now = Day.nowMs
+        var writes: [[String: Any]] = []
+        var names: [String] = []
+        for r in rows {
+            let d = doctors.first { $0.s("id") == r.docId }
+            let a: Rec = ["docId": d?.s("id") ?? "", "docName": d?.s("name") ?? "",
+                          "task": d == nil ? "" : r.task.trimmingCharacters(in: .whitespacesAndNewlines), "by": userName, "ms": now]
+            var data = stampNow()
+            data["assigns"] = [date: a] as Rec
+            writes.append(["update": ["name": await fs.docName("inps", r.inp.id), "fields": FSValue.encodeFields(data)],
+                           "updateMask": ["fieldPaths": ["ms", "_updatedAt", "_writer", "assigns.`" + date + "`"]],
+                           "currentDocument": ["exists": true]])
+            names.append(r.inp.horse + "→" + (d?.s("name") ?? "—"))
+        }
+        guard !writes.isEmpty else { return true }
+        writes.append(await logWrite(action: "Өглөөний хуваарилалт", target: "", name: date,
+                                     details: String(names.count) + " адуу: " + String(names.joined(separator: ", ").prefix(300)), examNum: ""))
+        do {
+            try await fs.commit(writes)
+            errorText = nil
+            await refresh()
+            return true
+        } catch {
+            errorText = "Хуваарилалт хадгалагдсангүй: \(error.localizedDescription)"
+            return false
+        }
+    }
+
     // ── Цэс хоорондын шилжилт ──
     @Published var mainTab = 0                  // 0 Нүүр · 1 Миний ажил · 2 Байрлан · 3 Шинжилгээ · 4 Би
     @Published var workTab: WorkTab = .waiting
@@ -512,6 +665,9 @@ final class AppStore: ObservableObject {
             async let tp = try? fs.query("templates", field: "docId", op: "EQUAL", value: myDocId, limit: 300)
             let (rcfg, rst, rex, rex2, rdu, rnums) = await (cfg, st, ex, ex2, du, nums)
             let (rtr, rtp) = await (tr, tp)
+            if canReviewActs, let rv = try? await fs.query("exams", field: "dxStatus", op: "EQUAL", value: "pending", limit: 300) {
+                reviewExams = rv.compactMap { Exam($0) }
+            }
             if let t = rtr { trips = t }
             if let t = rtp, !myDocId.isEmpty { mergeTemplates(t) }
             if let c = rcfg ?? nil {

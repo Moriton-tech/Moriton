@@ -311,7 +311,10 @@ struct WaitCard: View {
             .background(busy ? Color.white : Color.navy).foregroundColor(busy ? Color.navy : .white)
             .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.navy))
             .clipShape(RoundedRectangle(cornerRadius: 10))
-            .disabled(store.me == nil)
+            .disabled(!store.canExam)
+            if !store.canExam {
+                Text("Үзлэг хийх эрх танд байхгүй").font(.caption).foregroundColor(Color.mute)
+            }
         }
         .confirmationDialog("\(wait.horse)-г \(wait.examBy) үзэж байна. Та авч үзэх үү?", isPresented: $asking, titleVisibility: .visible) {
             Button("Тийм, би үзнэ") { onStart() }
@@ -351,6 +354,7 @@ struct ExamRow: View {
 }
 
 struct InpCard: View {
+    @EnvironmentObject var store: AppStore
     let inp: Inp
     let showTask: Bool
     let onWrite: () -> Void
@@ -383,17 +387,21 @@ struct InpCard: View {
                 Text(inp.lastLine).font(.caption).foregroundColor(Color.mute)
             }
             HStack(spacing: 8) {
-                Button(action: onWrite) {
-                    Text(done ? "Дахин бичлэг нэмэх" : "Эмчилгээ бичих")
-                        .font(.subheadline.weight(.semibold))
-                        .frame(maxWidth: .infinity, minHeight: 46)
+                if store.canTreat {
+                    Button(action: onWrite) {
+                        Text(done ? "Дахин бичлэг нэмэх" : "Эмчилгээ бичих")
+                            .font(.subheadline.weight(.semibold))
+                            .frame(maxWidth: .infinity, minHeight: 46)
+                    }
+                    .background(Color.navy)
+                    .foregroundColor(.white)
+                    .clipShape(RoundedRectangle(cornerRadius: 10))
+                    let examId = inp.raw.s("examId")
+                    PhotoButton(target: PhotoTarget(col: examId.isEmpty ? "inps" : "exams", id: examId.isEmpty ? inp.id : examId, horse: inp.horse),
+                                count: examId.isEmpty ? ((inp.raw["images"] as? [Any])?.count ?? 0) : 0)
+                } else {
+                    Spacer()
                 }
-                .background(Color.navy)
-                .foregroundColor(.white)
-                .clipShape(RoundedRectangle(cornerRadius: 10))
-                let examId = inp.raw.s("examId")
-                PhotoButton(target: PhotoTarget(col: examId.isEmpty ? "inps" : "exams", id: examId.isEmpty ? inp.id : examId, horse: inp.horse),
-                            count: examId.isEmpty ? ((inp.raw["images"] as? [Any])?.count ?? 0) : 0)
                 let digits = inp.phone.filter { $0.isNumber || $0 == "+" }
                 if !digits.isEmpty, let url = URL(string: "tel:\(digits)") {
                     Link(destination: url) {

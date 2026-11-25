@@ -54,7 +54,7 @@ function sendOne(device, note) {
     req.on('end', () => { client.close(); resolve({ status, reason: data }); });
     req.on('error', (e) => { client.close(); resolve({ status: 0, reason: String(e) }); });
     req.end(JSON.stringify({
-      aps: { alert: { title: note.title, body: note.body }, sound: 'default', 'thread-id': note.thread || 'moriton' }
+      aps: { alert: { title: note.title, body: note.body }, sound: 'default', 'thread-id': note.thread || 'moriton', 'content-available': 1 }
     }));
   });
 }

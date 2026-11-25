@@ -34,22 +34,26 @@ struct MainTabs: View {
                 .tabItem { Label("Миний ажил", systemImage: "stethoscope") }
                 .badge(store.unfinishedCount + store.clinicWaiting.count)
                 .tag(1)
-            InpListView()
-                .tabItem { Label("Байрлан", systemImage: "bed.double") }
-                .tag(2)
-            LabView()
-                .tabItem { Label("Шинжилгээ", systemImage: "testtube.2") }
-                .badge(store.openLabs.count)
-                .tag(3)
+            if store.can("inpatient") {
+                InpListView()
+                    .tabItem { Label("Байрлан", systemImage: "bed.double") }
+                    .tag(2)
+            }
+            if store.can("lab") {
+                LabView()
+                    .tabItem { Label("Шинжилгээ", systemImage: "testtube.2") }
+                    .badge(store.openLabs.count)
+                    .tag(3)
+            }
             MeView()
                 .tabItem { Label("Би", systemImage: "person.crop.circle") }
                 .tag(4)
         }
         .onAppear { Notifier.requestPermission() }
         .task {
-            // Хүлээлтийг 20 секунд тутам шинэчилнэ (шинэ адуу, «үзлэг явагдаж байна» тэмдэг)
+            // Апп нээлттэй үед хүлээлтийг 5 секунд тутам шинэчилнэ (шинэ адуу, «үзлэг явагдаж байна» тэмдэг)
             while !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: 20_000_000_000)
+                try? await Task.sleep(nanoseconds: 5_000_000_000)
                 await store.refreshWaiting()
             }
         }

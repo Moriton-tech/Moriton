@@ -7,7 +7,7 @@ enum Config {
     static let projectId = "moriton-4ecc0"
     static let apiKey = "AIzaSyCB20uvd_XsWju91IERQGs6yGFYSBSUx10"   // вэбийн firebase.js-тэй ижил (нууц биш)
     static let pwSalt = "moriton_salt_2026"                          // вэбийн _hashPassword-тай ижил
-    static let version = "0.7"
+    static let version = "0.8"
     static let bucket = "moriton-4ecc0.firebasestorage.app"
     #if DEBUG
     static let apnsEnv = "sandbox"      // Xcode-оор суулгасан хувилбар
@@ -288,15 +288,23 @@ enum Money {
 
 /// Вэбийн app.js-ээс үүсгэсэн үндсэн жагсаалтууд (ios/scripts/gen-catalog.js)
 enum Catalog {
-    private static let data: [String: [String]] = {
+    private static let data: [String: Any] = {
         guard let url = Bundle.main.url(forResource: "catalog", withExtension: "json"),
               let d = try? Data(contentsOf: url),
-              let j = try? JSONSerialization.jsonObject(with: d) as? [String: [String]] else { return [:] }
+              let j = try? JSONSerialization.jsonObject(with: d) as? [String: Any] else { return [:] }
         return j
     }()
-    static var services: [String] { data["services"] ?? [] }
-    static var meds: [String] { data["meds"] ?? [] }
-    static var symptoms: [String] { data["symptoms"] ?? [] }
+    private static func list(_ key: String) -> [String] { (data[key] as? [Any] ?? []).compactMap { $0 as? String } }
+    static var services: [String] { list("services") }
+    static var meds: [String] { list("meds") }
+    static var symptoms: [String] { list("symptoms") }
+    /// Вэбийн ROLE_DEFAULT_PAGES — дүр бүрийн анхдагч хуудасны эрх
+    static var rolePages: [String: [String]] {
+        var out: [String: [String]] = [:]
+        for (role, v) in (data["rolePages"] as? [String: Any] ?? [:]) { out[role] = (v as? [Any] ?? []).compactMap { $0 as? String } }
+        return out
+    }
+}
 }
 
 /// Жижүүрийн мэдээ + ээлж хүлээлцэх бичлэг (collection: duty, id = огноо_эмчийнID)

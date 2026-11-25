@@ -15,6 +15,7 @@ struct HomeView: View {
                     VStack(alignment: .leading, spacing: 12) {
                         header
                         DutySection()
+                        SeniorSection()
                         actions
                         DutyFeed()
                         today
@@ -76,8 +77,8 @@ struct HomeView: View {
                 }
             }
             if let next = store.clinicWaiting.first(where: { !($0.examActive && $0.examBy != store.userName) }) {
-                Button { store.errorText = nil; examining = next } label: {
-                    row("stethoscope", Color.navy, "Үзлэг эхлүүлэх: \(next.horse)",
+                Button { if store.canExam { store.errorText = nil; examining = next } else { store.workTab = .waiting; store.mainTab = 1 } } label: {
+                    row("stethoscope", Color.navy, store.canExam ? "Үзлэг эхлүүлэх: \(next.horse)" : "Хүлээж байна: \(next.horse)",
                         "\(next.owner) · \(next.waited) хүлээсэн", nil)
                 }
                 if store.clinicWaiting.count > 1 {
