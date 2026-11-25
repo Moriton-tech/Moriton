@@ -305,7 +305,6 @@ enum Catalog {
         return out
     }
 }
-}
 
 /// Жижүүрийн мэдээ + ээлж хүлээлцэх бичлэг (collection: duty, id = огноо_эмчийнID)
 struct Duty: Identifiable {
