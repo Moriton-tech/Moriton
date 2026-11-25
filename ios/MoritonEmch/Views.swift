@@ -357,6 +357,7 @@ struct TreatSheet: View {
 // ── Хүлээлт ──────────────────────────────────────────────────
 struct WaitingView: View {
     @EnvironmentObject var store: AppStore
+    @State private var examining: Wait?
     var body: some View {
         Screen(title: "Хүлээж байгаа") {
             if store.clinicWaiting.isEmpty { EmptyNote(text: "Хүлээж буй адуу алга") }
@@ -371,9 +372,16 @@ struct WaitingView: View {
                     if !w.symptoms.isEmpty { Text(w.symptoms).font(.subheadline) }
                     Text("Хуудас № \(w.examNum.isEmpty ? "—" : w.examNum)\(w.iabd.isEmpty ? "" : " · ИАБД " + w.iabd)")
                         .font(.caption).foregroundColor(Color.mute)
+                    Button { store.errorText = nil; examining = w } label: {
+                        Text("Үзлэг эхлүүлэх").font(.subheadline.weight(.semibold)).frame(maxWidth: .infinity, minHeight: 46)
+                    }
+                    .background(Color.navy).foregroundColor(.white)
+                    .clipShape(RoundedRectangle(cornerRadius: 10))
+                    .disabled(store.me == nil)
                 }
             }
         }
+        .sheet(item: $examining) { w in ExamSheet(wait: w) }
     }
 }
 

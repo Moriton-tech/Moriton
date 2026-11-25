@@ -7,7 +7,7 @@ enum Config {
     static let projectId = "moriton-4ecc0"
     static let apiKey = "AIzaSyCB20uvd_XsWju91IERQGs6yGFYSBSUx10"   // вэбийн firebase.js-тэй ижил (нууц биш)
     static let pwSalt = "moriton_salt_2026"                          // вэбийн _hashPassword-тай ижил
-    static let version = "0.2"
+    static let version = "0.3"
     static let bucket = "moriton-4ecc0.firebasestorage.app"
     #if DEBUG
     static let apnsEnv = "sandbox"      // Xcode-оор суулгасан хувилбар
@@ -240,6 +240,44 @@ struct Exam: Identifiable {
     var assistDocName: String { raw.s("assistDocName") }
     var isPlanned: Bool { raw.s("kind") == "planned" }
     var imageCount: Int { (raw["images"] as? [Any])?.count ?? 0 }
+    var images: [Rec] { raw.recs("images") }
+    var phone: String { raw.s("phone") }
+    var note: String { raw.s("note") }
+    var anamnesis: String { raw.s("anamnesis") }
+    var serviceNames: [String] { (raw["services"] as? [Any] ?? []).compactMap { ($0 as? Rec)?.s("name") ?? ($0 as? String) } }
+    var meds: [Rec] { raw.recs("meds") }
+    var symptoms: [String] { (raw["symptoms"] as? [Any] ?? []).compactMap { $0 as? String } }
+    var dxLabel: String {
+        switch raw.s("dxStatus") {
+        case "approved": return "Онош батлагдсан"
+        case "pending": return "Онош хянагдаж байна"
+        case "returned": return "Онош буцаагдсан"
+        default: return ""
+        }
+    }
+}
+
+enum Money {
+    static func fmt(_ v: Double) -> String {
+        let f = NumberFormatter()
+        f.numberStyle = .decimal
+        f.groupingSeparator = ","
+        f.maximumFractionDigits = 0
+        return (f.string(from: NSNumber(value: v)) ?? "0") + "₮"
+    }
+}
+
+/// Вэбийн app.js-ээс үүсгэсэн үндсэн жагсаалтууд (ios/scripts/gen-catalog.js)
+enum Catalog {
+    private static let data: [String: [String]] = {
+        guard let url = Bundle.main.url(forResource: "catalog", withExtension: "json"),
+              let d = try? Data(contentsOf: url),
+              let j = try? JSONSerialization.jsonObject(with: d) as? [String: [String]] else { return [:] }
+        return j
+    }()
+    static var services: [String] { data["services"] ?? [] }
+    static var meds: [String] { data["meds"] ?? [] }
+    static var symptoms: [String] { data["symptoms"] ?? [] }
 }
 
 /// Жижүүрийн мэдээ + ээлж хүлээлцэх бичлэг (collection: duty, id = огноо_эмчийнID)

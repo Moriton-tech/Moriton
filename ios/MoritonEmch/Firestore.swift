@@ -207,6 +207,13 @@ actor FirestoreClient {
         _ = try await call("PATCH", "\(base)/\(col)/\(id)?\(qs)", body: ["fields": FSValue.encodeFields(data)])
     }
 
+    // ── Олон бичлэгийг НЭГ багцаар (бүгд амжилттай эсвэл аль нь ч биш) ──
+    func docName(_ col: String, _ id: String) -> String { "\(root)/\(col)/\(id)" }
+
+    func commit(_ writes: [[String: Any]]) async throws {
+        _ = try await call("POST", "\(base):commit", body: ["writes": writes])
+    }
+
     // ── Зураг (Firebase Storage) ──
     func uploadJPEG(path: String, data: Data) async throws -> String {
         guard let enc = path.addingPercentEncoding(withAllowedCharacters: .alphanumerics),

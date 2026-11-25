@@ -12,7 +12,9 @@ final class AppStore: ObservableObject {
     @Published var inps: [Inp] = []
     @Published var waiting: [Wait] = []
     @Published var labs: [Lab] = []
-    @Published var monthExams: [Exam] = []      // энэ сарын үзлэг (үзүүлэлт, зураг авахад)
+    @Published var monthExams: [Exam] = []      // миний хийсэн / хамтарсан БҮХ үзлэг (түүх, үзүүлэлт)
+    @Published var config: Rec = [:]            // clinic_config/main
+    private var recentExamNums: [Rec] = []      // хуудасны дугаар тооцоход
     @Published var duties: [Duty] = []          // жижүүрийн мэдээ, ээлж хүлээлцэлт
     @Published var schedule: Rec = [:]          // clinic_config.staffSchedule
     @Published var staffToday: Rec = [:]        // staff/{өнөөдөр}
@@ -124,8 +126,7 @@ final class AppStore: ObservableObject {
 
     // ── Миний үзүүлэлт (энэ сар) ──
     var myExams: [Exam] {
-        monthExams.filter { $0.docName == userName || $0.assistDocName == userName }
-            .sorted { $0.date == $1.date ? $0.raw.d("ms") > $1.raw.d("ms") : $0.date > $1.date }
+        monthExams.sorted { $0.date == $1.date ? $0.raw.d("ms") > $1.raw.d("ms") : $0.date > $1.date }
     }
     struct Stats {
         var examsMain = 0, examsAssist = 0, planned = 0, inpLogs = 0, workDays = 0, dutyDays = 0
@@ -133,7 +134,7 @@ final class AppStore: ObservableObject {
     var stats: Stats {
         var st = Stats()
         let ym = String(Day.today.prefix(7)), today = Day.today
-        for e in monthExams {
+        for e in monthExams where e.date.hasPrefix(ym) {
             if e.isPlanned {
                 if e.docName == userName || e.assistDocName == userName { st.planned += 1 }
             } else if e.docName == userName {
@@ -176,16 +177,26 @@ final class AppStore: ObservableObject {
             lastSync = Date()
             errorText = nil
             // Нэмэлт дата — аль нэг нь бүтэхгүй байсан ч үндсэн дэлгэцүүд ажиллана
-            let monthStart = String(Day.today.prefix(7)) + "-01"
+            let name = userName
             async let cfg = try? fs.get("clinic_config", id: "main")
             async let st = try? fs.get("staff", id: Day.today)
-            async let ex = try? fs.query("exams", field: "date", op: "GREATER_THAN_OR_EQUAL", value: monthStart, limit: 1500)
+            async let ex = try? fs.query("exams", field: "docName", op: "EQUAL", value: name, limit: 5000)
+            async let ex2 = try? fs.query("exams", field: "assistDocName", op: "EQUAL", value: name, limit: 5000)
             async let du = try? fs.recent("duty", limit: 40)
-            let (rcfg, rst, rex, rdu) = await (cfg, st, ex, du)
-            if let c = rcfg ?? nil { schedule = c.rec("staffSchedule") ?? [:] }
+            async let nums = try? fs.recent("exams", limit: 40)
+            let (rcfg, rst, rex, rex2, rdu, rnums) = await (cfg, st, ex, ex2, du, nums)
+            if let c = rcfg ?? nil {
+                config = c
+                schedule = c.rec("staffSchedule") ?? [:]
+            }
             staffToday = (rst ?? nil) ?? [:]
-            if let e = rex { monthExams = e.compactMap { Exam($0) } }
+            if !name.isEmpty, let a = rex {
+                var seen = Set<String>()
+                monthExams = (a + (rex2 ?? [])).compactMap { Exam($0) }.filter { seen.insert($0.id).inserted }
+            }
             if let x = rdu { duties = x.compactMap { Duty($0) } }
+            if let n = rnums { recentExamNums = n }
+            write("config.json", [config])
             saveCache(users: ru, doctors: rd, inps: ri, waiting: rw, labs: rl)
             write("schedule.json", [schedule])
             write("staffToday.json", [staffToday])
@@ -298,6 +309,414 @@ final class AppStore: ObservableObject {
         if sentPhoto && pending.isEmpty { Task { await refresh() } }
     }
 
+    // ── Үзлэг (хүлээлтээс авч үзэх) ──
+    private func strings(_ key: String) -> [String] { (config[key] as? [Any] ?? []).compactMap { $0 as? String } }
+    /// Вэбийн getAllServices(): үндсэн жагсаалт − хассан + нэмсэн
+    var services: [String] {
+        let removed = Set(strings("removedServices"))
+        let base = Catalog.services.filter { !removed.contains($0) }
+        let custom = strings("customServices").filter { !removed.contains($0) && !Catalog.services.contains($0) }
+        return base + custom
+    }
+    func price(of service: String) -> Double { config.rec("servicePrices")?.d(service) ?? 0 }
+    var medNames: [String] {
+        let cat = config.recs("medCatalog").filter { !$0.b("deleted") }.map { $0.s("name") }.filter { !$0.isEmpty }
+        var seen = Set<String>()
+        return (cat + Catalog.meds).filter { seen.insert($0).inserted }
+    }
+    private func isLabService(_ name: String) -> Bool {
+        if strings("labSvcOff").contains(name) { return false }
+        if strings("labSvcOn").contains(name) { return true }
+        return name.lowercased().contains("шинжилгээ")
+    }
+    /// Вэбийн isDxApproverName(): онош батлах эрхтэй хэрэглэгч үү
+    private func isApprover(_ name: String) -> Bool {
+        guard !name.isEmpty, let u = users.first(where: { $0.s("name") == name }) else { return false }
+        if let flag = u["dxApprove"] as? Bool { return flag }
+        return u.s("role") == "Ахлах эмч"
+    }
+    /// Вэбийн nextExamNum(): тохиргооны эхлэх дугаар ба сүүлийн дугааруудаас +1
+    private func nextExamNum() -> String {
+        let cfg = config.rec("examNumCfg") ?? [:]
+        let start = cfg["start"] == nil ? 90310 : Int(cfg.d("start"))
+        let pad = cfg["pad"] == nil ? 6 : Int(cfg.d("pad"))
+        let prefix = cfg.s("prefix")
+        var maxNum = start
+        func consider(_ r: Rec) {
+            if r.s("kind") == "planned" { return }
+            let digits = r.s("examNum").filter { $0.isNumber }
+            guard let v = Int(digits), v >= start, v <= start + 100000 else { return }
+            maxNum = max(maxNum, v)
+        }
+        recentExamNums.forEach(consider)
+        monthExams.forEach { consider($0.raw) }
+        waiting.forEach { consider($0.raw) }
+        let n = String(maxNum + 1)
+        return prefix + String(repeating: "0", count: max(0, pad - n.count)) + n
+    }
+
+    struct ExamDraft {
+        var assistDocId = ""
+        var temp = "", pulse = "", resp = "", weight = ""
+        var diagnosis = "", note = ""
+        var symptoms: [String] = []
+        var services: [String] = []
+        var meds: [String] = []
+        var medNotes: [String: String] = [:]
+    }
+
+    /// Үзлэг дуусгах — вэбийн finishExam()-тай ижил бичлэгүүдийг НЭГ багцаар бичнэ:
+    /// үзлэг + нэхэмжлэх + шинжилгээний захиалга + лог үүсгэж, хүлээлтээс хасаж, эмчийн тоог нэмнэ.
+    /// Хүлээлтийн бичлэг аль хэдийн алга бол (өөр эмч үзсэн) багц бүхэлдээ цуцлагдана.
+    func finishExam(_ w: Wait, draft: ExamDraft) async -> Exam? {
+        guard let meDoc = me else { errorText = "Таны хэрэглэгч эмчийн бүртгэлтэй холбогдоогүй байна"; return nil }
+        let now = Day.nowMs
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.dateFormat = "HH:mm"
+        let assist = doctors.first { $0.s("id") == draft.assistDocId }
+        let svc: [Rec] = draft.services.map { ["name": $0, "price": price(of: $0)] }
+        let total = svc.reduce(0) { $0 + $1.d("price") }
+        let meds: [Rec] = draft.meds.map { ["name": $0, "note": draft.medNotes[$0] ?? ""] }
+        let regMs = w.raw.d("ms")
+        let examNum = w.examNum.isEmpty ? nextExamNum() : w.examNum
+        let stamp: Rec = ["_updatedAt": now, "_writer": deviceId]
+
+        let noValue: Any = NSNull()
+        let regValue: Any = regMs > 0 ? regMs : noValue
+        let minutes: Double = max(0, ((now - regMs) / 60000).rounded())
+        let durValue: Any = regMs > 0 ? minutes : noValue
+        let noImages: [Any] = []
+        var exam: Rec = [
+            "id": Day.uid(), "horseId": w.raw.s("horseId"), "horse": w.horse, "owner": w.owner, "phone": w.phone,
+            "docId": meDoc.s("id"), "docName": meDoc.s("name"),
+            "assistDocId": draft.assistDocId, "assistDocName": assist?.s("name") ?? "",
+            "date": Day.today, "time": f.string(from: Date()), "examNum": examNum
+        ]
+        exam["diagnosis"] = draft.diagnosis
+        exam["note"] = draft.note
+        exam["services"] = svc
+        exam["meds"] = meds
+        exam["symptoms"] = draft.symptoms
+        exam["anamnesis"] = w.symptoms
+        exam["temp"] = draft.temp
+        exam["pulse"] = draft.pulse
+        exam["resp"] = draft.resp
+        exam["wt"] = draft.weight
+        exam["province"] = w.raw.s("province")
+        exam["soum"] = w.raw.s("soum")
+        exam["images"] = noImages
+        exam["amount"] = total
+        exam["regMs"] = regValue
+        exam["doneMs"] = now
+        exam["durationMin"] = durValue
+        exam["ms"] = now
+        exam["src"] = "ios"
+        // Онош батлах: үндсэн / хамтрагч эмч нь батлах эрхтэй бол автоматаар батлагдана
+        let approver = [exam.s("docName"), exam.s("assistDocName")].first { isApprover($0) } ?? ""
+        if !approver.isEmpty {
+            exam["dxStatus"] = "approved"; exam["dxApprovedBy"] = approver; exam["dxApprovedMs"] = now; exam["dxAuto"] = true
+            let h: Rec = ["ms": now, "by": userName, "action": "auto", "text": draft.diagnosis]
+            exam["dxHistory"] = [h]
+        } else {
+            exam["dxStatus"] = "pending"; exam["dxSubmittedMs"] = now
+            let h: Rec = ["ms": now, "by": userName, "action": "submit", "text": draft.diagnosis]
+            exam["dxHistory"] = [h]
+        }
+        let examId = exam.s("id")
+
+        let fin: Rec = [
+            "id": Day.uid(), "examId": examId, "examNum": examNum, "horse": w.horse, "owner": w.owner, "phone": w.phone,
+            "docName": exam.s("docName"), "amount": total, "services": draft.services.joined(separator: ", "),
+            "paid": false, "method": "", "date": Day.today, "paidDate": "", "paidMs": 0, "ms": now
+        ]
+        let labHistory: Rec = ["status": "ordered", "ms": now, "user": userName, "note": "Үзлэгээс автоматаар үүссэн"]
+        var labs: [Rec] = []
+        for name in draft.services where isLabService(name) {
+            var l: Rec = [
+                "id": Day.uid(), "examId": examId, "examNum": examNum, "horseId": exam.s("horseId"), "horse": w.horse,
+                "owner": w.owner, "phone": w.phone, "docId": exam.s("docId"), "docName": exam.s("docName")
+            ]
+            l["service"] = name
+            l["price"] = price(of: name)
+            l["diagnosis"] = draft.diagnosis
+            l["date"] = Day.today
+            l["status"] = "ordered"
+            l["history"] = [labHistory]
+            l["results"] = noImages
+            l["resultNote"] = ""
+            l["orderedMs"] = now
+            l["doneMs"] = 0
+            l["ms"] = now
+            labs.append(l)
+        }
+        let log: Rec = [
+            "id": Day.uid(),
+            "date": Day.today,
+            "slot": slot,
+            "docId": myDocId,
+            "docName": me?.s("name") ?? userName,
+            "diagnosis": "",
+            "note": note,
+            "temp": temp, "pulse": pulse, "resp": resp, "wt": weight,
+            "services": [Any](), "meds": [Any](),
+            "amount": 0,
+            "ms": Day.nowMs,
+            "src": "ios"
+        ]
+        pending.append(["kind": "log", "inpId": inp.id, "horse": inp.horse, "log": log])
+        savePending()
+        inps = applyPending(inps)
+        Notifier.scheduleEvening(unfinished: unfinishedCount)
+        Task { await flush() }
+    }
+
+    // ── Зураг ──
+    /// Зургийг утсанд хадгалаад дараалалд оруулна; сүлжээтэй бол шууд илгээнэ.
+    /// col: "exams" эсвэл "inps" — зураг тэр бичлэгийн images массивт нэмэгдэнэ.
+    func addPhoto(_ jpeg: Data, col: String, id: String, horse: String) {
+        let imgId = Day.uid()
+        let file = "photo_\(imgId).jpg"
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        do {
+            try jpeg.write(to: dir.appendingPathComponent(file), options: .atomic)
+        } catch {
+            errorText = "Зураг хадгалж чадсангүй: \(error.localizedDescription)"
+            return
+        }
+        pending.append(["kind": "photo", "col": col, "id": id, "horse": horse, "file": file, "imgId": imgId])
+        savePending()
+        Task { await flush() }
+    }
+    func pendingPhotos(for id: String) -> Int {
+        pending.filter { $0.s("kind") == "photo" && $0.s("id") == id }.count
+    }
+
+    /// Илгээгээгүй бичлэгүүдийг дэлгэц дээр харагдуулна (серверээс дахин татсан ч алга болохгүй)
+    private func applyPending(_ list: [Inp]) -> [Inp] {
+        guard !pending.isEmpty else { return list }
+        var out = list
+        for p in pending {
+            guard let log = p.rec("log"), let idx = out.firstIndex(where: { $0.id == p.s("inpId") }) else { continue }
+            var logs = out[idx].logs
+            if logs.contains(where: { $0.s("id") == log.s("id") }) { continue }
+            logs.append(log)
+            out[idx].raw["log"] = logs
+        }
+        return out
+    }
+
+    private func send(_ p: Rec) async throws {
+        if p.s("kind") == "photo" {
+            let url = dir.appendingPathComponent(p.s("file"))
+            guard let data = try? Data(contentsOf: url) else { return }   // файл алга — алгасна
+            // Вэбтэй ижил зам: exam-images/{бичлэгийн id}/{зургийн id}.jpg
+            let path = "exam-images/\(p.s("id"))/\(p.s("imgId")).jpg"
+            let link = try await fs.uploadJPEG(path: path, data: data)
+            let img: Rec = ["id": p.s("imgId"), "url": link, "path": path, "ms": Day.nowMs, "by": userName, "src": "ios"]
+            try await fs.append(p.s("col"), id: p.s("id"), field: "images", value: img, writer: deviceId)
+            try? FileManager.default.removeItem(at: url)
+        } else if let log = p.rec("log") {
+            try await fs.append("inps", id: p.s("inpId"), field: "log", value: log, writer: deviceId)
+        }
+    }
+
+    func flush() async {
+        if flushing || pending.isEmpty { return }
+        flushing = true
+        defer { flushing = false }
+        var sentPhoto = false
+        while let p = pending.first {
+            do {
+                try await send(p)
+                if p.s("kind") == "photo" { sentPhoto = true }
+                pending.removeFirst()
+                savePending()
+            } catch let e as FSError where e.isPermanent {
+                errorText = "\(p.s("horse")): илгээгдсэнгүй — \(e.localizedDescription)"
+                pending.removeFirst()
+                savePending()
+            } catch let e as FSError {
+                errorText = "\(p.s("horse")): \(e.localizedDescription)"
+                break
+            } catch {
+                break   // сүлжээгүй — дараа дахин оролдоно
+            }
+        }
+        if sentPhoto && pending.isEmpty { Task { await refresh() } }
+    }
+
+    // ── Үзлэг (хүлээлтээс авч үзэх) ──
+    private func strings(_ key: String) -> [String] { (config[key] as? [Any] ?? []).compactMap { $0 as? String } }
+    /// Вэбийн getAllServices(): үндсэн жагсаалт − хассан + нэмсэн
+    var services: [String] {
+        let removed = Set(strings("removedServices"))
+        let base = Catalog.services.filter { !removed.contains($0) }
+        let custom = strings("customServices").filter { !removed.contains($0) && !Catalog.services.contains($0) }
+        return base + custom
+    }
+    func price(of service: String) -> Double { config.rec("servicePrices")?.d(service) ?? 0 }
+    var medNames: [String] {
+        let cat = config.recs("medCatalog").filter { !$0.b("deleted") }.map { $0.s("name") }.filter { !$0.isEmpty }
+        var seen = Set<String>()
+        return (cat + Catalog.meds).filter { seen.insert($0).inserted }
+    }
+    private func isLabService(_ name: String) -> Bool {
+        if strings("labSvcOff").contains(name) { return false }
+        if strings("labSvcOn").contains(name) { return true }
+        return name.lowercased().contains("шинжилгээ")
+    }
+    /// Вэбийн isDxApproverName(): онош батлах эрхтэй хэрэглэгч үү
+    private func isApprover(_ name: String) -> Bool {
+        guard !name.isEmpty, let u = users.first(where: { $0.s("name") == name }) else { return false }
+        if let flag = u["dxApprove"] as? Bool { return flag }
+        return u.s("role") == "Ахлах эмч"
+    }
+    /// Вэбийн nextExamNum(): тохиргооны эхлэх дугаар ба сүүлийн дугааруудаас +1
+    private func nextExamNum() -> String {
+        let cfg = config.rec("examNumCfg") ?? [:]
+        let start = cfg["start"] == nil ? 90310 : Int(cfg.d("start"))
+        let pad = cfg["pad"] == nil ? 6 : Int(cfg.d("pad"))
+        let prefix = cfg.s("prefix")
+        var maxNum = start
+        func consider(_ r: Rec) {
+            if r.s("kind") == "planned" { return }
+            let digits = r.s("examNum").filter { $0.isNumber }
+            guard let v = Int(digits), v >= start, v <= start + 100000 else { return }
+            maxNum = max(maxNum, v)
+        }
+        recentExamNums.forEach(consider)
+        monthExams.forEach { consider($0.raw) }
+        waiting.forEach { consider($0.raw) }
+        let n = String(maxNum + 1)
+        return prefix + String(repeating: "0", count: max(0, pad - n.count)) + n
+    }
+
+    struct ExamDraft {
+        var assistDocId = ""
+        var temp = "", pulse = "", resp = "", weight = ""
+        var diagnosis = "", note = ""
+        var symptoms: [String] = []
+        var services: [String] = []
+        var meds: [String] = []
+        var medNotes: [String: String] = [:]
+    }
+
+    /// Үзлэг дуусгах — вэбийн finishExam()-тай ижил бичлэгүүдийг НЭГ багцаар бичнэ:
+    /// үзлэг + нэхэмжлэх + шинжилгээний захиалга + лог үүсгэж, хүлээлтээс хасаж, эмчийн тоог нэмнэ.
+    /// Хүлээлтийн бичлэг аль хэдийн алга бол (өөр эмч үзсэн) багц бүхэлдээ цуцлагдана.
+    func finishExam(_ w: Wait, draft: ExamDraft) async -> Exam? {
+        guard let meDoc = me else { errorText = "Таны хэрэглэгч эмчийн бүртгэлтэй холбогдоогүй байна"; return nil }
+        let now = Day.nowMs
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.dateFormat = "HH:mm"
+        let assist = doctors.first { $0.s("id") == draft.assistDocId }
+        let svc: [Rec] = draft.services.map { ["name": $0, "price": price(of: $0)] }
+        let total = svc.reduce(0) { $0 + $1.d("price") }
+        let meds: [Rec] = draft.meds.map { ["name": $0, "note": draft.medNotes[$0] ?? ""] }
+        let regMs = w.raw.d("ms")
+        let examNum = w.examNum.isEmpty ? nextExamNum() : w.examNum
+        let stamp: Rec = ["_updatedAt": now, "_writer": deviceId]
+
+        let noValue: Any = NSNull()
+        let regValue: Any = regMs > 0 ? regMs : noValue
+        let minutes: Double = max(0, ((now - regMs) / 60000).rounded())
+        let durValue: Any = regMs > 0 ? minutes : noValue
+        let noImages: [Any] = []
+        var exam: Rec = [
+            "id": Day.uid(), "horseId": w.raw.s("horseId"), "horse": w.horse, "owner": w.owner, "phone": w.phone,
+            "docId": meDoc.s("id"), "docName": meDoc.s("name"),
+            "assistDocId": draft.assistDocId, "assistDocName": assist?.s("name") ?? "",
+            "date": Day.today, "time": f.string(from: Date()), "examNum": examNum
+        ]
+        exam["diagnosis"] = draft.diagnosis
+        exam["note"] = draft.note
+        exam["services"] = svc
+        exam["meds"] = meds
+        exam["symptoms"] = draft.symptoms
+        exam["anamnesis"] = w.symptoms
+        exam["temp"] = draft.temp
+        exam["pulse"] = draft.pulse
+        exam["resp"] = draft.resp
+        exam["wt"] = draft.weight
+        exam["province"] = w.raw.s("province")
+        exam["soum"] = w.raw.s("soum")
+        exam["images"] = noImages
+        exam["amount"] = total
+        exam["regMs"] = regValue
+        exam["doneMs"] = now
+        exam["durationMin"] = durValue
+        exam["ms"] = now
+        exam["src"] = "ios"
+        // Онош батлах: үндсэн / хамтрагч эмч нь батлах эрхтэй бол автоматаар батлагдана
+        let approver = [exam.s("docName"), exam.s("assistDocName")].first { isApprover($0) } ?? ""
+        if !approver.isEmpty {
+            exam["dxStatus"] = "approved"; exam["dxApprovedBy"] = approver; exam["dxApprovedMs"] = now; exam["dxAuto"] = true
+            let h: Rec = ["ms": now, "by": userName, "action": "auto", "text": draft.diagnosis]
+            exam["dxHistory"] = [h]
+        } else {
+            exam["dxStatus"] = "pending"; exam["dxSubmittedMs"] = now
+            let h: Rec = ["ms": now, "by": userName, "action": "submit", "text": draft.diagnosis]
+            exam["dxHistory"] = [h]
+        }
+        let examId = exam.s("id")
+
+        let fin: Rec = [
+            "id": Day.uid(), "examId": examId, "examNum": examNum, "horse": w.horse, "owner": w.owner, "phone": w.phone,
+            "docName": exam.s("docName"), "amount": total, "services": draft.services.joined(separator: ", "),
+            "paid": false, "method": "", "date": Day.today, "paidDate": "", "paidMs": 0, "ms": now
+        ]
+        let labs: [Rec] = draft.services.filter { isLabService($0) }.map { name in
+            ["id": Day.uid(), "examId": examId, "examNum": examNum, "horseId": exam.s("horseId"), "horse": w.horse,
+             "owner": w.owner, "phone": w.phone, "docId": exam.s("docId"), "docName": exam.s("docName"),
+             "service": name, "price": price(of: name), "diagnosis": draft.diagnosis, "date": Day.today, "status": "ordered",
+             "history": [["status": "ordered", "ms": now, "user": userName, "note": "Үзлэгээс автоматаар үүссэн"] as Rec],
+             "results": [Any](), "resultNote": "", "orderedMs": now, "doneMs": 0, "ms": now]
+        }
+        let log: Rec = [
+            "id": "log_" + String(Int64(now)) + "_" + String(Day.uid().suffix(4)), "user_name": userName, "user_role": role,
+            "action": "Үзлэг дуусгасан", "target_id": examId, "target_name": w.horse + " — " + exam.s("docName"),
+            "exam_id": examNum, "details": "Онош: " + draft.diagnosis + " · утасны аппаас", "log_date": Day.today, "log_ms": now
+        ]
+
+        func create(_ col: String, _ r: Rec) async -> [String: Any] {
+            ["update": ["name": await fs.docName(col, r.s("id")), "fields": FSValue.encodeFields(r.merging(stamp) { a, _ in a })],
+             "currentDocument": ["exists": false]]
+        }
+        var writes: [[String: Any]] = []
+        // 1) Хүлээлтээс хасна — бичлэг байхгүй бол (өөр эмч үзчихсэн) бүх багц цуцлагдана
+        writes.append(["delete": await fs.docName("waiting", w.id), "currentDocument": ["exists": true]])
+        writes.append(await create("exams", exam))
+        writes.append(await create("fins", fin))
+        for l in labs { writes.append(await create("labs", l)) }
+        writes.append(await create("logs", log))
+        // Эмчийн үзлэгийн тоо, орлогыг серверийн талд нэмнэ (зэрэг бичихэд алдагдахгүй)
+        writes.append([
+            "update": ["name": await fs.docName("doctors", meDoc.s("id")), "fields": FSValue.encodeFields(stamp)],
+            "updateMask": ["fieldPaths": ["_updatedAt", "_writer"]],
+            "updateTransforms": [
+                ["fieldPath": "exams", "increment": ["integerValue": "1"]],
+                ["fieldPath": "rev", "increment": ["integerValue": String(Int64(total))]]
+            ]
+        ])
+        do {
+            try await fs.commit(writes)
+        } catch let e as FSError where e.isPermanent {
+            errorText = "Үзлэг хадгалагдсангүй. Энэ адууг өөр эмч аль хэдийн үзсэн байж магадгүй — хүлээлтийг шинэчилнэ үү. (\(e.localizedDescription))"
+            return nil
+        } catch {
+            errorText = "Үзлэг хадгалагдсангүй — сүлжээгээ шалгаад дахин дарна уу. (\(error.localizedDescription))"
+            return nil
+        }
+        errorText = nil
+        waiting.removeAll { $0.id == w.id }
+        let saved = Exam(exam)
+        if let e = saved { monthExams.insert(e, at: 0) }
+        Task { await refresh() }
+        return saved
+    }
+
     // ── Жижүүрийн мэдээ, ээлж хүлээлцэх ──
     private func dutyBase() -> Rec {
         ["id": "\(Day.today)_\(myDocId)", "date": Day.today, "docId": myDocId, "docName": userName, "ms": Day.nowMs]
@@ -374,6 +793,7 @@ final class AppStore: ObservableObject {
         doctors = read("doctors.json")
         pending = read("pending.json")
         schedule = read("schedule.json").first ?? [:]
+        config = read("config.json").first ?? [:]
         staffToday = read("staffToday.json").first ?? [:]
         monthExams = read("exams.json").compactMap { Exam($0) }
         duties = read("duty.json").compactMap { Duty($0) }
