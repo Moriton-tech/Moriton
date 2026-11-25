@@ -43,14 +43,23 @@ try:
     data = json.load(open(sys.argv[1]))
 except Exception:
     sys.exit(0)
+best = None
 for d in data.get("result", {}).get("devices", []):
     hw = d.get("hardwareProperties", {})
     conn = d.get("connectionProperties", {})
-    if hw.get("platform") == "iOS" and hw.get("deviceType") == "iPhone" and conn.get("tunnelState") != "unavailable":
-        print(d.get("identifier", ""))
-        break
+    if hw.get("platform") != "iOS" or hw.get("deviceType") != "iPhone":
+        continue
+    if conn.get("tunnelState") == "unavailable":
+        continue
+    # Кабелиар холбогдсон утсыг эхэлж сонгоно (Wi-Fi-аар «танигдсан» өөр утас байж болно)
+    score = (2 if conn.get("transportType") == "wired" else 0) + (1 if conn.get("tunnelState") == "connected" else 0)
+    if best is None or score > best[0]:
+        best = (score, d.get("identifier", ""), d.get("deviceProperties", {}).get("name", ""))
+if best:
+    print(best[1] + "|" + best[2])
 PY
 )
+DEVICE_NAME="${DEVICE#*|}"; DEVICE="${DEVICE%%|*}"
 [ -n "$DEVICE" ] || fail "iPhone олдсонгүй. Кабелиар холбоод түгжээг тайлж «Trust» дарна. Settings → Privacy & Security → Developer Mode асаалттай байх ёстой."
 
 say "Бүтээж байна (анх удаа 1–2 минут)"
@@ -63,8 +72,17 @@ fi
 
 APP="$BUILD/Build/Products/Debug-iphoneos/MoritonEmch.app"
 xattr -cr "$APP" 2>/dev/null || true
-say "iPhone руу суулгаж байна"
-xcrun devicectl device install app --device "$DEVICE" "$APP"
+say "iPhone руу суулгаж байна: ${DEVICE_NAME:-$DEVICE}"
+OK=0
+for TRY in 1 2 3; do
+  if xcrun devicectl device install app --device "$DEVICE" "$APP" > "$SRC/install.log" 2>&1; then OK=1; break; fi
+  echo "  Утастай холбогдож чадсангүй ($TRY/3). iPhone-ийн түгжээг тайлаад дэлгэцийг асаалттай байлгана уу…"
+  sleep 6
+done
+if [ "$OK" != 1 ]; then
+  grep -m3 "ERROR" "$SRC/install.log" || true
+  fail "Апп бүтсэн ч утас руу хуулж чадсангүй. iPhone-ийн түгжээг тайл → кабелийг салгаад дахин залга → «Trust» гарвал дар → энэ командыг дахин ажиллуул."
+fi
 xcrun devicectl device process launch --device "$DEVICE" "$BUNDLE_ID" >/dev/null 2>&1 || \
   echo "  Апп нээгдэхгүй бол iPhone дээр: Settings → General → VPN & Device Management → хөгжүүлэгчийг Trust."
 say "Суулаа. iPhone дээрээ «Морьтон Эмч»-ийг нээнэ үү."
