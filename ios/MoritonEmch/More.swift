@@ -221,38 +221,43 @@ struct BonusView: View {
     }
 }
 
-// ── Нүүр дээрх жижүүрийн мэдээ, ээлж хүлээлцэлт ──────────────
+// ── Нүүр дээрх ээлж хүлээлцэх актууд ─────────────────────────
 struct DutyFeed: View {
     @EnvironmentObject var store: AppStore
 
     var body: some View {
         let list = Array(store.duties.sorted { $0.date == $1.date ? $0.raw.d("ms") > $1.raw.d("ms") : $0.date > $1.date }.prefix(2))
+        let toReview = store.canReviewActs ? store.duties.filter { $0.sent && !$0.reviewed }.count : 0
         HStack {
-            Text("Жижүүрийн мэдээ, ээлж").font(.subheadline.bold())
+            Text("Жижүүрийн ээлж хүлээлцэх акт").font(.subheadline.bold())
             Spacer()
             NavigationLink("Бүгд ›") { DutyListView() }.font(.subheadline)
         }
+        if toReview > 0 {
+            NavigationLink { DutyListView() } label: {
+                Text("Хянах шаардлагатай \(toReview) акт байна")
+                    .font(.footnote.weight(.semibold))
+                    .padding(10)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color.warnBg).foregroundColor(Color.warnFg)
+                    .clipShape(RoundedRectangle(cornerRadius: 10))
+            }
+        }
         if list.isEmpty {
-            Card { Text("Жижүүрийн мэдээ хараахан бичигдээгүй").font(.footnote).foregroundColor(Color.mute) }
+            Card { Text("Акт хараахан бөглөгдөөгүй").font(.footnote).foregroundColor(Color.mute) }
         }
         ForEach(list) { d in
-            Card {
-                HStack {
-                    Text(d.docName).font(.subheadline.weight(.semibold))
-                    Spacer()
-                    Text(d.date.replacingOccurrences(of: "-", with: ".")).font(.caption.monospacedDigit()).foregroundColor(Color.mute)
-                }
-                if d.hasReport {
-                    let r = d.report
-                    let text = [r.s("general"), r.s("incidents"), r.s("todo")].filter { !$0.isEmpty }.joined(separator: " · ")
-                    Text(text.isEmpty ? r.s("treated") : text).font(.footnote).lineLimit(4)
-                } else {
-                    Text("Мэдээ бичээгүй").font(.footnote).foregroundColor(Color.mute)
-                }
-                if d.sent {
-                    Text(d.accepted ? "Ээлжийг \(d.toName) хүлээн авсан · \(Clock.time(d.handover.d("acceptedMs")))"
-                                    : "Ээлжийг \(d.toName)-д өгсөн — хүлээн аваагүй")
-                        .font(.caption.weight(.semibold)).foregroundColor(d.accepted ? Color.okFg : Color.warnFg)
+            NavigationLink { ActDetailView(dutyId: d.id) } label: {
+                Card {
+                    HStack {
+                        Text("\(d.docName)\(d.toName.isEmpty ? "" : " → " + d.toName)").font(.subheadline.weight(.semibold)).foregroundColor(Color.ink)
+                        Spacer()
+                        Text(d.date.replacingOccurrences(of: "-", with: ".")).font(.caption.monospacedDigit()).foregroundColor(Color.mute)
+                    }
+                    if d.hasAct {
+                        Text("\(d.filledCount)/\(DutyForm.items.count) мөр · нийт \(d.horseTotal) адуу").font(.footnote).foregroundColor(Color.ink)
+                    }
+                    Text(d.statusLine).font(.caption.weight(.semibold)).foregroundColor(d.accepted ? Color.okFg : Color.warnFg)
                 }
             }
         }

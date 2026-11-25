@@ -83,11 +83,10 @@ struct PhotoButton: View {
     }
 }
 
-// ── Жижүүр эмч ───────────────────────────────────────────────
+// ── Жижүүр эмчийн ээлж хүлээлцэх акт (МК01-М-060) ────────────
 struct DutySection: View {
     @EnvironmentObject var store: AppStore
-    @State private var writingReport = false
-    @State private var handingOver = false
+    @State private var writing = false
     @State private var accepting: Duty?
 
     var body: some View {
@@ -96,9 +95,9 @@ struct DutySection: View {
                 Text("Ээлж хүлээн авах").font(.headline)
                 Text("\(d.docName) · \(d.date) · \(Clock.time(d.handover.d("sentMs")))")
                     .font(.caption).foregroundColor(Color.mute)
-                if !d.handover.s("note").isEmpty { Text(d.handover.s("note")).font(.subheadline) }
+                Text("Акт: \(d.filledCount)/\(DutyForm.items.count) мөр бөглөсөн · нийт \(d.horseTotal) адуу").font(.subheadline)
                 Button { accepting = d } label: {
-                    Text("Харж, хүлээн авах").font(.subheadline.weight(.semibold)).frame(maxWidth: .infinity, minHeight: 46)
+                    Text("Актыг харж, хүлээн авах").font(.subheadline.weight(.semibold)).frame(maxWidth: .infinity, minHeight: 46)
                 }
                 .background(Color.gold).foregroundColor(Color.navy)
                 .clipShape(RoundedRectangle(cornerRadius: 10))
@@ -112,18 +111,15 @@ struct DutySection: View {
                     Spacer()
                     Image(systemName: "moon.stars").foregroundColor(Color.gold)
                 }
-                HStack(spacing: 8) {
-                    Button { writingReport = true } label: {
-                        Text(mine?.hasReport == true ? "Мэдээ засах" : "Жижүүрийн мэдээ бичих")
-                            .font(.subheadline.weight(.semibold)).frame(maxWidth: .infinity, minHeight: 46)
-                    }
-                    .background(Color.navy).foregroundColor(.white)
-                    .clipShape(RoundedRectangle(cornerRadius: 10))
-                    Button { handingOver = true } label: {
-                        Text("Ээлж өгөх").font(.subheadline.weight(.semibold)).frame(maxWidth: .infinity, minHeight: 46)
-                    }
-                    .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.navy))
+                if let m = mine, m.hasAct {
+                    Text("Акт: \(m.filledCount)/\(DutyForm.items.count) мөр бөглөсөн").font(.footnote).foregroundColor(Color.mute)
                 }
+                Button { store.errorText = nil; writing = true } label: {
+                    Text(mine?.hasAct == true ? "Ээлж хүлээлцэх актаа үргэлжлүүлэх" : "Ээлж хүлээлцэх акт бөглөх")
+                        .font(.subheadline.weight(.semibold)).frame(maxWidth: .infinity, minHeight: 46)
+                }
+                .background(Color.navy).foregroundColor(.white)
+                .clipShape(RoundedRectangle(cornerRadius: 10))
                 if let m = mine, m.sent {
                     Text(m.accepted
                          ? "\(m.toName) ээлжийг хүлээн авсан · \(Clock.time(m.handover.d("acceptedMs")))"
@@ -133,72 +129,42 @@ struct DutySection: View {
             }
         }
         Color.clear.frame(height: 0)
-            .sheet(isPresented: $writingReport) { DutyReportSheet() }
-            .sheet(isPresented: $handingOver) { HandoverSheet() }
+            .sheet(isPresented: $writing) { ActSheet() }
             .sheet(item: $accepting) { d in AcceptSheet(duty: d) }
     }
 }
 
-struct DutyReportSheet: View {
+/// Акт бөглөх: цаасан маягтын 30 мөр — мөр бүр тайлбар/тоо + чек
+struct ActSheet: View {
     @EnvironmentObject var store: AppStore
     @Environment(\.dismiss) private var dismiss
-    @State private var general = ""
-    @State private var treated = ""
-    @State private var incidents = ""
-    @State private var todo = ""
+    @State private var text: [String: String] = [:]
+    @State private var ok: [String: Bool] = [:]
+    @State private var note = ""
+    @State private var toId = ""
     @State private var saving = false
     @State private var loaded = false
+
+    private var total: Int { DutyForm.items.filter { $0.numeric }.reduce(0) { $0 + DutyForm.leadingNumber(text[$1.key] ?? "") } }
+    private var filled: Int { DutyForm.items.filter { !(text[$0.key] ?? "").isEmpty || ok[$0.key] == true }.count }
 
     var body: some View {
         NavigationStack {
             Form {
                 Section {
-                    Text("\(Day.pretty) · байрлан эмчлүүлж буй \(store.activeInps.count) адуу")
-                        .font(.footnote).foregroundColor(Color.mute)
+                    Text("\(Day.pretty) · хүлээлгэн өгөх эмч: \(store.userName)").font(.footnote).foregroundColor(Color.mute)
+                    Button("Өмнөх актын хариултыг хуулах") { copyPrevious() }.font(.footnote)
                 }
-                Section("Ерөнхий байдал") { TextEditor(text: $general).frame(minHeight: 70) }
-                Section("Хийсэн эмчилгээ, үзлэг") { TextEditor(text: $treated).frame(minHeight: 70) }
-                Section("Онцгой тохиолдол, шинээр ирсэн адуу") { TextEditor(text: $incidents).frame(minHeight: 70) }
-                Section("Дараагийн ээлжид үлдээх ажил") { TextEditor(text: $todo).frame(minHeight: 70) }
-                if let e = store.errorText { Section { Text(e).font(.footnote).foregroundColor(.red) } }
-            }
-            .navigationTitle("Жижүүрийн мэдээ")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button("Болих") { dismiss() } }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button(saving ? "…" : "Хадгалах") {
-                        saving = true
-                        Task {
-                            let ok = await store.saveDutyReport(["general": general, "treated": treated, "incidents": incidents,
-                                                                 "todo": todo, "inpCount": store.activeInps.count, "by": store.userName])
-                            saving = false
-                            if ok { dismiss() }
+                ForEach(DutyForm.groups, id: \.self) { g in
+                    Section(g) {
+                        ForEach(DutyForm.items.filter { $0.group == g }) { item in row(item) }
+                        if g == DutyForm.groups[4] {
+                            HStack { Text("Нийт адуу").bold(); Spacer(); Text("\(total)").bold().monospacedDigit() }
                         }
                     }
-                    .disabled(saving || (general + treated + incidents + todo).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
-            }
-            .onAppear {
-                guard !loaded, let r = store.myDutyToday?.report else { return }
-                loaded = true
-                general = r.s("general"); treated = r.s("treated"); incidents = r.s("incidents"); todo = r.s("todo")
-            }
-        }
-    }
-}
-
-struct HandoverSheet: View {
-    @EnvironmentObject var store: AppStore
-    @Environment(\.dismiss) private var dismiss
-    @State private var toId = ""
-    @State private var note = ""
-    @State private var saving = false
-
-    var body: some View {
-        NavigationStack {
-            Form {
-                Section("Хэнд хүлээлгэн өгөх") {
+                Section("Нэмэлт тэмдэглэл") { TextEditor(text: $note).frame(minHeight: 70) }
+                Section("Хүлээн авах эмч") {
                     Picker("Эмч", selection: $toId) {
                         Text("Сонгох").tag("")
                         ForEach(store.otherDoctors.map { $0.s("id") }, id: \.self) { id in
@@ -206,39 +172,146 @@ struct HandoverSheet: View {
                         }
                     }
                 }
-                Section("Хүлээлгэн өгөх тэмдэглэл") {
-                    TextEditor(text: $note).frame(minHeight: 120)
-                    Text("Анхаарах адуу, үргэлжлэх тариа, эзэнд амласан зүйл г.м. Жижүүрийн мэдээ тань хамт харагдана.")
-                        .font(.caption).foregroundColor(Color.mute)
-                }
                 if let e = store.errorText { Section { Text(e).font(.footnote).foregroundColor(.red) } }
-            }
-            .navigationTitle("Ээлж хүлээлгэн өгөх")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button("Болих") { dismiss() } }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button(saving ? "…" : "Өгөх") {
-                        saving = true
-                        let name = store.doctors.first { $0.s("id") == toId }?.s("name") ?? ""
-                        Task {
-                            let ok = await store.sendHandover(toDocId: toId, toName: name, note: note.trimmingCharacters(in: .whitespacesAndNewlines))
-                            saving = false
-                            if ok { dismiss() }
-                        }
+                Section {
+                    Button { save(send: true) } label: {
+                        Text(saving ? "Хадгалж байна…" : "Ээлж хүлээлгэн өгөх").font(.headline).frame(maxWidth: .infinity, minHeight: 44)
                     }
                     .disabled(saving || toId.isEmpty)
+                    Text("\(filled)/\(DutyForm.items.count) мөр бөглөсөн. Хүлээн авах эмчийн апп дээр акт гарч, тэр «Хүлээн авлаа» дарна; дараа нь ахлах эмч хянана.")
+                        .font(.caption).foregroundColor(Color.mute)
                 }
             }
-            .onAppear {
-                // Маргаашийн жижүүр эмчийг урьдчилан сонгоно
-                guard toId.isEmpty else { return }
-                let tomorrow = Day.str(Date().addingTimeInterval(86400))
-                if let next = store.otherDoctors.first(where: { store.scheduleStatus(tomorrow, docId: $0.s("id")) == "duty" }) {
-                    toId = next.s("id")
+            .navigationTitle("Ээлж хүлээлцэх акт")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("Хаах") { dismiss() } }
+                ToolbarItem(placement: .confirmationAction) { Button("Хадгалах") { save(send: false) }.disabled(saving) }
+            }
+            .onAppear(perform: load)
+        }
+    }
+
+    private func row(_ item: DutyForm.Item) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .top, spacing: 8) {
+                Text("\(item.no)").font(.caption.monospacedDigit()).foregroundColor(Color.mute).frame(width: 22, alignment: .leading)
+                Text(item.title).font(.subheadline)
+                Spacer()
+                Button { ok[item.key] = !(ok[item.key] ?? false) } label: {
+                    Image(systemName: ok[item.key] == true ? "checkmark.square.fill" : "square")
+                        .font(.title3).foregroundColor(ok[item.key] == true ? Color.okFg : Color.mute)
+                        .frame(width: 44, height: 32)
+                }
+                .buttonStyle(.borderless)
+                .accessibilityLabel("\(item.title) — чек")
+            }
+            TextField(item.numeric ? "Тоо" : "Тайлбар", text: Binding(get: { text[item.key] ?? "" }, set: { text[item.key] = $0 }))
+                .font(.subheadline)
+                .padding(.leading, 30)
+            if !item.quick.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 6) {
+                        ForEach(item.quick, id: \.self) { q in
+                            Button(q.trimmingCharacters(in: .whitespaces)) {
+                                // Зайгаар төгссөн үг (ж: «Өвс ») нь үргэлжлүүлэн бичихэд зориулагдсан — нэмж залгана
+                                if q.hasSuffix(" ") { text[item.key] = (text[item.key] ?? "") + q } else { text[item.key] = q; ok[item.key] = true }
+                            }
+                            .font(.caption)
+                            .padding(.horizontal, 10).padding(.vertical, 5)
+                            .background(Color.ground)
+                            .foregroundColor(Color.navy)
+                            .clipShape(Capsule())
+                            .buttonStyle(.borderless)
+                        }
+                    }
+                    .padding(.leading, 30)
                 }
             }
         }
+        .padding(.vertical, 2)
+    }
+
+    private func fill(from d: Duty, keepCounts: Bool) {
+        for item in DutyForm.items {
+            guard let r = d.actItems.rec(item.key) else { continue }
+            if item.numeric && !keepCounts { continue }
+            text[item.key] = r.s("t")
+            ok[item.key] = r.b("ok")
+        }
+    }
+    private func load() {
+        guard !loaded else { return }
+        loaded = true
+        if let mine = store.myDutyToday, mine.hasAct {
+            fill(from: mine, keepCounts: true)
+            note = mine.act.s("note")
+            toId = mine.toDocId
+        }
+        if toId.isEmpty {
+            // Маргаашийн жижүүр эмчийг урьдчилан сонгоно
+            let tomorrow = Day.add(Day.today, days: 1)
+            if let next = store.otherDoctors.first(where: { store.scheduleStatus(tomorrow, docId: $0.s("id")) == "duty" }) { toId = next.s("id") }
+        }
+    }
+    /// Өмнөх ээлжийн актын хариултыг хуулна (өвс тэжээлийн зарцуулалтаас бусад) — тоонуудыг шалгаж засна
+    private func copyPrevious() {
+        guard let prev = store.duties.filter({ $0.hasAct && $0.id != store.myDutyToday?.id })
+            .sorted(by: { $0.date == $1.date ? $0.raw.d("ms") > $1.raw.d("ms") : $0.date > $1.date }).first else {
+            store.errorText = "Өмнөх акт олдсонгүй"
+            return
+        }
+        fill(from: prev, keepCounts: true)
+        text["31"] = ""
+        for item in DutyForm.items { ok[item.key] = false }   // чекийг эмч өөрөө шалгаж дарна
+    }
+    private func save(send: Bool) {
+        saving = true
+        var items = Rec()
+        for item in DutyForm.items {
+            let t = (text[item.key] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            let c = ok[item.key] ?? false
+            if t.isEmpty && !c { continue }
+            let r: Rec = ["t": t, "ok": c]
+            items[item.key] = r
+        }
+        let name = store.doctors.first { $0.s("id") == toId }?.s("name") ?? ""
+        Task {
+            let done = await store.saveAct(items: items, total: total, note: note.trimmingCharacters(in: .whitespacesAndNewlines),
+                                           toDocId: toId, toName: name, send: send)
+            saving = false
+            if done { dismiss() }
+        }
+    }
+}
+
+/// Актын мөрүүдийг унших хэлбэрээр (хүлээн авах, жагсаалт, хянах)
+struct ActRows: View {
+    let duty: Duty
+    var body: some View {
+        ForEach(DutyForm.groups, id: \.self) { g in
+            let rows = DutyForm.items.filter { $0.group == g }
+            Section(g) {
+                ForEach(rows) { item in
+                    let r = duty.actItems.rec(item.key) ?? [:]
+                    HStack(alignment: .top, spacing: 8) {
+                        Text("\(item.no)").font(.caption.monospacedDigit()).foregroundColor(Color.mute).frame(width: 22, alignment: .leading)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(item.title).font(.footnote).foregroundColor(Color.mute)
+                            Text(r.s("t").isEmpty ? "—" : r.s("t")).font(.subheadline)
+                        }
+                        Spacer()
+                        Image(systemName: r.b("ok") ? "checkmark.square.fill" : "square")
+                            .foregroundColor(r.b("ok") ? Color.okFg : Color.mute)
+                            .accessibilityLabel(r.b("ok") ? "чектэй" : "чекгүй")
+                    }
+                }
+                if g == DutyForm.groups[4] {
+                    HStack { Text("Нийт адуу").bold(); Spacer(); Text("\(duty.horseTotal)").bold().monospacedDigit() }
+                }
+            }
+        }
+        if !duty.act.s("note").isEmpty { Section("Нэмэлт тэмдэглэл") { Text(duty.act.s("note")) } }
     }
 }
 
@@ -252,14 +325,10 @@ struct AcceptSheet: View {
     var body: some View {
         NavigationStack {
             Form {
-                Section("\(duty.docName) · \(duty.date)") {
-                    if !duty.handover.s("note").isEmpty { Text(duty.handover.s("note")) }
-                    Text("Хүлээлгэн өгөх үед байрлан эмчлүүлж буй: \(duty.handover.s("inpCount")) адуу")
-                        .font(.footnote).foregroundColor(Color.mute)
+                Section {
+                    Text("Хүлээлгэн өгсөн эмч: \(duty.docName) · \(duty.date)").font(.footnote).foregroundColor(Color.mute)
                 }
-                if duty.hasReport {
-                    DutyReportRows(report: duty.report)
-                }
+                ActRows(duty: duty)
                 Section("Хүлээн авагчийн тэмдэглэл (заавал биш)") {
                     TextEditor(text: $note).frame(minHeight: 70)
                 }
@@ -285,48 +354,76 @@ struct AcceptSheet: View {
     }
 }
 
-struct DutyReportRows: View {
-    let report: Rec
+/// Нэг актын дэлгэрэнгүй: мөрүүд, гурван гарын үсэг (өгсөн · авсан · хянасан)
+struct ActDetailView: View {
+    @EnvironmentObject var store: AppStore
+    let dutyId: String
+    @State private var saving = false
+
     var body: some View {
-        let rows: [[String]] = [["Ерөнхий байдал", report.s("general")], ["Хийсэн эмчилгээ, үзлэг", report.s("treated")],
-                                ["Онцгой тохиолдол", report.s("incidents")], ["Дараагийн ээлжид", report.s("todo")]]
-            .filter { !$0[1].isEmpty }
-        ForEach(rows.indices, id: \.self) { i in
-            Section(rows[i][0]) { Text(rows[i][1]) }
+        if let d = store.duties.first(where: { $0.id == dutyId }) {
+            List {
+                Section("Гарын үсэг") {
+                    sign("Хүлээлгэн өгсөн эмч", d.docName, d.sent ? Clock.time(d.handover.d("sentMs")) : "өгөөгүй")
+                    sign("Хүлээн авсан эмч", d.toName.isEmpty ? "—" : d.toName, d.accepted ? Clock.time(d.handover.d("acceptedMs")) : "хүлээн аваагүй")
+                    sign("Хянасан ахлах эмч", d.reviewedBy.isEmpty ? "—" : d.reviewedBy, d.reviewed ? Clock.time(d.raw.rec("review")?.d("ms") ?? 0) : "хянаагүй")
+                    if !d.handover.s("acceptNote").isEmpty { Text("Хүлээн авагч: \(d.handover.s("acceptNote"))").font(.footnote) }
+                    if store.canReviewActs && d.sent && !d.reviewed {
+                        Button(saving ? "…" : "Хянасан гэж тэмдэглэх") {
+                            saving = true
+                            Task { _ = await store.reviewAct(d); saving = false }
+                        }
+                        .disabled(saving)
+                    }
+                }
+                if d.hasAct {
+                    ActRows(duty: d)
+                } else if d.hasReport {
+                    // Маягт нэвтрэхээс өмнөх чөлөөт бичвэртэй мэдээ
+                    Section("Мэдээ") {
+                        ForEach([d.report.s("general"), d.report.s("treated"), d.report.s("incidents"), d.report.s("todo")].filter { !$0.isEmpty }, id: \.self) { Text($0) }
+                    }
+                }
+                if let e = store.errorText { Section { Text(e).font(.footnote).foregroundColor(.red) } }
+            }
+            .navigationTitle("\(d.date) · \(d.docName)")
+            .navigationBarTitleDisplayMode(.inline)
+        } else {
+            Text("Акт олдсонгүй").foregroundColor(Color.mute)
+        }
+    }
+    private func sign(_ role: String, _ name: String, _ when: String) -> some View {
+        HStack(alignment: .top) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(role).font(.caption).foregroundColor(Color.mute)
+                Text(name).font(.subheadline.weight(.semibold))
+            }
+            Spacer()
+            Text(when).font(.caption.monospacedDigit()).foregroundColor(Color.mute)
         }
     }
 }
 
-/// Сүүлийн жижүүрийн мэдээнүүд — бүх эмч харна
+/// Сүүлийн актууд — бүх эмч харна
 struct DutyListView: View {
     @EnvironmentObject var store: AppStore
     var body: some View {
+        let list = store.duties.sorted { $0.date == $1.date ? $0.raw.d("ms") > $1.raw.d("ms") : $0.date > $1.date }
         List {
-            if store.duties.isEmpty { Text("Жижүүрийн мэдээ алга").foregroundColor(Color.mute) }
-            ForEach(store.duties) { d in
-                Section("\(d.date) · \(d.docName)") {
-                    if d.hasReport {
-                        DisclosureGroup("Мэдээ") {
-                            let r = d.report
-                            ForEach([r.s("general"), r.s("treated"), r.s("incidents"), r.s("todo")].filter { !$0.isEmpty }, id: \.self) {
-                                Text($0).font(.subheadline)
-                            }
-                        }
-                    }
-                    if d.sent {
-                        Text(d.accepted
-                             ? "Ээлж: \(d.toName) хүлээн авсан · \(Clock.time(d.handover.d("acceptedMs")))"
-                             : "Ээлж: \(d.toName) хүлээн аваагүй")
-                            .font(.footnote).foregroundColor(d.accepted ? Color.okFg : Color.warnFg)
-                        if !d.handover.s("note").isEmpty { Text(d.handover.s("note")).font(.subheadline) }
-                        if !d.handover.s("acceptNote").isEmpty {
-                            Text("Хүлээн авагч: \(d.handover.s("acceptNote"))").font(.footnote).foregroundColor(Color.mute)
+            if list.isEmpty { Text("Ээлж хүлээлцэх акт алга").foregroundColor(Color.mute) }
+            ForEach(list) { d in
+                NavigationLink { ActDetailView(dutyId: d.id) } label: {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("\(d.date) · \(d.docName)\(d.toName.isEmpty ? "" : " → " + d.toName)").font(.subheadline.weight(.semibold))
+                        Text(d.statusLine).font(.caption).foregroundColor(d.accepted ? Color.okFg : Color.warnFg)
+                        if d.hasAct {
+                            Text("\(d.filledCount)/\(DutyForm.items.count) мөр · нийт \(d.horseTotal) адуу").font(.caption).foregroundColor(Color.mute)
                         }
                     }
                 }
             }
         }
-        .navigationTitle("Жижүүрийн мэдээ")
+        .navigationTitle("Ээлж хүлээлцэх актууд")
         .navigationBarTitleDisplayMode(.inline)
     }
 }

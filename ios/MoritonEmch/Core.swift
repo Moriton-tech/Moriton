@@ -7,7 +7,7 @@ enum Config {
     static let projectId = "moriton-4ecc0"
     static let apiKey = "AIzaSyCB20uvd_XsWju91IERQGs6yGFYSBSUx10"   // вэбийн firebase.js-тэй ижил (нууц биш)
     static let pwSalt = "moriton_salt_2026"                          // вэбийн _hashPassword-тай ижил
-    static let version = "0.6"
+    static let version = "0.7"
     static let bucket = "moriton-4ecc0.firebasestorage.app"
     #if DEBUG
     static let apnsEnv = "sandbox"      // Xcode-оор суулгасан хувилбар
@@ -314,6 +314,19 @@ struct Duty: Identifiable {
     var docName: String { raw.s("docName") }
     var report: Rec { raw.rec("report") ?? [:] }
     var hasReport: Bool { raw.d("reportMs") > 0 }
+    // Ээлж хүлээлцэх акт (МК01-М-060)
+    var act: Rec { raw.rec("act") ?? [:] }
+    var hasAct: Bool { raw.rec("act") != nil }
+    var actItems: Rec { act.rec("items") ?? [:] }
+    var filledCount: Int { actItems.count }
+    var horseTotal: Int { Int(act.d("total")) }
+    var reviewedBy: String { raw.rec("review")?.s("by") ?? "" }
+    var reviewed: Bool { !reviewedBy.isEmpty }
+    var statusLine: String {
+        if !sent { return "Бөглөж байна — ээлж өгөөгүй" }
+        if !accepted { return "Хүлээн аваагүй" }
+        return reviewed ? "Хүлээн авсан · \(reviewedBy) хянасан" : "Хүлээн авсан · ахлах эмч хянаагүй"
+    }
     var handover: Rec { raw.rec("handover") ?? [:] }
     var sent: Bool { handover.d("sentMs") > 0 }
     var accepted: Bool { handover.d("acceptedMs") > 0 }
@@ -359,5 +372,59 @@ struct MedLine: Identifiable {
     static func qtyText(_ v: Double) -> String {
         let r = (v * 100).rounded() / 100
         return r == r.rounded() ? String(Int64(r)) : String(r)
+    }
+}
+
+/// «Жижүүр эмчийн ээлж хүлээлцэх акт» (маягт МК01-М-060) — цаасан маягтын мөрүүд, дугаарлалт яг хэвээр
+enum DutyForm {
+    struct Item: Identifiable {
+        let no: Int
+        let group: String
+        let title: String
+        var numeric = false
+        var quick: [String] = []
+        var id: Int { no }
+        var key: String { String(no) }
+    }
+    static let groups = ["Дэвтэр бөглөсөн эсэх", "Эмчилгээ, арчилгаа маллагаа", "БТТ хүлээлцэх", "Эд хэрэгсэл, цэвэрлэгээ", "Нийт адууны тоо", "Бусад"]
+    private static let book = ["Бөглөсөн", "Бүртгэл хийсэн", "Бөглөөгүй"]
+    private static let care = ["Хийсэн", "Зураг оруулсан", "Хийгээгүй"]
+    private static let device = ["Цэвэр, цэнэгтэй", "Цэвэр", "Цэнэгтэй", "Ашиглаагүй"]
+    private static let tools = ["Хэвийн", "Бүрэн", "Цэвэр", "Дутуу"]
+    static let items: [Item] = [
+        Item(no: 1, group: groups[0], title: "ХАБЭАД", quick: book),
+        Item(no: 2, group: groups[0], title: "ЭАД", quick: book),
+        Item(no: 3, group: groups[0], title: "ИАБД, ЯАБД", quick: book),
+        Item(no: 4, group: groups[1], title: "Усалгаа өвсөлгөө хийгдсэн эсэх", quick: care),
+        Item(no: 5, group: groups[1], title: "Хүнд адуунд хяналт тавьсан эсэх", quick: care),
+        Item(no: 6, group: groups[1], title: "Цагийн тариа хийсэн эсэх", quick: care),
+        Item(no: 7, group: groups[2], title: "Хээлийн эхо апп цэвэр, цэнэгтэй эсэх", quick: device),
+        Item(no: 8, group: groups[2], title: "Хөлийн эхо апп цэвэр, цэнэгтэй эсэх", quick: device),
+        Item(no: 9, group: groups[2], title: "Рентген аппарат цэвэр, цэнэгтэй эсэх", quick: device),
+        Item(no: 10, group: groups[2], title: "Залгиур дуран апп цэвэр, цэнэгтэй эсэх", quick: device),
+        Item(no: 12, group: groups[2], title: "Утлагын апп цэвэр, цэнэгтэй эсэх", quick: device),
+        Item(no: 13, group: groups[2], title: "Шарлагын апп цэвэр, цэнэгтэй эсэх", quick: device),
+        Item(no: 14, group: groups[2], title: "Шүдний багаж", quick: device),
+        Item(no: 15, group: groups[2], title: "Зонд", quick: device),
+        Item(no: 17, group: groups[3], title: "Утас цэнэг сүлжээ хэвийн эсэх", quick: ["Цэнэгтэй, хэвийн", "Хэвийн", "Цэнэггүй"]),
+        Item(no: 18, group: groups[3], title: "Ногт, чөдөр", quick: tools),
+        Item(no: 19, group: groups[3], title: "Нийт түлхүүр, станц бүрэн эсэх", quick: tools),
+        Item(no: 20, group: groups[3], title: "Тэжээлийн сав цэвэр эсэх", quick: tools),
+        Item(no: 21, group: groups[4], title: "Тусгаарлалт", numeric: true),
+        Item(no: 22, group: groups[4], title: "Эмнэлэгт", numeric: true),
+        Item(no: 23, group: groups[4], title: "Модон зүчээнд", numeric: true),
+        Item(no: 24, group: groups[4], title: "Хойд саравчинд", numeric: true),
+        Item(no: 25, group: groups[4], title: "Шинэ зүчээнд", numeric: true),
+        Item(no: 26, group: groups[4], title: "Байгалийн зүчээнд", numeric: true),
+        Item(no: 27, group: groups[4], title: "1-р нарлагааны хашаанд", numeric: true),
+        Item(no: 28, group: groups[4], title: "2-р нарлагааны хашаанд", numeric: true),
+        Item(no: 29, group: groups[4], title: "3-р нарлагааны хашаанд", numeric: true),
+        Item(no: 30, group: groups[5], title: "Үзлэг системд бүртгэгдсэн эсэх", quick: ["Бүртгэгдсэн", "Дутуу"]),
+        Item(no: 31, group: groups[5], title: "Өвс тэжээлийн зарцуулалтын тоо", quick: ["Өвс ", "Хивэг ", "Овъёос "]),
+        Item(no: 32, group: groups[5], title: "Эмнэлгийн байр пайз зүүсэн эсэх", quick: ["Зүүсэн", "Дутуу"])
+    ]
+    /// Тоон мөрийн эхний тоог авна («26 3 даага 2 жил» → 26) — нийт адууны тоог бодоход
+    static func leadingNumber(_ text: String) -> Int {
+        Int(text.trimmingCharacters(in: .whitespaces).prefix { $0.isNumber }) ?? 0
     }
 }

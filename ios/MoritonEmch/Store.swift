@@ -888,9 +888,6 @@ final class AppStore: ObservableObject {
     }
 
     // ── Жижүүрийн мэдээ, ээлж хүлээлцэх ──
-    private func dutyBase() -> Rec {
-        ["id": "\(Day.today)_\(myDocId)", "date": Day.today, "docId": myDocId, "docName": userName, "ms": Day.nowMs]
-    }
     private func saveDuty(id: String, data: Rec, mask: [String]) async -> Bool {
         do {
             try await fs.patch("duty", id: id, data: data, mask: mask)
@@ -902,22 +899,32 @@ final class AppStore: ObservableObject {
             return false
         }
     }
-    func saveDutyReport(_ report: Rec) async -> Bool {
-        var data = dutyBase()
-        data["report"] = report
-        data["reportMs"] = Day.nowMs
-        return await saveDuty(id: data.s("id"), data: data, mask: ["id", "date", "docId", "docName", "ms", "report", "reportMs"])
-    }
-    func sendHandover(toDocId: String, toName: String, note: String) async -> Bool {
-        var data = dutyBase()
-        data["handover"] = ["toDocId": toDocId, "toName": toName, "note": note, "sentMs": Day.nowMs,
-                            "acceptedMs": 0, "acceptNote": "", "inpCount": activeInps.count] as Rec
-        return await saveDuty(id: data.s("id"), data: data, mask: ["id", "date", "docId", "docName", "ms", "handover"])
+    /// Ээлж хүлээлцэх актыг хадгална; send=true бол хүлээн авах эмчид илгээнэ
+    func saveAct(items: Rec, total: Int, note: String, toDocId: String, toName: String, send: Bool) async -> Bool {
+        let now = Day.nowMs
+        var data: Rec = ["id": "\(Day.today)_\(myDocId)", "date": Day.today, "docId": myDocId, "docName": userName, "ms": now]
+        let act: Rec = ["form": "МК01-М-060", "items": items, "total": total, "note": note, "savedMs": now]
+        data["act"] = act
+        var mask = ["id", "date", "docId", "docName", "ms", "act"]
+        if send {
+            let h: Rec = ["toDocId": toDocId, "toName": toName, "note": note, "sentMs": now, "acceptedMs": 0, "acceptNote": "", "inpCount": total]
+            data["handover"] = h
+            mask.append("handover")
+        }
+        return await saveDuty(id: data.s("id"), data: data, mask: mask)
     }
     func acceptHandover(_ d: Duty, note: String) async -> Bool {
         let now = Day.nowMs
-        let data: Rec = ["ms": now, "handover": ["acceptedMs": now, "acceptNote": note, "acceptedBy": userName] as Rec]
-        return await saveDuty(id: d.id, data: data, mask: ["ms", "handover.acceptedMs", "handover.acceptNote", "handover.acceptedBy"])
+        let h: Rec = ["acceptedMs": now, "acceptNote": note, "acceptedBy": userName]
+        return await saveDuty(id: d.id, data: ["ms": now, "handover": h],
+                              mask: ["ms", "handover.acceptedMs", "handover.acceptNote", "handover.acceptedBy"])
+    }
+    /// Ахлах эмч (онош батлах эрхтэй хэрэглэгч) актыг хянасан гэж тэмдэглэнэ
+    var canReviewActs: Bool { isApprover(userName) }
+    func reviewAct(_ d: Duty) async -> Bool {
+        let now = Day.nowMs
+        let r: Rec = ["by": userName, "ms": now]
+        return await saveDuty(id: d.id, data: ["ms": now, "review": r], mask: ["ms", "review"])
     }
 
     // ── Мэдэгдлийн төхөөрөмж бүртгэх ──
