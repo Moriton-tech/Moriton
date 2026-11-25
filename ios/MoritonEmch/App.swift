@@ -28,11 +28,8 @@ struct MainTabs: View {
     var body: some View {
         TabView {
             MyWorkView()
-                .tabItem { Label("Миний ажил", systemImage: "checklist") }
-                .badge(store.unfinishedCount)
-            WaitingView()
-                .tabItem { Label("Хүлээлт", systemImage: "clock") }
-                .badge(store.clinicWaiting.count)
+                .tabItem { Label("Миний ажил", systemImage: "house") }
+                .badge(store.unfinishedCount + store.clinicWaiting.count)
             InpListView()
                 .tabItem { Label("Байрлан", systemImage: "bed.double") }
             LabView()

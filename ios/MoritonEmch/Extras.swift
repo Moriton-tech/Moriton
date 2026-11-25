@@ -80,46 +80,6 @@ struct PhotoButton: View {
     }
 }
 
-// ── Миний үзсэн адуу (зураг авах) ────────────────────────────
-struct MyExamsSection: View {
-    @EnvironmentObject var store: AppStore
-
-    var body: some View {
-        let list = Array(store.myExams.prefix(5))
-        if !list.isEmpty {
-            HStack {
-                Text("Миний үзсэн адуу").font(.subheadline.bold())
-                Spacer()
-                NavigationLink("Бүх түүх ›") { HistoryView() }.font(.subheadline)
-            }
-            .padding(.top, 8)
-            ForEach(list) { e in
-                NavigationLink {
-                    ExamDetailView(examId: e.id)
-                } label: {
-                    Card {
-                        HStack(alignment: .top) {
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text(e.horse).font(.headline).foregroundColor(Color.ink)
-                                Text("\(e.date) · № \(e.examNum.isEmpty ? "—" : e.examNum) · \(e.owner)")
-                                    .font(.caption).foregroundColor(Color.mute)
-                                if !e.diagnosis.isEmpty {
-                                    Text(e.diagnosis).font(.footnote).foregroundColor(Color.ink).lineLimit(2).multilineTextAlignment(.leading)
-                                }
-                            }
-                            Spacer()
-                            if e.imageCount > 0 {
-                                Label("\(e.imageCount)", systemImage: "photo").font(.caption).foregroundColor(Color.mute)
-                            }
-                            Image(systemName: "chevron.right").font(.footnote).foregroundColor(Color.mute)
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
 // ── Жижүүр эмч ───────────────────────────────────────────────
 struct DutySection: View {
     @EnvironmentObject var store: AppStore

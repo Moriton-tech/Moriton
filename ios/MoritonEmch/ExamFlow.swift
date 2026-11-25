@@ -8,13 +8,15 @@ struct ExamSheet: View {
     @State private var draft = AppStore.ExamDraft()
     @State private var saving = false
     @State private var finished: Exam?
+    @State private var admitted = false
+    @State private var confirmAdmit = false
 
     private var total: Double { draft.services.reduce(0) { $0 + store.price(of: $1) } }
 
     var body: some View {
         NavigationStack {
             if let e = finished {
-                ExamDoneView(exam: e) { dismiss() }
+                ExamDoneView(exam: e, admitted: admitted) { dismiss() }
             } else {
                 form
             }
@@ -83,31 +85,45 @@ struct ExamSheet: View {
             }
             if let e = store.errorText { Section { Text(e).font(.footnote).foregroundColor(.red) } }
             Section {
-                Button {
-                    saving = true
-                    Task {
-                        var d = draft
-                        d.diagnosis = d.diagnosis.trimmingCharacters(in: .whitespacesAndNewlines)
-                        d.note = d.note.trimmingCharacters(in: .whitespacesAndNewlines)
-                        d.temp = d.temp.replacingOccurrences(of: ",", with: ".")
-                        d.weight = d.weight.replacingOccurrences(of: ",", with: ".")
-                        finished = await store.finishExam(wait, draft: d)
-                        saving = false
-                    }
-                } label: {
+                Button { save(admit: false) } label: {
                     Text(saving ? "Хадгалж байна…" : "Үзлэг дуусгах").font(.headline).frame(maxWidth: .infinity, minHeight: 44)
                 }
-                .disabled(saving || !store.online || draft.diagnosis.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .disabled(!ready)
+                Button { confirmAdmit = true } label: {
+                    Text("Байрлан эмчлүүлэхэд оруулах").frame(maxWidth: .infinity, minHeight: 44)
+                }
+                .disabled(!ready)
                 Text(store.online
-                     ? "Дуусгахад нэхэмжлэх үүсч, адуу хүлээлтээс гарна. Онош ахлах эмчид хянагдахаар очно."
+                     ? "Дуусгахад нэхэмжлэх үүсч, адуу хүлээлтээс гарна. Байрлан эмчлүүлэхэд оруулбал нэхэмжлэх гарах үед үүснэ."
                      : "Сүлжээгүй байна — үзлэг дуусгахад сүлжээ хэрэгтэй. Бөглөсөн зүйл энэ цонхонд хэвээр үлдэнэ.")
                     .font(.caption).foregroundColor(store.online ? Color.mute : Color.warnFg)
             }
+        }
+        .confirmationDialog("\(wait.horse) — байрлан эмчлүүлэхэд оруулах уу?", isPresented: $confirmAdmit, titleVisibility: .visible) {
+            Button("Тийм, оруулах") { save(admit: true) }
+            Button("Болих", role: .cancel) {}
         }
         .navigationTitle(wait.horse)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .cancellationAction) { Button("Болих") { dismiss() }.disabled(saving) }
+        }
+    }
+
+    private var ready: Bool {
+        !saving && store.online && !draft.diagnosis.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+    private func save(admit: Bool) {
+        saving = true
+        Task {
+            var d = draft
+            d.diagnosis = d.diagnosis.trimmingCharacters(in: .whitespacesAndNewlines)
+            d.note = d.note.trimmingCharacters(in: .whitespacesAndNewlines)
+            d.temp = d.temp.replacingOccurrences(of: ",", with: ".")
+            d.weight = d.weight.replacingOccurrences(of: ",", with: ".")
+            admitted = admit
+            finished = await store.finishExam(wait, draft: d, admit: admit)
+            saving = false
         }
     }
 
@@ -170,13 +186,14 @@ struct PickList: View {
 struct ExamDoneView: View {
     @EnvironmentObject var store: AppStore
     let exam: Exam
+    var admitted = false
     let onClose: () -> Void
 
     var body: some View {
         VStack(spacing: 16) {
             Spacer()
             Image(systemName: "checkmark.circle.fill").font(.system(size: 56)).foregroundColor(Color.okFg)
-            Text("Үзлэг дууслаа").font(.title2.bold())
+            Text(admitted ? "Байрлан эмчлүүлэхэд орлоо" : "Үзлэг дууслаа").font(.title2.bold())
             Text("\(exam.horse) · № \(exam.examNum)").foregroundColor(Color.mute)
             Text(exam.dxLabel).font(.footnote).foregroundColor(Color.mute)
             HStack(spacing: 10) {

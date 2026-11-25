@@ -7,7 +7,7 @@ enum Config {
     static let projectId = "moriton-4ecc0"
     static let apiKey = "AIzaSyCB20uvd_XsWju91IERQGs6yGFYSBSUx10"   // вэбийн firebase.js-тэй ижил (нууц биш)
     static let pwSalt = "moriton_salt_2026"                          // вэбийн _hashPassword-тай ижил
-    static let version = "0.3"
+    static let version = "0.4"
     static let bucket = "moriton-4ecc0.firebasestorage.app"
     #if DEBUG
     static let apnsEnv = "sandbox"      // Xcode-оор суулгасан хувилбар
@@ -82,6 +82,22 @@ enum Day {
     static var greeting: String {
         let h = Calendar.current.component(.hour, from: Date())
         return h < 11 ? "Өглөөний мэнд" : (h < 18 ? "Өдрийн мэнд" : "Оройн мэнд")
+    }
+    static func add(_ date: String, days: Int) -> String {
+        let f = DateFormatter()
+        f.calendar = Calendar(identifier: .gregorian)
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.dateFormat = "yyyy-MM-dd"
+        guard let d = f.date(from: date), let r = Calendar(identifier: .gregorian).date(byAdding: .day, value: days, to: d) else { return date }
+        return f.string(from: r)
+    }
+    static func between(_ from: String, _ to: String) -> Int {
+        let f = DateFormatter()
+        f.calendar = Calendar(identifier: .gregorian)
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.dateFormat = "yyyy-MM-dd"
+        guard let a = f.date(from: from), let b = f.date(from: to) else { return 0 }
+        return Calendar(identifier: .gregorian).dateComponents([.day], from: a, to: b).day ?? 0
     }
     static var nowMs: Double { (Date().timeIntervalSince1970 * 1000).rounded() }
     /// Вэбийн inpatientDays()-тай ижил: орсон өдөр = 1, өдөр бүрийн 12:00-оос хойш +1
@@ -309,5 +325,36 @@ enum Clock {
         f.locale = Locale(identifier: "en_US_POSIX")
         f.dateFormat = "MM.dd HH:mm"
         return f.string(from: Date(timeIntervalSince1970: ms / 1000))
+    }
+}
+
+/// Өдрийн эмчилгээний эмийн мөр (вэбийн INP_DRAFT.meds-тэй ижил талбарууд)
+struct MedLine: Identifiable {
+    let id = UUID()
+    var name: String
+    var qty: String = "1"
+    var unit: String = ""
+    var unitPrice: Double = 0
+    var price: String = "0"
+    var note: String = ""
+    var manualPrice = false
+    var course: Rec? = nil     // курсээс автоматаар орсон бол: courseId, dose, perDay
+
+    var priceValue: Double { Double(price.replacingOccurrences(of: ",", with: ".")) ?? 0 }
+    var qtyValue: Double { Double(qty.replacingOccurrences(of: ",", with: ".")) ?? 0 }
+    var rec: Rec {
+        var r: Rec = ["name": name, "note": note, "qty": qtyValue, "unit": unit, "unitPrice": unitPrice, "price": priceValue]
+        if manualPrice { r["manualPrice"] = true }
+        if let c = course {
+            r["courseId"] = c.s("courseId")
+            r["fromCourse"] = true
+            r["dose"] = c.d("dose")
+            r["perDay"] = c.d("perDay")
+        }
+        return r
+    }
+    static func qtyText(_ v: Double) -> String {
+        let r = (v * 100).rounded() / 100
+        return r == r.rounded() ? String(Int64(r)) : String(r)
     }
 }

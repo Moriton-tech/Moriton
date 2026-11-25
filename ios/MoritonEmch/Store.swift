@@ -103,6 +103,12 @@ final class AppStore: ObservableObject {
     var openLabs: [Lab] { labs.filter { $0.isOpen } }
     var unfinishedCount: Int { myTasks.filter { !$0.done(on: Day.today) }.count }
 
+    // ── Нүүр ──
+    var myExamsToday: Int { monthExams.filter { $0.date == Day.today }.count }
+    var myReturnedDx: [Exam] { monthExams.filter { $0.raw.s("dxStatus") == "returned" && !$0.isPlanned } }
+    var myPendingDx: Int { monthExams.filter { $0.raw.s("dxStatus") == "pending" && !$0.isPlanned }.count }
+    var myOpenLabs: Int { labs.filter { $0.isOpen && $0.docName == userName }.count }
+
     // ── Ажлын хувиар, жижүүр ──
     /// Тухайн өдрийн төлөв: "work" | "duty" | "off" | ""
     func scheduleStatus(_ date: String, docId: String? = nil) -> String {
@@ -212,21 +218,26 @@ final class AppStore: ObservableObject {
     }
 
     // ── Өдрийн эмчилгээ бичих ──
-    func addLog(to inp: Inp, temp: String, pulse: String, resp: String, weight: String, slot: String, note: String) {
-        let log: Rec = [
-            "id": Day.uid(),
-            "date": Day.today,
-            "slot": slot,
-            "docId": myDocId,
-            "docName": me?.s("name") ?? userName,
-            "diagnosis": "",
-            "note": note,
-            "temp": temp, "pulse": pulse, "resp": resp, "wt": weight,
-            "services": [Any](), "meds": [Any](),
-            "amount": 0,
-            "ms": Day.nowMs,
-            "src": "ios"
+    func addLog(to inp: Inp, temp: String, pulse: String, resp: String, weight: String, slot: String, note: String,
+                diagnosis: String = "", services: [Rec] = [], meds: [Rec] = []) {
+        let svcTotal: Double = services.reduce(0) { $0 + $1.d("price") }
+        let medTotal: Double = meds.reduce(0) { $0 + $1.d("price") }
+        let amount = svcTotal + medTotal
+        var log: Rec = [
+            "id": Day.uid(), "date": Day.today, "slot": slot,
+            "docId": myDocId, "docName": me?.s("name") ?? userName
         ]
+        log["diagnosis"] = diagnosis
+        log["note"] = note
+        log["temp"] = temp
+        log["pulse"] = pulse
+        log["resp"] = resp
+        log["wt"] = weight
+        log["services"] = services
+        log["meds"] = meds
+        log["amount"] = amount
+        log["ms"] = Day.nowMs
+        log["src"] = "ios"
         pending.append(["kind": "log", "inpId": inp.id, "horse": inp.horse, "log": log])
         savePending()
         inps = applyPending(inps)
@@ -324,6 +335,48 @@ final class AppStore: ObservableObject {
         var seen = Set<String>()
         return (cat + Catalog.meds).filter { seen.insert($0).inserted }
     }
+    private func medKey(_ s: String) -> String { s.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
+    /// Вэбийн medCatFind(): каталогийн эм (нэр эсвэл өөр нэршлээр)
+    func medInfo(_ name: String) -> (unit: String, price: Double) {
+        let k = medKey(name)
+        let cat = config.recs("medCatalog").filter { !$0.b("deleted") }
+        let hit = cat.first { medKey($0.s("name")) == k }
+            ?? cat.first { ($0["aliases"] as? [Any] ?? []).contains { medKey("\($0)") == k } }
+        return (hit?.s("unit") ?? "", hit?.d("price") ?? 0)
+    }
+    func newMedLine(_ name: String) -> MedLine {
+        let info = medInfo(name)
+        return MedLine(name: name, qty: "1", unit: info.unit, unitPrice: info.price, price: String(Int64(info.price.rounded())))
+    }
+    /// Вэбийн courseItemsFor() + courseLoggedOn(): өнөөдөр идэвхтэй, хараахан бичигдээгүй курсийн эмийн мөрүүд
+    func courseLines(for inp: Inp, date: String) -> [MedLine] {
+        let logged = Set(inp.logs.filter { $0.s("date").hasPrefix(date) }.flatMap { $0.recs("meds") }.map { $0.s("courseId") })
+        var out: [MedLine] = []
+        for c in inp.raw.recs("course") where !c.b("deleted") {
+            let start = c.s("start")
+            if start.isEmpty { continue }
+            let days = max(1, Int(c.d("days")))
+            var last = Day.add(start, days: days - 1)
+            let stopped = c.s("stopped")
+            if !stopped.isEmpty && stopped < last { last = stopped }
+            if date < start || date > last { continue }
+            if logged.contains(c.s("id")) { continue }
+            let med = c.s("med")
+            let info = medInfo(med)
+            let perDay = max(1, Int(c.d("perDay")))
+            let dose = c.d("dose")
+            let unit = c.s("unit").isEmpty ? info.unit : c.s("unit")
+            let up = (c["unitPrice"] == nil || c["unitPrice"] is NSNull || c.s("unitPrice").isEmpty) ? info.price : c.d("unitPrice")
+            let qty = (dose * Double(perDay) * 100).rounded() / 100
+            let n = min(Day.between(start, date) + 1, days)
+            var note = MedLine.qtyText(dose) + " " + unit + " × " + String(perDay) + "/өдөр · " + String(n) + "/" + String(days) + " хоног"
+            if !c.s("note").isEmpty { note += " · " + c.s("note") }
+            var line = MedLine(name: med, qty: MedLine.qtyText(qty), unit: unit, unitPrice: up, price: String(Int64((qty * up).rounded())), note: note)
+            line.course = ["courseId": c.s("id"), "dose": dose, "perDay": Double(perDay)]
+            out.append(line)
+        }
+        return out
+    }
     private func isLabService(_ name: String) -> Bool {
         if strings("labSvcOff").contains(name) { return false }
         if strings("labSvcOn").contains(name) { return true }
@@ -368,7 +421,7 @@ final class AppStore: ObservableObject {
     /// Үзлэг дуусгах — вэбийн finishExam()-тай ижил бичлэгүүдийг НЭГ багцаар бичнэ:
     /// үзлэг + нэхэмжлэх + шинжилгээний захиалга + лог үүсгэж, хүлээлтээс хасаж, эмчийн тоог нэмнэ.
     /// Хүлээлтийн бичлэг аль хэдийн алга бол (өөр эмч үзсэн) багц бүхэлдээ цуцлагдана.
-    func finishExam(_ w: Wait, draft: ExamDraft) async -> Exam? {
+    func finishExam(_ w: Wait, draft: ExamDraft, admit: Bool = false) async -> Exam? {
         guard let meDoc = me else { errorText = "Таны хэрэглэгч эмчийн бүртгэлтэй холбогдоогүй байна"; return nil }
         let now = Day.nowMs
         let f = DateFormatter()
@@ -412,6 +465,7 @@ final class AppStore: ObservableObject {
         exam["durationMin"] = durValue
         exam["ms"] = now
         exam["src"] = "ios"
+        if admit { exam["inpatient"] = true }
         // Онош батлах: үндсэн / хамтрагч эмч нь батлах эрхтэй бол автоматаар батлагдана
         let approver = [exam.s("docName"), exam.s("assistDocName")].first { isApprover($0) } ?? ""
         if !approver.isEmpty {
@@ -450,9 +504,24 @@ final class AppStore: ObservableObject {
             l["ms"] = now
             labs.append(l)
         }
+        // Байрлан эмчлүүлэхэд оруулах бол нэхэмжлэхийн оронд байрлан эмчилгээний бичлэг үүснэ (вэбийн moveToInpatient)
+        var inp: Rec = [
+            "id": Day.uid(), "examId": examId, "horseId": exam.s("horseId"), "horse": w.horse, "owner": w.owner, "phone": w.phone,
+            "diagnosis": draft.diagnosis, "examNum": examNum, "docId": exam.s("docId"), "docName": exam.s("docName")
+        ]
+        inp["location"] = ""
+        inp["admittedMs"] = now
+        inp["admittedDate"] = Day.today
+        inp["admittedBy"] = userName
+        inp["initialAmount"] = total
+        inp["services"] = svc
+        inp["meds"] = meds
+        inp["log"] = noImages
+        inp["discharged"] = false
+        inp["ms"] = now
         let log: Rec = [
             "id": "log_" + String(Int64(now)) + "_" + String(Day.uid().suffix(4)), "user_name": userName, "user_role": role,
-            "action": "Үзлэг дуусгасан", "target_id": examId, "target_name": w.horse + " — " + exam.s("docName"),
+            "action": admit ? "Байрлан эмчилгээнд байрлуулав" : "Үзлэг дуусгасан", "target_id": admit ? inp.s("id") : examId, "target_name": w.horse + " — " + exam.s("docName"),
             "exam_id": examNum, "details": "Онош: " + draft.diagnosis + " · утасны аппаас", "log_date": Day.today, "log_ms": now
         ]
 
@@ -464,18 +533,19 @@ final class AppStore: ObservableObject {
         // 1) Хүлээлтээс хасна — бичлэг байхгүй бол (өөр эмч үзчихсэн) бүх багц цуцлагдана
         writes.append(["delete": await fs.docName("waiting", w.id), "currentDocument": ["exists": true]])
         writes.append(await create("exams", exam))
-        writes.append(await create("fins", fin))
+        writes.append(await create(admit ? "inps" : "fins", admit ? inp : fin))
         for l in labs { writes.append(await create("labs", l)) }
         writes.append(await create("logs", log))
-        // Эмчийн үзлэгийн тоо, орлогыг серверийн талд нэмнэ (зэрэг бичихэд алдагдахгүй)
-        writes.append([
+        // Эмчийн үзлэгийн тоо, орлогыг серверийн талд нэмнэ (зэрэг бичихэд алдагдахгүй).
+        // Вэбтэй ижил: байрлан эмчлүүлэхэд оруулах үед тоолохгүй.
+        if !admit { writes.append([
             "update": ["name": await fs.docName("doctors", meDoc.s("id")), "fields": FSValue.encodeFields(stamp)],
             "updateMask": ["fieldPaths": ["_updatedAt", "_writer"]],
             "updateTransforms": [
                 ["fieldPath": "exams", "increment": ["integerValue": "1"]],
                 ["fieldPath": "rev", "increment": ["integerValue": String(Int64(total))]]
             ]
-        ])
+        ]) }
         do {
             try await fs.commit(writes)
         } catch let e as FSError where e.isPermanent {

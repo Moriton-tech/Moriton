@@ -160,232 +160,146 @@ struct LoginView: View {
     }
 }
 
-// ── Миний ажил ───────────────────────────────────────────────
+// ── Миний ажил: Нүүр · Хүлээлт · Даалгавар · Түүх ────────────
+enum WorkTab: String, CaseIterable, Identifiable {
+    case home = "Нүүр", waiting = "Хүлээлт", tasks = "Даалгавар", history = "Түүх"
+    var id: String { rawValue }
+}
+
 struct MyWorkView: View {
     @EnvironmentObject var store: AppStore
+    @State private var tab: WorkTab = .home
     @State private var writing: Inp?
-
-    var body: some View {
-        let tasks = store.myTasks
-        let done = tasks.filter { $0.done(on: Day.today) }.count
-        Screen(title: "Миний ажил") {
-            VStack(alignment: .leading, spacing: 10) {
-                HStack(alignment: .top) {
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text("\(Day.greeting), \(store.userName)").font(.title3.bold()).foregroundColor(.white)
-                        Text(Day.pretty).font(.footnote).foregroundColor(.white.opacity(0.7))
-                    }
-                    Spacer()
-                    if !tasks.isEmpty {
-                        VStack(alignment: .trailing, spacing: 0) {
-                            Text("\(done)/\(tasks.count)").font(.title2.bold().monospacedDigit()).foregroundColor(Color.gold)
-                            Text("даалгавар").font(.caption2).foregroundColor(.white.opacity(0.7))
-                        }
-                    }
-                }
-                if !tasks.isEmpty {
-                    ProgressView(value: Double(done), total: Double(tasks.count)).tint(Color.gold)
-                }
-            }
-            .padding(16)
-            .background(Color.navy)
-            .clipShape(RoundedRectangle(cornerRadius: 14))
-
-            DutySection()
-
-            if store.me == nil {
-                EmptyNote(text: "«\(store.userName)» хэрэглэгч эмчийн бүртгэлтэй холбогдоогүй байна. Вэб дээр: Тохиргоо → Эмч нар.")
-            }
-
-            Text("Өнөөдрийн даалгавар").font(.subheadline.bold()).padding(.top, 4)
-            if tasks.isEmpty {
-                EmptyNote(text: "Өнөөдөр танд хуваарилсан адуу алга")
-            }
-            ForEach(tasks) { i in
-                InpCard(inp: i, showTask: true) { writing = i }
-            }
-
-            let others = store.myOthers
-            if !others.isEmpty {
-                Text("Миний эмчилж буй бусад адуу").font(.subheadline.bold()).padding(.top, 8)
-                ForEach(others) { i in
-                    InpCard(inp: i, showTask: false) { writing = i }
-                }
-            }
-
-            MyExamsSection()
-        }
-        .sheet(item: $writing) { i in TreatSheet(inp: i) }
-    }
-}
-
-struct InpCard: View {
-    let inp: Inp
-    let showTask: Bool
-    let onWrite: () -> Void
-
-    var body: some View {
-        let today = Day.today
-        let done = inp.done(on: today)
-        Card {
-            HStack {
-                Text(inp.horse).font(.headline)
-                Spacer()
-                Tag(text: done ? "Бичсэн" : "Хийгээгүй", ok: done)
-            }
-            Text("\(inp.location.isEmpty ? "байрлалгүй" : inp.location) · \(inp.day) дахь хоног · \(inp.owner)")
-                .font(.footnote).foregroundColor(Color.mute)
-            if !inp.diagnosis.isEmpty { Text(inp.diagnosis).font(.subheadline) }
-            if inp.surgeryPending {
-                Text("Мэс засалд хүлээгдэж буй\(inp.surgeryDate.isEmpty ? "" : " · " + inp.surgeryDate)")
-                    .font(.footnote.weight(.semibold)).foregroundColor(Color.warnFg)
-            }
-            if showTask, let task = inp.assign(on: today)?.s("task"), !task.isEmpty {
-                Text("Даалгавар: \(task)")
-                    .font(.footnote)
-                    .padding(8)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(Color(hex: 0xF1EFE6))
-                    .clipShape(RoundedRectangle(cornerRadius: 8))
-            }
-            if !inp.lastLine.isEmpty {
-                Text(inp.lastLine).font(.caption).foregroundColor(Color.mute)
-            }
-            HStack(spacing: 8) {
-                Button(action: onWrite) {
-                    Text(done ? "Дахин бичлэг нэмэх" : "Эмчилгээ бичих")
-                        .font(.subheadline.weight(.semibold))
-                        .frame(maxWidth: .infinity, minHeight: 46)
-                }
-                .background(Color.navy)
-                .foregroundColor(.white)
-                .clipShape(RoundedRectangle(cornerRadius: 10))
-                let examId = inp.raw.s("examId")
-                PhotoButton(target: PhotoTarget(col: examId.isEmpty ? "inps" : "exams", id: examId.isEmpty ? inp.id : examId, horse: inp.horse),
-                            count: examId.isEmpty ? ((inp.raw["images"] as? [Any])?.count ?? 0) : 0)
-                let digits = inp.phone.filter { $0.isNumber || $0 == "+" }
-                if !digits.isEmpty, let url = URL(string: "tel:\(digits)") {
-                    Link(destination: url) {
-                        Image(systemName: "phone")
-                            .frame(width: 46, height: 46)
-                            .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.navy))
-                    }
-                    .accessibilityLabel("Эзэнд залгах")
-                }
-            }
-        }
-    }
-}
-
-// ── Эмчилгээ бичих ───────────────────────────────────────────
-struct TreatSheet: View {
-    @EnvironmentObject var store: AppStore
-    @Environment(\.dismiss) private var dismiss
-    let inp: Inp
-    @State private var temp = ""
-    @State private var pulse = ""
-    @State private var resp = ""
-    @State private var weight = ""
-    @State private var slot = ""
-    @State private var note = ""
-
-    private var canSave: Bool {
-        !note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !temp.isEmpty || !pulse.isEmpty || !resp.isEmpty
-    }
+    @State private var examining: Wait?
+    @State private var query = ""
 
     var body: some View {
         NavigationStack {
-            Form {
-                Section {
-                    Text("\(inp.location.isEmpty ? "байрлалгүй" : inp.location) · \(inp.day) дахь хоног")
-                        .font(.footnote).foregroundColor(Color.mute)
-                    if !inp.lastLine.isEmpty { Text(inp.lastLine).font(.footnote).foregroundColor(Color.mute) }
+            VStack(spacing: 0) {
+                OfflineBar()
+                ErrorBar()
+                Picker("Хэсэг", selection: $tab) {
+                    ForEach(WorkTab.allCases) { t in Text(label(t)).tag(t) }
                 }
-                Section("Үзүүлэлт") {
-                    vital("Темп °C", "38.0", $temp, .decimalPad)
-                    vital("Зүрхний цохилт", "40", $pulse, .numberPad)
-                    vital("Амьсгал /мин", "12", $resp, .numberPad)
-                    vital("Жин кг", "", $weight, .decimalPad)
-                }
-                Section("Цаг") {
-                    Picker("Цаг", selection: $slot) {
-                        Text("—").tag("")
-                        ForEach(["Өглөө", "Өдөр", "Орой", "Шөнө"], id: \.self) { Text($0).tag($0) }
+                .pickerStyle(.segmented)
+                .padding(.horizontal, 16).padding(.vertical, 10)
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 10) {
+                        switch tab {
+                        case .home: home
+                        case .waiting: waitingList
+                        case .tasks: taskList
+                        case .history: historyList
+                        }
                     }
-                    .pickerStyle(.segmented)
+                    .padding(.horizontal, 16).padding(.bottom, 16)
                 }
-                Section("Эмчилгээ, тэмдэглэл") {
-                    TextEditor(text: $note).frame(minHeight: 110)
-                }
-                Section {
-                    Text("Эм, үйлчилгээний төлбөрийг одоохондоо компьютер дээрээс нэмнэ. Сүлжээгүй үед бичлэг утсанд хадгалагдаж, холбогдмогц илгээгдэнэ.")
-                        .font(.caption).foregroundColor(Color.mute)
-                }
+                .refreshable { await store.refresh() }
             }
-            .navigationTitle(inp.horse)
+            .background(Color.ground)
+            .navigationTitle("Миний ажил")
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button("Болих") { dismiss() } }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Хадгалах") {
-                        store.addLog(to: inp,
-                                     temp: temp.replacingOccurrences(of: ",", with: "."),
-                                     pulse: pulse, resp: resp,
-                                     weight: weight.replacingOccurrences(of: ",", with: "."),
-                                     slot: slot,
-                                     note: note.trimmingCharacters(in: .whitespacesAndNewlines))
-                        dismiss()
-                    }
-                    .disabled(!canSave)
-                }
-            }
         }
-    }
-
-    private func vital(_ label: String, _ hint: String, _ value: Binding<String>, _ pad: UIKeyboardType) -> some View {
-        HStack {
-            Text(label)
-            Spacer()
-            TextField(hint, text: value)
-                .keyboardType(pad)
-                .multilineTextAlignment(.trailing)
-                .frame(width: 110)
-        }
-    }
-}
-
-// ── Хүлээлт ──────────────────────────────────────────────────
-struct WaitingView: View {
-    @EnvironmentObject var store: AppStore
-    @State private var examining: Wait?
-    var body: some View {
-        Screen(title: "Хүлээж байгаа") {
-            if store.clinicWaiting.isEmpty { EmptyNote(text: "Хүлээж буй адуу алга") }
-            ForEach(store.clinicWaiting) { w in
-                Card {
-                    HStack {
-                        Text(w.horse).font(.headline)
-                        Spacer()
-                        Text(w.waited).font(.footnote.monospacedDigit()).foregroundColor(Color.mute)
-                    }
-                    Text("\(w.owner)\(w.phone.isEmpty ? "" : " · " + w.phone)").font(.footnote).foregroundColor(Color.mute)
-                    if !w.symptoms.isEmpty { Text(w.symptoms).font(.subheadline) }
-                    Text("Хуудас № \(w.examNum.isEmpty ? "—" : w.examNum)\(w.iabd.isEmpty ? "" : " · ИАБД " + w.iabd)")
-                        .font(.caption).foregroundColor(Color.mute)
-                    Button { store.errorText = nil; examining = w } label: {
-                        Text("Үзлэг эхлүүлэх").font(.subheadline.weight(.semibold)).frame(maxWidth: .infinity, minHeight: 46)
-                    }
-                    .background(Color.navy).foregroundColor(.white)
-                    .clipShape(RoundedRectangle(cornerRadius: 10))
-                    .disabled(store.me == nil)
-                }
-            }
-        }
+        .sheet(item: $writing) { i in TreatSheet(inp: i) }
         .sheet(item: $examining) { w in ExamSheet(wait: w) }
     }
-}
 
-// ── Байрлан эмчлүүлэх ─────────────────────────────────────────────────
+    private func label(_ t: WorkTab) -> String {
+        switch t {
+        case .waiting: return store.clinicWaiting.isEmpty ? t.rawValue : "\(t.rawValue) \(store.clinicWaiting.count)"
+        case .tasks: return store.unfinishedCount == 0 ? t.rawValue : "\(t.rawValue) \(store.unfinishedCount)"
+        default: return t.rawValue
+        }
+    }
+    private func start(_ w: Wait) { store.errorText = nil; examining = w }
+
+    // ── Нүүр ──
+    @ViewBuilder private var home: some View {
+        let tasks = store.myTasks
+        let done = tasks.filter { $0.done(on: Day.today) }.count
+        let status = store.scheduleStatus(Day.today)
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("\(Day.greeting), \(store.userName)").font(.title3.bold()).foregroundColor(.white)
+                    Text(Day.pretty + (status.isEmpty ? "" : " · " + (status == "duty" ? "Жижүүр" : (status == "work" ? "Ажиллах өдөр" : "Амрах өдөр"))))
+                        .font(.footnote).foregroundColor(.white.opacity(0.7))
+                }
+                Spacer()
+                if !tasks.isEmpty {
+                    VStack(alignment: .trailing, spacing: 0) {
+                        Text("\(done)/\(tasks.count)").font(.title2.bold().monospacedDigit()).foregroundColor(Color.gold)
+                        Text("даалгавар").font(.caption2).foregroundColor(.white.opacity(0.7))
+                    }
+                }
+            }
+            if !tasks.isEmpty {
+                ProgressView(value: Double(done), total: Double(tasks.count)).tint(Color.gold)
+            }
+        }
+        .padding(16)
+        .background(Color.navy)
+        .clipShape(RoundedRectangle(cornerRadius: 14))
+
+        if store.me == nil {
+            EmptyNote(text: "«\(store.userName)» хэрэглэгч эмчийн бүртгэлтэй холбогдоогүй байна. Вэб дээр: Тохиргоо → Эмч нар.")
+        }
+
+        DutySection()
+
+        ForEach(store.myReturnedDx) { e in
+            NavigationLink { ExamDetailView(examId: e.id) } label: {
+                HStack {
+                    Image(systemName: "arrow.uturn.backward.circle")
+                    Text("Ахлах эмч оношийг буцаасан: \(e.horse)").multilineTextAlignment(.leading)
+                    Spacer()
+                    Image(systemName: "chevron.right")
+                }
+                .font(.footnote.weight(.semibold))
+                .padding(12)
+                .background(Color(hex: 0xFBE3E1)).foregroundColor(Color(hex: 0x8A1F18))
+                .clipShape(RoundedRectangle(cornerRadius: 10))
+            }
+        }
+
+        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 2), spacing: 8) {
+            tile("\(store.clinicWaiting.count)", "Хүлээж байгаа", .waiting)
+            tile(tasks.isEmpty ? "—" : "\(tasks.count - done)", "Бичээгүй даалгавар", .tasks)
+            tile("\(store.myExamsToday)", "Өнөөдөр үзсэн", .history)
+            tile("\(store.myPendingDx)", "Хянагдаж буй онош", .history)
+        }
+
+        if let next = store.clinicWaiting.first {
+            Text("Дараагийн адуу").font(.subheadline.bold()).padding(.top, 4)
+            WaitCard(wait: next) { start(next) }
+        }
+        let left = tasks.filter { !$0.done(on: Day.today) }
+        if !left.isEmpty {
+            Text("Бичээгүй даалгавар").font(.subheadline.bold()).padding(.top, 4)
+            ForEach(left.prefix(2)) { i in InpCard(inp: i, showTask: true) { writing = i } }
+            if left.count > 2 {
+                Button("Бүгдийг харах (\(left.count))") { tab = .tasks }.font(.subheadline)
+            }
+        }
+        if store.myOpenLabs > 0 {
+            Text("Таны захиалсан \(store.myOpenLabs) шинжилгээний хариу хүлээгдэж байна").font(.footnote).foregroundColor(Color.mute)
+        }
+    }
+
+    private func tile(_ value: String, _ text: String, _ target: WorkTab) -> some View {
+        Button { tab = target } label: {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(value).font(.title2.bold().monospacedDigit()).foregroundColor(Color.ink)
+                Text(text).font(.caption).foregroundColor(Color.mute)
+            }
+            .padding(12)
+            .frame(maxWidth: .infinity, minHeight: 64, alignment: .leading)
+            .background(Color.white)
+            .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.line))
+        }
+    }
+
+    // ── Байрлан эмчлүүлэх ─────────────────────────────────────────────────
 struct InpListView: View {
     @EnvironmentObject var store: AppStore
     @State private var writing: Inp?
