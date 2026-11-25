@@ -10,6 +10,7 @@ struct ExamSheet: View {
     @State private var finished: Exam?
     @State private var admitted = false
     @State private var confirmAdmit = false
+    @State private var templating: TemplateDraft?
 
     private var total: Double { draft.services.reduce(0) { $0 + store.price(of: $1) } }
 
@@ -22,6 +23,9 @@ struct ExamSheet: View {
             }
         }
         .interactiveDismissDisabled(saving)
+        .onAppear { store.markExamining(wait, on: true) }
+        .onDisappear { if finished == nil { store.markExamining(wait, on: false) } }
+        .sheet(item: $templating) { d in TemplateEditor(draft: d) }
     }
 
     private var form: some View {
@@ -107,6 +111,32 @@ struct ExamSheet: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .cancellationAction) { Button("Болих") { dismiss() }.disabled(saving) }
+            ToolbarItem(placement: .navigationBarTrailing) {
+                TemplateMenu { t in
+                    // Загвараас бөглөнө: бичсэнийг дарахгүй, дутууг нөхнө
+                    if draft.diagnosis.isEmpty { draft.diagnosis = t.s("diagnosis") }
+                    if draft.note.isEmpty { draft.note = t.s("note") }
+                    for s in (t["services"] as? [Any] ?? []).compactMap({ $0 as? String }) where !draft.services.contains(s) { draft.services.append(s) }
+                    for m in t.recs("meds") {
+                        if !draft.meds.contains(m.s("name")) { draft.meds.append(m.s("name")) }
+                        if (draft.medNotes[m.s("name")] ?? "").isEmpty { draft.medNotes[m.s("name")] = m.s("note") }
+                    }
+                }
+            }
+            ToolbarItem(placement: .primaryAction) {
+                Button {
+                    var d = TemplateDraft()
+                    d.title = String(draft.diagnosis.prefix(40))
+                    d.diagnosis = draft.diagnosis
+                    d.note = draft.note
+                    d.services = draft.services
+                    d.meds = draft.meds
+                    d.medNotes = draft.medNotes
+                    templating = d
+                } label: { Image(systemName: "square.and.arrow.down") }
+                .accessibilityLabel("Загвар болгож хадгалах")
+                .disabled(draft.note.isEmpty && draft.meds.isEmpty && draft.services.isEmpty)
+            }
         }
     }
 
@@ -257,6 +287,7 @@ struct HistoryView: View {
 struct ExamDetailView: View {
     @EnvironmentObject var store: AppStore
     let examId: String
+    @State private var templating: TemplateDraft?
 
     var body: some View {
         if let e = store.myExams.first(where: { $0.id == examId }) {
@@ -313,6 +344,12 @@ struct ExamDetailView: View {
             }
             .navigationTitle(e.horse)
             .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .primaryAction) {
+                    Button("Загвар болгох") { templating = TemplateDraft(exam: e) }
+                }
+            }
+            .sheet(item: $templating) { d in TemplateEditor(draft: d) }
         } else {
             Text("Үзлэг олдсонгүй").foregroundColor(Color.mute)
         }

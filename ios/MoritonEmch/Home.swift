@@ -16,6 +16,7 @@ struct HomeView: View {
                         header
                         DutySection()
                         actions
+                        DutyFeed()
                         today
                         week
                     }
@@ -74,7 +75,7 @@ struct HomeView: View {
                     row("arrow.uturn.backward.circle.fill", Color(hex: 0x8A1F18), "Буцаагдсан онош засах", e.horse, nil)
                 }
             }
-            if let next = store.clinicWaiting.first {
+            if let next = store.clinicWaiting.first(where: { !($0.examActive && $0.examBy != store.userName) }) {
                 Button { store.errorText = nil; examining = next } label: {
                     row("stethoscope", Color.navy, "Үзлэг эхлүүлэх: \(next.horse)",
                         "\(next.owner) · \(next.waited) хүлээсэн", nil)

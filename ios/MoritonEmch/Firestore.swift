@@ -214,6 +214,15 @@ actor FirestoreClient {
         _ = try await call("POST", "\(base):commit", body: ["writes": writes])
     }
 
+    /// Байгаа бичлэгийн зөвхөн нэрлэсэн талбаруудыг шинэчлэх. Бичлэг байхгүй бол ҮҮСГЭХГҮЙ, алдаа өгнө.
+    func update(_ col: String, id: String, data: Rec, mask: [String]) async throws {
+        try await commit([[
+            "update": ["name": docName(col, id), "fields": FSValue.encodeFields(data)],
+            "updateMask": ["fieldPaths": mask],
+            "currentDocument": ["exists": true]
+        ]])
+    }
+
     // ── Зураг (Firebase Storage) ──
     func uploadJPEG(path: String, data: Data) async throws -> String {
         guard let enc = path.addingPercentEncoding(withAllowedCharacters: .alphanumerics),

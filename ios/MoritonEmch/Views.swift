@@ -297,14 +297,30 @@ struct WaitCard: View {
             if !wait.symptoms.isEmpty { Text(wait.symptoms).font(.subheadline) }
             Text("Хуудас № \(wait.examNum.isEmpty ? "—" : wait.examNum)\(wait.iabd.isEmpty ? "" : " · ИАБД " + wait.iabd)")
                 .font(.caption).foregroundColor(Color.mute)
-            Button(action: onStart) {
-                Text("Үзлэг эхлүүлэх").font(.subheadline.weight(.semibold)).frame(maxWidth: .infinity, minHeight: 46)
+            if busy {
+                Label("Үзлэг явагдаж байна · \(wait.examBy)", systemImage: "stethoscope")
+                    .font(.footnote.weight(.semibold))
+                    .padding(.horizontal, 10).padding(.vertical, 6)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color.warnBg).foregroundColor(Color.warnFg)
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
             }
-            .background(Color.navy).foregroundColor(.white)
+            Button { if busy { asking = true } else { onStart() } } label: {
+                Text(busy ? "Би үзнэ" : "Үзлэг эхлүүлэх").font(.subheadline.weight(.semibold)).frame(maxWidth: .infinity, minHeight: 46)
+            }
+            .background(busy ? Color.white : Color.navy).foregroundColor(busy ? Color.navy : .white)
+            .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.navy))
             .clipShape(RoundedRectangle(cornerRadius: 10))
             .disabled(store.me == nil)
         }
+        .confirmationDialog("\(wait.horse)-г \(wait.examBy) үзэж байна. Та авч үзэх үү?", isPresented: $asking, titleVisibility: .visible) {
+            Button("Тийм, би үзнэ") { onStart() }
+            Button("Болих", role: .cancel) {}
+        }
     }
+    @State private var asking = false
+    /// Өөр хүн энэ адууны үзлэгийг эхлүүлсэн үү
+    private var busy: Bool { wait.examActive && wait.examBy != store.userName }
 }
 
 struct ExamRow: View {
@@ -482,6 +498,18 @@ struct TreatSheet: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Болих") { dismiss() } }
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    TemplateMenu { t in
+                        // Загвараас: зөвлөгөө, үйлчилгээ, эмийг нэмнэ (бичсэнийг дарахгүй)
+                        if note.isEmpty { note = t.s("note") }
+                        for s in (t["services"] as? [Any] ?? []).compactMap({ $0 as? String }) where !services.contains(s) { services.append(s) }
+                        for m in t.recs("meds") where !meds.contains(where: { $0.name == m.s("name") }) {
+                            var line = store.newMedLine(m.s("name"))
+                            line.note = m.s("note")
+                            meds.append(line)
+                        }
+                    }
+                }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Хадгалах") {
                         let svc: [Rec] = services.map { ["name": $0, "price": store.price(of: $0)] }
@@ -623,7 +651,8 @@ struct MeView: View {
             ProfileHeader()
             link("chart.bar", "Миний KPI", "Үзлэг, ачаалал, ажилласан өдөр — графикаар") { KPIView() }
             ScheduleCard()
-            link("moon.stars", "Жижүүрийн мэдээ, ээлж хүлээлцэлт", nil) { DutyListView() }
+            link("banknote", "Миний урамшуулал", "Энэ сарын урьдчилсан тооцоо") { BonusView() }
+            link("doc.on.doc", "Миний загварууд", "Зөвлөгөө, эм тариагаа хадгалж дахин ашиглах") { TemplatesView() }
             link("gearshape", "Тохиргоо", "Мэдэгдэл, төхөөрөмж, гарах") { SettingsView() }
         }
     }

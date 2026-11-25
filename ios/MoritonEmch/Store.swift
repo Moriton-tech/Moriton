@@ -105,6 +105,169 @@ final class AppStore: ObservableObject {
     var openLabs: [Lab] { labs.filter { $0.isOpen } }
     var unfinishedCount: Int { myTasks.filter { !$0.done(on: Day.today) }.count }
 
+    // ── Үзлэг явагдаж байгааг бусдад харуулах ──
+    /// Хүлээлтийн бичлэгт «хэн үзэж байна» тэмдэг тавина / авна. Бичлэг аль хэдийн алга бол юу ч хийхгүй.
+    func markExamining(_ w: Wait, on: Bool) {
+        let data: Rec = ["examBy": on ? userName : "", "examByMs": on ? Day.nowMs : 0, "examDevice": on ? deviceId : ""]
+        if let idx = waiting.firstIndex(where: { $0.id == w.id }) {
+            var r = waiting[idx].raw
+            for (k, v) in data { r[k] = v }
+            if let nw = Wait(r) { waiting[idx] = nw }
+        }
+        Task { try? await fs.update("waiting", id: w.id, data: data, mask: ["examBy", "examByMs", "examDevice"]) }
+    }
+    /// Хүлээлтийг хөнгөн шинэчлэх (20 секунд тутам) — шинэ адуу, «үзлэг явагдаж байна» тэмдэг хурдан харагдана
+    func refreshWaiting() async {
+        guard loggedIn, online, !loading else { return }
+        if let rw = try? await fs.list("waiting") { waiting = rw.compactMap { Wait($0) } }
+    }
+
+    // ── Миний загварууд (зөвлөгөө, эм тариа) ──
+    @Published var templates: [Rec] = []
+    var myTemplates: [Rec] { templates.filter { !$0.b("deleted") }.sorted { $0.s("title") < $1.s("title") } }
+
+    func saveTemplate(id: String?, title: String, diagnosis: String, note: String, services: [String], meds: [Rec]) {
+        var t: Rec = ["id": id ?? Day.uid(), "docId": myDocId, "owner": userName, "title": title, "diagnosis": diagnosis, "note": note]
+        t["services"] = services
+        t["meds"] = meds
+        t["ms"] = Day.nowMs
+        t["deleted"] = false
+        putTemplate(t)
+    }
+    func deleteTemplate(_ id: String) {
+        guard var t = templates.first(where: { $0.s("id") == id }) else { return }
+        t["deleted"] = true
+        t["ms"] = Day.nowMs
+        putTemplate(t)
+    }
+    private func putTemplate(_ t: Rec) {
+        templates.removeAll { $0.s("id") == t.s("id") }
+        templates.append(t)
+        write("templates.json", templates)
+        Task {
+            do {
+                try await fs.set("templates", id: t.s("id"), data: t)
+            } catch {
+                errorText = "Загвар утсанд хадгалагдсан, сервэрт хадгалагдсангүй: \(error.localizedDescription)"
+            }
+        }
+    }
+    private func mergeTemplates(_ remote: [Rec]) {
+        var byId: [String: Rec] = [:]
+        for t in templates { byId[t.s("id")] = t }
+        for r in remote where r.d("ms") >= (byId[r.s("id")]?.d("ms") ?? 0) { byId[r.s("id")] = r }
+        templates = Array(byId.values)
+        write("templates.json", templates)
+    }
+
+    // ── Миний урамшуулал (вэбийн computeBonus()-тай ижил дүрэм) ──
+    @Published var trips: [Rec] = []
+    struct BonusLine: Identifiable {
+        var id: String { label }
+        let label: String
+        let count: Int
+        let amount: Double
+    }
+    struct Bonus {
+        var lines: [BonusLine] = []          // үндсэн үзлэг: ангиллаар + хамтарсан
+        var mainTotal = 0.0
+        var tripLines: [BonusLine] = []      // төлөвлөгөөт үзлэг: ээлжээр
+        var tripTotal = 0.0
+        var skipped = 0
+        var total: Double { mainTotal + tripTotal }
+    }
+    private func bonusCfg() -> Rec { config.rec("bonusCfg") ?? [:] }
+    private func bonusNum(_ key: String, _ def: Double) -> Double { bonusCfg()[key] == nil ? def : bonusCfg().d(key) }
+    private func bonusCategory(_ e: Exam) -> String {
+        let cats = ["Клиник", "Зонд", "Дуудлага", "Клиник дуудлага", "Төлөвлөгөөт"]
+        if cats.contains(e.raw.s("bonusCat")) { return e.raw.s("bonusCat") }
+        if e.isPlanned { return "Төлөвлөгөөт" }
+        let cfg = bonusCfg()
+        let kwZond = (cfg["kwZond"] == nil ? "Зонд" : cfg.s("kwZond")).lowercased()
+        let kwCall = (cfg["kwCall"] == nil ? "Дуудлага" : cfg.s("kwCall")).lowercased()
+        let names = e.serviceNames.map { $0.trimmingCharacters(in: .whitespaces).lowercased() }.filter { !$0.isEmpty }
+        if !kwZond.isEmpty && names.contains(where: { $0.contains(kwZond) }) { return "Зонд" }
+        let calls = kwCall.isEmpty ? 0 : names.filter { $0.hasPrefix(kwCall) }.count
+        if calls > 0 { return calls < names.count ? "Клиник дуудлага" : "Дуудлага" }
+        return "Клиник"
+    }
+    /// Үндсэн үзлэгийн урамшуулал — ганцаараа / үндсэн эмч / хамтрагч эмчийн тогтмол дүнгээр
+    func bonusMain(ym: String) -> Bonus {
+        var b = Bonus()
+        let alone = bonusNum("alone", 10000), mainRate = bonusNum("main", 6000), assistRate = bonusNum("assist", 4000)
+        var cats: [String: (Int, Double)] = [:]
+        var assistN = 0
+        for e in monthExams where e.date.hasPrefix(ym) {
+            let cat = bonusCategory(e)
+            if cat == "Төлөвлөгөөт" { continue }
+            if e.raw.b("bonusSkip") || e.docName.isEmpty || e.docName == "—" { b.skipped += 1; continue }
+            let hasAssist = !e.assistDocName.isEmpty || !e.raw.s("assistDocId").isEmpty
+            if e.docName == userName {
+                let cur = cats[cat] ?? (0, 0)
+                cats[cat] = (cur.0 + 1, cur.1 + (hasAssist ? mainRate : alone))
+            } else if e.assistDocName == userName {
+                assistN += 1
+            }
+        }
+        for c in ["Клиник", "Зонд", "Дуудлага", "Клиник дуудлага"] {
+            if let v = cats[c] { b.lines.append(BonusLine(label: c, count: v.0, amount: v.1)) }
+        }
+        if assistN > 0 { b.lines.append(BonusLine(label: "Хамтарсан эмчээр", count: assistN, amount: Double(assistN) * assistRate)) }
+        b.mainTotal = b.lines.reduce(0) { $0 + $1.amount }
+        return b
+    }
+    /// Төлөвлөгөөт үзлэгийн урамшуулал — ээлж (явц) бүрийн сангаас миний хувь. Ээлжийн бүх үзлэгийг сервэрээс татна.
+    func bonusTrips(ym: String) async -> [BonusLine] {
+        let cfg = bonusCfg()
+        let rate = bonusNum("plRate", 10000)
+        let excl = (cfg["plExcl"] as? [Any] ?? ["хээл шалгах"]).map { "\($0)".trimmingCharacters(in: .whitespaces).lowercased() }.filter { !$0.isEmpty }
+        var out: [BonusLine] = []
+        for t in trips {
+            let b = t.rec("bonus") ?? [:]
+            let ids: [String] = (t["docIds"] as? [Any])?.map { "\($0)" } ?? [t.s("docId"), t.s("assistDocId")]
+            let docNames = ids.filter { !$0.isEmpty }.compactMap { id in doctors.first { $0.s("id") == id }?.s("name") }
+            let named = b.rec("names") ?? [:]
+            func name(_ k: String, _ i: Int?) -> String {
+                if named[k] != nil { return named.s(k).trimmingCharacters(in: .whitespaces) }
+                if let i = i, i < docNames.count { return docNames[i] }
+                return ""
+            }
+            let size = Int(b.d("size")) == 5 ? 5 : 4
+            let p = cfg.rec(size == 5 ? "pl5" : "pl4") ?? [:]
+            func pct(_ k: String, _ def: Double) -> Double { p[k] == nil ? def : p.d(k) }
+            var slots: [(String, String, Double)] = [
+                ("reg", name("reg", nil), pct("reg", 25)), ("senior", name("senior", 0), pct("senior", 35)),
+                ("co1", name("co1", 1), pct("co", size == 5 ? 15 : 20)), ("co2", name("co2", 2), pct("co", size == 5 ? 15 : 20))
+            ]
+            if size == 5 { slots.append(("driver", name("driver", nil), pct("driver", 10))) }
+            if !slots.contains(where: { $0.1 == userName }) { continue }
+            guard let all = try? await fs.query("exams", field: "tripId", op: "EQUAL", value: t.s("id"), limit: 3000) else { continue }
+            let inMonth = all.filter { $0.s("kind") == "planned" && $0.s("date").hasPrefix(ym) }
+            let startYm = String(t.s("date").prefix(7))
+            if inMonth.isEmpty && startYm != ym { continue }
+            let eligible = inMonth.filter { (e: Rec) -> Bool in
+                if e.b("bonusSkip") { return false }
+                let names = (e["services"] as? [Any] ?? []).compactMap { ($0 as? Rec)?.s("name").trimmingCharacters(in: .whitespaces).lowercased() }.filter { !$0.isEmpty }
+                if names.isEmpty || excl.isEmpty { return true }
+                return names.contains { n in !excl.contains { k in n == k || n.contains(k) } }
+            }.count
+            let manual = startYm == ym && b["pool"] != nil && !(b["pool"] is NSNull) && !b.s("pool").isEmpty
+            let pool = manual ? b.d("pool") : Double(eligible) * rate
+            let pctSum = slots.reduce(0.0) { $0 + $1.2 }
+            var mine = 0.0, allocated = 0.0
+            for s in slots {
+                let amt = (pool * s.2 / 100).rounded()
+                allocated += amt
+                if s.1 == userName { mine += amt }
+            }
+            // Бутархайн зөрүү ахлах эмчид (вэбтэй ижил)
+            if pctSum == 100, slots.first(where: { $0.0 == "senior" })?.1 == userName { mine += pool - allocated }
+            let route = t.s("route").isEmpty ? t.s("date") : t.s("route")
+            out.append(BonusLine(label: "\(t.s("date")) · \(route)", count: eligible, amount: mine))
+        }
+        return out
+    }
+
     // ── Цэс хоорондын шилжилт ──
     @Published var mainTab = 0                  // 0 Нүүр · 1 Миний ажил · 2 Байрлан · 3 Шинжилгээ · 4 Би
     @Published var workTab: WorkTab = .waiting
@@ -345,7 +508,12 @@ final class AppStore: ObservableObject {
             async let ex2 = try? fs.query("exams", field: "assistDocName", op: "EQUAL", value: name, limit: 5000)
             async let du = try? fs.recent("duty", limit: 40)
             async let nums = try? fs.recent("exams", limit: 40)
+            async let tr = try? fs.list("trips")
+            async let tp = try? fs.query("templates", field: "docId", op: "EQUAL", value: myDocId, limit: 300)
             let (rcfg, rst, rex, rex2, rdu, rnums) = await (cfg, st, ex, ex2, du, nums)
+            let (rtr, rtp) = await (tr, tp)
+            if let t = rtr { trips = t }
+            if let t = rtp, !myDocId.isEmpty { mergeTemplates(t) }
             if let c = rcfg ?? nil {
                 config = c
                 schedule = c.rec("staffSchedule") ?? [:]
@@ -794,6 +962,7 @@ final class AppStore: ObservableObject {
         users = read("users.json")
         doctors = read("doctors.json")
         pending = read("pending.json")
+        templates = read("templates.json")
         if let d = try? Data(contentsOf: avatarURL) { avatar = UIImage(data: d) }
         schedule = read("schedule.json").first ?? [:]
         config = read("config.json").first ?? [:]

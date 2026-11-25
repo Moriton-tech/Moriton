@@ -46,5 +46,12 @@ struct MainTabs: View {
                 .tag(4)
         }
         .onAppear { Notifier.requestPermission() }
+        .task {
+            // Хүлээлтийг 20 секунд тутам шинэчилнэ (шинэ адуу, «үзлэг явагдаж байна» тэмдэг)
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 20_000_000_000)
+                await store.refreshWaiting()
+            }
+        }
     }
 }

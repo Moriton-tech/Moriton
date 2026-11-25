@@ -7,7 +7,7 @@ enum Config {
     static let projectId = "moriton-4ecc0"
     static let apiKey = "AIzaSyCB20uvd_XsWju91IERQGs6yGFYSBSUx10"   // вэбийн firebase.js-тэй ижил (нууц биш)
     static let pwSalt = "moriton_salt_2026"                          // вэбийн _hashPassword-тай ижил
-    static let version = "0.5"
+    static let version = "0.6"
     static let bucket = "moriton-4ecc0.firebasestorage.app"
     #if DEBUG
     static let apnsEnv = "sandbox"      // Xcode-оор суулгасан хувилбар
@@ -195,6 +195,9 @@ struct Wait: Identifiable {
     var symptoms: String { raw.s("symptoms") }
     var examNum: String { raw.s("examNum") }
     var iabd: String { raw.s("iabd") }
+    var examBy: String { raw.s("examBy") }
+    /// Өөр хүн үзлэг эхлүүлээд 2 цагаас хэтрээгүй бол «явагдаж байна» гэж үзнэ
+    var examActive: Bool { !examBy.isEmpty && Day.nowMs - raw.d("examByMs") < 2 * 3600 * 1000 }
     var isFieldTrip: Bool {
         guard let v = raw["plTrip"], !(v is NSNull) else { return false }
         if let b = v as? Bool { return b }
