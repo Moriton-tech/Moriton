@@ -1,0 +1,27 @@
+name: iOS апп (Морьтон Эмч) — бүтээж шалгах
+on:
+  push:
+    branches: [v2]
+    paths: ["ios/**", ".github/workflows/ios-app.yml"]
+  workflow_dispatch:
+jobs:
+  build:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: XcodeGen
+        run: brew list xcodegen >/dev/null 2>&1 || brew install xcodegen
+      - name: Төсөл үүсгэх
+        working-directory: ios
+        run: xcodegen generate
+      - name: Бүтээх (гарын үсэггүй, зөвхөн кодыг шалгана)
+        working-directory: ios
+        run: |
+          set -o pipefail
+          xcodebuild -project MoritonEmch.xcodeproj -scheme MoritonEmch -configuration Debug \
+            -destination "generic/platform=iOS Simulator" -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO build 2>&1 | tee build.log | grep -E "error:|warning: unre|BUILD (SUCCEEDED|FAILED)" || true
+          grep -q "BUILD SUCCEEDED" build.log
+      - name: Алдааны лог
+        if: failure()
+        run: grep -n "error" ios/build.log | head -60 || tail -80 ios/build.log
