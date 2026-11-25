@@ -26,17 +26,24 @@ struct MainTabs: View {
     @EnvironmentObject var store: AppStore
 
     var body: some View {
-        TabView {
+        TabView(selection: $store.mainTab) {
+            HomeView()
+                .tabItem { Label("Нүүр", systemImage: "house") }
+                .tag(0)
             MyWorkView()
-                .tabItem { Label("Миний ажил", systemImage: "house") }
+                .tabItem { Label("Миний ажил", systemImage: "stethoscope") }
                 .badge(store.unfinishedCount + store.clinicWaiting.count)
+                .tag(1)
             InpListView()
                 .tabItem { Label("Байрлан", systemImage: "bed.double") }
+                .tag(2)
             LabView()
                 .tabItem { Label("Шинжилгээ", systemImage: "testtube.2") }
                 .badge(store.openLabs.count)
+                .tag(3)
             MeView()
                 .tabItem { Label("Би", systemImage: "person.crop.circle") }
+                .tag(4)
         }
         .onAppear { Notifier.requestPermission() }
     }

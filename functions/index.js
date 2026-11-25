@@ -64,6 +64,7 @@ async function notify(query, note) {
   await Promise.all(snap.docs.map(async (d) => {
     const dev = d.data();
     if (!dev.token) return;
+    if (Array.isArray(dev.mute) && dev.mute.includes(note.thread)) return; // эмч апп-ын тохиргооноос унтраасан
     const r = await sendOne(dev, note);
     if (r.status === 410 || /BadDeviceToken|Unregistered/.test(r.reason)) await d.ref.delete(); // апп устгагдсан
     else if (r.status !== 200) console.warn('APNs', dev.user, r.status, r.reason);

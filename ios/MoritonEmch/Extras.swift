@@ -4,11 +4,15 @@ import UIKit
 // ── Камер ────────────────────────────────────────────────────
 struct CameraPicker: UIViewControllerRepresentable {
     let onImage: (Data) -> Void
+    var source: UIImagePickerController.SourceType? = nil
+    var maxSide: CGFloat = 1600
+    var quality: CGFloat = 0.72
     @Environment(\.dismiss) private var dismiss
 
     func makeUIViewController(context: Context) -> UIImagePickerController {
         let picker = UIImagePickerController()
-        picker.sourceType = UIImagePickerController.isSourceTypeAvailable(.camera) ? .camera : .photoLibrary
+        let wanted = source ?? .camera
+        picker.sourceType = UIImagePickerController.isSourceTypeAvailable(wanted) ? wanted : .photoLibrary
         picker.delegate = context.coordinator
         return picker
     }
@@ -21,7 +25,7 @@ struct CameraPicker: UIViewControllerRepresentable {
 
         func imagePickerController(_ picker: UIImagePickerController,
                                    didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey: Any]) {
-            if let img = info[.originalImage] as? UIImage, let data = CameraPicker.jpeg(img) {
+            if let img = info[.originalImage] as? UIImage, let data = CameraPicker.jpeg(img, maxSide: parent.maxSide, quality: parent.quality) {
                 parent.onImage(data)
             }
             parent.dismiss()
@@ -30,8 +34,7 @@ struct CameraPicker: UIViewControllerRepresentable {
     }
 
     /// Урт талыг 1600px болтол жижигрүүлж JPEG болгоно (сүлжээ, хадгалах зай хэмнэнэ)
-    static func jpeg(_ image: UIImage) -> Data? {
-        let maxSide: CGFloat = 1600
+    static func jpeg(_ image: UIImage, maxSide: CGFloat, quality: CGFloat) -> Data? {
         let side = max(image.size.width, image.size.height)
         let scale = side > maxSide ? maxSide / side : 1
         let size = CGSize(width: (image.size.width * scale).rounded(), height: (image.size.height * scale).rounded())
@@ -40,7 +43,7 @@ struct CameraPicker: UIViewControllerRepresentable {
         let out = UIGraphicsImageRenderer(size: size, format: format).image { _ in
             image.draw(in: CGRect(origin: .zero, size: size))
         }
-        return out.jpegData(compressionQuality: 0.72)
+        return out.jpegData(compressionQuality: quality)
     }
 }
 
@@ -329,38 +332,6 @@ struct DutyListView: View {
 }
 
 // ── Миний үзүүлэлт, ажлын хувиар ─────────────────────────────
-struct StatsCard: View {
-    @EnvironmentObject var store: AppStore
-    var body: some View {
-        let st = store.stats
-        let tasks = store.myTasks
-        let done = tasks.filter { $0.done(on: Day.today) }.count
-        Card {
-            Text("Миний үзүүлэлт · энэ сар").font(.subheadline.bold())
-            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 3), spacing: 8) {
-                tile("\(st.examsMain)", "Үзлэг")
-                tile("\(st.examsAssist)", "Хамтарсан")
-                tile("\(st.planned)", "Төлөвлөгөөт")
-                tile("\(st.inpLogs)", "Байрлан эмчилгээ")
-                tile("\(st.workDays)", "Ажилласан өдөр")
-                tile("\(st.dutyDays)", "Жижүүр")
-            }
-            if !tasks.isEmpty {
-                Text("Өнөөдрийн даалгавар: \(done)/\(tasks.count)").font(.footnote).foregroundColor(Color.mute)
-            }
-        }
-    }
-    private func tile(_ value: String, _ label: String) -> some View {
-        VStack(spacing: 2) {
-            Text(value).font(.title3.bold().monospacedDigit())
-            Text(label).font(.caption2).foregroundColor(Color.mute).multilineTextAlignment(.center)
-        }
-        .frame(maxWidth: .infinity, minHeight: 58)
-        .background(Color.ground)
-        .clipShape(RoundedRectangle(cornerRadius: 10))
-    }
-}
-
 struct ScheduleCard: View {
     @EnvironmentObject var store: AppStore
 

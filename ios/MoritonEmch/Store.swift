@@ -76,6 +76,8 @@ final class AppStore: ObservableObject {
         userName = ""
         UserDefaults.standard.removeObject(forKey: "user_name")
         Notifier.cancelEvening()
+        avatar = nil
+        try? FileManager.default.removeItem(at: avatarURL)
     }
 
     // ── Миний ажил ──
@@ -102,6 +104,159 @@ final class AppStore: ObservableObject {
     var clinicWaiting: [Wait] { waiting.filter { !$0.isFieldTrip }.sorted { $0.raw.d("ms") < $1.raw.d("ms") } }
     var openLabs: [Lab] { labs.filter { $0.isOpen } }
     var unfinishedCount: Int { myTasks.filter { !$0.done(on: Day.today) }.count }
+
+    // ── Цэс хоорондын шилжилт ──
+    @Published var mainTab = 0                  // 0 Нүүр · 1 Миний ажил · 2 Байрлан · 3 Шинжилгээ · 4 Би
+    @Published var workTab: WorkTab = .waiting
+
+    // ── Профайл зураг, тохиргоо ──
+    @Published var avatar: UIImage?
+    @Published var muted: Set<String> = Set(UserDefaults.standard.stringArray(forKey: "muted") ?? [])
+    @Published var eveningReminder: Bool = UserDefaults.standard.object(forKey: "evening_reminder") as? Bool ?? true
+
+    private var profileId: String { myDocId.isEmpty ? deviceId : myDocId }
+    private var avatarURL: URL { dir.appendingPathComponent("avatar.jpg") }
+
+    func setAvatar(_ jpeg: Data) {
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        try? jpeg.write(to: avatarURL, options: .atomic)
+        avatar = UIImage(data: jpeg)
+        let id = profileId, name = userName
+        Task {
+            do {
+                try await fs.patch("profiles", id: id, data: ["id": id, "name": name, "photo": jpeg.base64EncodedString(), "ms": Day.nowMs],
+                                   mask: ["id", "name", "photo", "ms"])
+            } catch {
+                errorText = "Профайл зураг утсанд хадгалагдсан, сервэрт хадгалагдсангүй: \(error.localizedDescription)"
+            }
+        }
+    }
+    private func loadAvatarFromServer() async {
+        guard avatar == nil, loggedIn, let p = (try? await fs.get("profiles", id: profileId)) ?? nil,
+              let data = Data(base64Encoded: p.s("photo")), let img = UIImage(data: data) else { return }
+        try? data.write(to: avatarURL, options: .atomic)
+        avatar = img
+    }
+    func setMuted(_ kind: String, _ off: Bool) {
+        if off { muted.insert(kind) } else { muted.remove(kind) }
+        UserDefaults.standard.set(Array(muted), forKey: "muted")
+        Task { await registerDevice() }
+    }
+    func setEveningReminder(_ on: Bool) {
+        eveningReminder = on
+        UserDefaults.standard.set(on, forKey: "evening_reminder")
+        remind()
+    }
+    private func remind() {
+        if eveningReminder { Notifier.scheduleEvening(unfinished: unfinishedCount) } else { Notifier.cancelEvening() }
+    }
+
+    // ── KPI (мөнгөн дүнгүй) ──
+    enum KPIBucket { case day, week, month }
+    struct KPIPoint: Identifiable {
+        let id: String
+        let label: String
+        let kind: String
+        let count: Int
+    }
+    struct KPICount: Identifiable {
+        var id: String { label }
+        let label: String
+        let count: Int
+    }
+    struct KPI {
+        var main = 0, assist = 0, planned = 0, horses = 0, services = 0, inpLogs = 0
+        var workedDays = 0, schedDays = 0, dutyDays = 0
+        var avgMinutes: Double? = nil
+        var points: [KPIPoint] = []
+        var topServices: [KPICount] = []
+        var topDiagnoses: [KPICount] = []
+    }
+
+    /// Вэбийн KPI самбарын нэг эмчийн мөртэй ижил тооцоо: үзлэг, хамтарсан, үйлчилгээ, адуу, ажилласан өдөр, дундаж хугацаа
+    func kpi(from: String, to: String, bucket: KPIBucket) -> KPI {
+        var k = KPI()
+        let kinds = ["Үзлэг", "Хамтарсан", "Байрлан эмчилгээ"]
+        func label(_ date: String) -> String {
+            switch bucket {
+            case .day: return String(date.suffix(5)).replacingOccurrences(of: "-", with: ".")
+            case .month: return String(Int(date.dropFirst(5).prefix(2)) ?? 0) + " сар"
+            case .week:
+                let f = DateFormatter()
+                f.calendar = Calendar(identifier: .gregorian)
+                f.locale = Locale(identifier: "en_US_POSIX")
+                f.dateFormat = "yyyy-MM-dd"
+                guard let d = f.date(from: date) else { return date }
+                let wd = Calendar(identifier: .gregorian).component(.weekday, from: d)
+                let monday = Day.add(date, days: -((wd + 5) % 7))
+                return String(monday.suffix(5)).replacingOccurrences(of: "-", with: ".")
+            }
+        }
+        // Хугацааны бүх хэсгийг дарааллаар нь бэлдэнэ (хоосон өдөр ч графикт харагдана)
+        var order: [String] = []
+        var counts: [String: [String: Int]] = [:]
+        var date = from
+        var guardN = 0
+        while date <= to && guardN < 400 {
+            let l = label(date)
+            if counts[l] == nil { counts[l] = [:]; order.append(l) }
+            let st = scheduleStatus(date)
+            if st == "work" || st == "duty" { k.schedDays += 1 }
+            if st == "duty" { k.dutyDays += 1 }
+            date = Day.add(date, days: 1)
+            guardN += 1
+        }
+        func bump(_ date: String, _ kind: String) {
+            let l = label(date)
+            counts[l, default: [:]][kind, default: 0] += 1
+        }
+        var horses = Set<String>(), days = Set<String>()
+        var svc: [String: Int] = [:], dx: [String: Int] = [:]
+        var durSum = 0.0, durN = 0
+        for e in monthExams where e.date >= from && e.date <= to {
+            let horse = e.raw.s("horseId").isEmpty ? e.horse : e.raw.s("horseId")
+            if e.docName == userName {
+                k.main += 1
+                if e.isPlanned { k.planned += 1 }
+                k.services += e.serviceNames.count
+                for s in e.serviceNames { svc[s, default: 0] += 1 }
+                let d = e.diagnosis.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !d.isEmpty { dx[d, default: 0] += 1 }
+                if let m = e.raw["durationMin"] as? Double { durSum += m; durN += 1 }
+                bump(e.date, kinds[0])
+            } else if e.assistDocName == userName {
+                k.assist += 1
+                bump(e.date, kinds[1])
+            } else {
+                continue
+            }
+            horses.insert(horse)
+            days.insert(e.date)
+        }
+        for i in inps {
+            for l in i.logs {
+                let d = String(l.s("date").prefix(10))
+                if d < from || d > to { continue }
+                if l.s("docId") != myDocId && l.s("docName") != userName { continue }
+                k.inpLogs += 1
+                days.insert(d)
+                bump(d, kinds[2])
+            }
+        }
+        k.horses = horses.count
+        k.workedDays = days.count
+        k.avgMinutes = durN > 0 ? durSum / Double(durN) : nil
+        for l in order {
+            for kind in kinds {
+                k.points.append(KPIPoint(id: l + "|" + kind, label: l, kind: kind, count: counts[l]?[kind] ?? 0))
+            }
+        }
+        k.topServices = svc.sorted { $0.value == $1.value ? $0.key < $1.key : $0.value > $1.value }.prefix(6)
+            .map { KPICount(label: $0.key, count: $0.value) }
+        k.topDiagnoses = dx.filter { $0.value > 1 }.sorted { $0.value == $1.value ? $0.key < $1.key : $0.value > $1.value }.prefix(6)
+            .map { KPICount(label: $0.key, count: $0.value) }
+        return k
+    }
 
     // ── Нүүр ──
     var myExamsToday: Int { monthExams.filter { $0.date == Day.today }.count }
@@ -208,7 +363,8 @@ final class AppStore: ObservableObject {
             write("staffToday.json", [staffToday])
             write("exams.json", myExams.map { $0.raw })
             write("duty.json", duties.map { $0.raw })
-            Notifier.scheduleEvening(unfinished: unfinishedCount)
+            remind()
+            await loadAvatarFromServer()
         } catch let e as FSError {
             errorText = e.localizedDescription
         } catch {
@@ -241,7 +397,7 @@ final class AppStore: ObservableObject {
         pending.append(["kind": "log", "inpId": inp.id, "horse": inp.horse, "log": log])
         savePending()
         inps = applyPending(inps)
-        Notifier.scheduleEvening(unfinished: unfinishedCount)
+        remind()
         Task { await flush() }
     }
 
@@ -602,7 +758,7 @@ final class AppStore: ObservableObject {
         let rec: Rec = [
             "id": deviceId, "token": token, "env": Config.apnsEnv, "platform": "ios",
             "user": userName, "docId": myDocId, "role": role,
-            "model": UIDevice.current.model, "ms": Day.nowMs
+            "model": UIDevice.current.model, "mute": Array(muted).sorted(), "ms": Day.nowMs
         ]
         do {
             try await fs.set("devices", id: deviceId, data: rec)
@@ -638,6 +794,7 @@ final class AppStore: ObservableObject {
         users = read("users.json")
         doctors = read("doctors.json")
         pending = read("pending.json")
+        if let d = try? Data(contentsOf: avatarURL) { avatar = UIImage(data: d) }
         schedule = read("schedule.json").first ?? [:]
         config = read("config.json").first ?? [:]
         staffToday = read("staffToday.json").first ?? [:]

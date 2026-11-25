@@ -7,7 +7,7 @@ enum Config {
     static let projectId = "moriton-4ecc0"
     static let apiKey = "AIzaSyCB20uvd_XsWju91IERQGs6yGFYSBSUx10"   // вэбийн firebase.js-тэй ижил (нууц биш)
     static let pwSalt = "moriton_salt_2026"                          // вэбийн _hashPassword-тай ижил
-    static let version = "0.4"
+    static let version = "0.5"
     static let bucket = "moriton-4ecc0.firebasestorage.app"
     #if DEBUG
     static let apnsEnv = "sandbox"      // Xcode-оор суулгасан хувилбар

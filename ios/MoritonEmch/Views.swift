@@ -160,15 +160,21 @@ struct LoginView: View {
     }
 }
 
-// ── Миний ажил: Нүүр · Хүлээлт · Даалгавар · Түүх ────────────
+// ── Миний ажил: Хүлээлт · Даалгавар · Түүх ───────────────────
 enum WorkTab: String, CaseIterable, Identifiable {
-    case home = "Нүүр", waiting = "Хүлээлт", tasks = "Даалгавар", history = "Түүх"
+    case waiting = "Хүлээлт", tasks = "Даалгавар", history = "Түүх"
     var id: String { rawValue }
+    var icon: String {
+        switch self {
+        case .waiting: return "clock"
+        case .tasks: return "checklist"
+        case .history: return "clock.arrow.circlepath"
+        }
+    }
 }
 
 struct MyWorkView: View {
     @EnvironmentObject var store: AppStore
-    @State private var tab: WorkTab = .home
     @State private var writing: Inp?
     @State private var examining: Wait?
     @State private var query = ""
@@ -178,15 +184,13 @@ struct MyWorkView: View {
             VStack(spacing: 0) {
                 OfflineBar()
                 ErrorBar()
-                Picker("Хэсэг", selection: $tab) {
-                    ForEach(WorkTab.allCases) { t in Text(label(t)).tag(t) }
+                HStack(spacing: 8) {
+                    ForEach(WorkTab.allCases) { t in chip(t) }
                 }
-                .pickerStyle(.segmented)
                 .padding(.horizontal, 16).padding(.vertical, 10)
                 ScrollView {
                     VStack(alignment: .leading, spacing: 10) {
-                        switch tab {
-                        case .home: home
+                        switch store.workTab {
                         case .waiting: waitingList
                         case .tasks: taskList
                         case .history: historyList
@@ -204,108 +208,47 @@ struct MyWorkView: View {
         .sheet(item: $examining) { w in ExamSheet(wait: w) }
     }
 
-    private func label(_ t: WorkTab) -> String {
+    private func count(_ t: WorkTab) -> Int {
         switch t {
-        case .waiting: return store.clinicWaiting.isEmpty ? t.rawValue : "\(t.rawValue) \(store.clinicWaiting.count)"
-        case .tasks: return store.unfinishedCount == 0 ? t.rawValue : "\(t.rawValue) \(store.unfinishedCount)"
-        default: return t.rawValue
+        case .waiting: return store.clinicWaiting.count
+        case .tasks: return store.unfinishedCount
+        case .history: return 0
         }
+    }
+    /// Дээд сонголт: идэвхтэй нь бараан дүүргэлттэй, тоотой
+    private func chip(_ t: WorkTab) -> some View {
+        let on = store.workTab == t
+        let n = count(t)
+        return Button { store.workTab = t } label: {
+            HStack(spacing: 6) {
+                Image(systemName: t.icon).font(.footnote)
+                Text(t.rawValue).font(.subheadline.weight(.semibold))
+                if n > 0 {
+                    Text("\(n)")
+                        .font(.caption2.weight(.bold).monospacedDigit())
+                        .padding(.horizontal, 6).padding(.vertical, 2)
+                        .background(on ? Color.gold : Color.navy)
+                        .foregroundColor(on ? Color.navy : .white)
+                        .clipShape(Capsule())
+                }
+            }
+            .frame(maxWidth: .infinity, minHeight: 44)
+            .background(on ? Color.navy : Color.white)
+            .foregroundColor(on ? .white : Color.ink)
+            .overlay(RoundedRectangle(cornerRadius: 12).stroke(on ? Color.navy : Color.line))
+            .clipShape(RoundedRectangle(cornerRadius: 12))
+        }
+        .accessibilityLabel(n > 0 ? "\(t.rawValue), \(n)" : t.rawValue)
     }
     private func start(_ w: Wait) { store.errorText = nil; examining = w }
 
-    // ── Нүүр ──
-    @ViewBuilder private var home: some View {
-        let tasks = store.myTasks
-        let done = tasks.filter { $0.done(on: Day.today) }.count
-        let status = store.scheduleStatus(Day.today)
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .top) {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("\(Day.greeting), \(store.userName)").font(.title3.bold()).foregroundColor(.white)
-                    Text(Day.pretty + (status.isEmpty ? "" : " · " + (status == "duty" ? "Жижүүр" : (status == "work" ? "Ажиллах өдөр" : "Амрах өдөр"))))
-                        .font(.footnote).foregroundColor(.white.opacity(0.7))
-                }
-                Spacer()
-                if !tasks.isEmpty {
-                    VStack(alignment: .trailing, spacing: 0) {
-                        Text("\(done)/\(tasks.count)").font(.title2.bold().monospacedDigit()).foregroundColor(Color.gold)
-                        Text("даалгавар").font(.caption2).foregroundColor(.white.opacity(0.7))
-                    }
-                }
-            }
-            if !tasks.isEmpty {
-                ProgressView(value: Double(done), total: Double(tasks.count)).tint(Color.gold)
-            }
-        }
-        .padding(16)
-        .background(Color.navy)
-        .clipShape(RoundedRectangle(cornerRadius: 14))
-
-        if store.me == nil {
-            EmptyNote(text: "«\(store.userName)» хэрэглэгч эмчийн бүртгэлтэй холбогдоогүй байна. Вэб дээр: Тохиргоо → Эмч нар.")
-        }
-
-        DutySection()
-
-        ForEach(store.myReturnedDx) { e in
-            NavigationLink { ExamDetailView(examId: e.id) } label: {
-                HStack {
-                    Image(systemName: "arrow.uturn.backward.circle")
-                    Text("Ахлах эмч оношийг буцаасан: \(e.horse)").multilineTextAlignment(.leading)
-                    Spacer()
-                    Image(systemName: "chevron.right")
-                }
-                .font(.footnote.weight(.semibold))
-                .padding(12)
-                .background(Color(hex: 0xFBE3E1)).foregroundColor(Color(hex: 0x8A1F18))
-                .clipShape(RoundedRectangle(cornerRadius: 10))
-            }
-        }
-
-        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 2), spacing: 8) {
-            tile("\(store.clinicWaiting.count)", "Хүлээж байгаа", .waiting)
-            tile(tasks.isEmpty ? "—" : "\(tasks.count - done)", "Бичээгүй даалгавар", .tasks)
-            tile("\(store.myExamsToday)", "Өнөөдөр үзсэн", .history)
-            tile("\(store.myPendingDx)", "Хянагдаж буй онош", .history)
-        }
-
-        if let next = store.clinicWaiting.first {
-            Text("Дараагийн адуу").font(.subheadline.bold()).padding(.top, 4)
-            WaitCard(wait: next) { start(next) }
-        }
-        let left = tasks.filter { !$0.done(on: Day.today) }
-        if !left.isEmpty {
-            Text("Бичээгүй даалгавар").font(.subheadline.bold()).padding(.top, 4)
-            ForEach(left.prefix(2)) { i in InpCard(inp: i, showTask: true) { writing = i } }
-            if left.count > 2 {
-                Button("Бүгдийг харах (\(left.count))") { tab = .tasks }.font(.subheadline)
-            }
-        }
-        if store.myOpenLabs > 0 {
-            Text("Таны захиалсан \(store.myOpenLabs) шинжилгээний хариу хүлээгдэж байна").font(.footnote).foregroundColor(Color.mute)
-        }
-    }
-
-    private func tile(_ value: String, _ text: String, _ target: WorkTab) -> some View {
-        Button { tab = target } label: {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(value).font(.title2.bold().monospacedDigit()).foregroundColor(Color.ink)
-                Text(text).font(.caption).foregroundColor(Color.mute)
-            }
-            .padding(12)
-            .frame(maxWidth: .infinity, minHeight: 64, alignment: .leading)
-            .background(Color.white)
-            .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.line))
-        }
-    }
-
-    // ── Хүлээлт ──
+    // ── Хүлээлтийн жагсаалт ──
     @ViewBuilder private var waitingList: some View {
         if store.clinicWaiting.isEmpty { EmptyNote(text: "Хүлээж буй адуу алга") }
         ForEach(store.clinicWaiting) { w in WaitCard(wait: w) { start(w) } }
     }
 
-    // ── Даалгавар ──
+    // ── Даалгаврын жагсаалт ──
     @ViewBuilder private var taskList: some View {
         let tasks = store.myTasks
         Text("Өнөөдрийн даалгавар").font(.subheadline.bold())
@@ -318,7 +261,7 @@ struct MyWorkView: View {
         }
     }
 
-    // ── Түүх ──
+    // ── Түүхийн жагсаалт ──
     @ViewBuilder private var historyList: some View {
         let list = store.myExams.filter {
             query.isEmpty || $0.horse.localizedCaseInsensitiveContains(query) || $0.owner.localizedCaseInsensitiveContains(query)
@@ -671,60 +614,36 @@ struct LabView: View {
     }
 }
 
-// ── Би ───────────────────────────────────────────────────────
+// ── Би: профайл, KPI, хувиар, тохиргоо ───────────────────────
 struct MeView: View {
     @EnvironmentObject var store: AppStore
 
     var body: some View {
         Screen(title: "Би") {
-            Card {
-                Text(store.userName).font(.headline)
-                Text(store.role).font(.footnote).foregroundColor(Color.mute)
-            }
-            StatsCard()
+            ProfileHeader()
+            link("chart.bar", "Миний KPI", "Үзлэг, ачаалал, ажилласан өдөр — графикаар") { KPIView() }
             ScheduleCard()
-            NavigationLink {
-                DutyListView()
-            } label: {
-                HStack {
-                    Text("Жижүүрийн мэдээ, ээлж хүлээлцэлт")
-                    Spacer()
-                    Image(systemName: "chevron.right")
-                }
-                .font(.subheadline)
-                .padding(14)
-                .frame(maxWidth: .infinity, minHeight: 46)
-                .background(Color.white)
-                .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color.line))
-            }
-            Card {
-                row("Сүлжээ", store.online ? "Холбогдсон" : "Сүлжээгүй")
-                row("Сүүлд шинэчилсэн", store.lastSync.map { $0.formatted(date: .omitted, time: .shortened) } ?? "—")
-                row("Илгээгээгүй бичлэг", "\(store.pending.count)")
-                row("Мэдэгдэл", store.pushStatus)
-                row("Хувилбар", "\(Config.version) (\(Config.apnsEnv))")
-            }
-            Button {
-                Task { await store.refresh() }
-            } label: {
-                Text(store.loading ? "Шинэчилж байна…" : "Одоо шинэчлэх").frame(maxWidth: .infinity, minHeight: 46)
-            }
-            .background(Color.white)
-            .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.navy))
-            Button(role: .destructive) {
-                store.logout()
-            } label: {
-                Text("Гарах").frame(maxWidth: .infinity, minHeight: 46)
-            }
+            link("moon.stars", "Жижүүрийн мэдээ, ээлж хүлээлцэлт", nil) { DutyListView() }
+            link("gearshape", "Тохиргоо", "Мэдэгдэл, төхөөрөмж, гарах") { SettingsView() }
         }
     }
 
-    private func row(_ label: String, _ value: String) -> some View {
-        HStack(alignment: .top) {
-            Text(label).foregroundColor(Color.mute)
-            Spacer()
-            Text(value).multilineTextAlignment(.trailing)
+    private func link<D: View>(_ icon: String, _ title: String, _ sub: String?, @ViewBuilder to destination: @escaping () -> D) -> some View {
+        NavigationLink(destination: destination) {
+            HStack(spacing: 12) {
+                Image(systemName: icon).foregroundColor(Color.navy).frame(width: 26)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title).font(.subheadline.weight(.semibold)).foregroundColor(Color.ink)
+                    if let s = sub { Text(s).font(.caption).foregroundColor(Color.mute) }
+                }
+                Spacer()
+                Image(systemName: "chevron.right").font(.footnote).foregroundColor(Color.mute)
+            }
+            .padding(14)
+            .frame(maxWidth: .infinity, minHeight: 56)
+            .background(Color.white)
+            .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color.line))
+            .clipShape(RoundedRectangle(cornerRadius: 14))
         }
-        .font(.subheadline)
     }
 }
