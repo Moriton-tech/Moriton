@@ -2554,6 +2554,7 @@ function liHTML(w, kind) {
       </div>
       <div class="li-r">
         <div class="li-time">${ago(w.ms)}</div>
+        ${kind === 'wait' ? waitBusyBadge(w) : ''}
         ${w.urgency==='red'?'<span class="badge b-r">🔴 Яаралтай</span>':w.urgency==='yellow'?'<span class="badge b-o">🟡 Анхаарах</span>':'<span class="badge b-g">🟢 Хэвийн</span>'}
       </div>
     </div>
@@ -2906,6 +2907,9 @@ function startExamFromWaiting() {
   if (!STATE.selectedW) { toast('Адуу сонгоно уу', 'err'); return; }
   const w = STATE.waiting.find(x => String(x.id) === String(STATE.selectedW));
   if (!w) return;
+  const busyBy = waitExaminingBy(w);
+  if (busyBy && !(STATE.user && busyBy === STATE.user.name) &&
+      !confirm('«' + (w.horse || '') + '»-г ' + busyBy + ' үзэж байна. Та авч үзэх үү?')) return;
   STATE.curExam = {
     id: uid(),
     waitId: w.id,
@@ -2929,7 +2933,34 @@ function startExamFromWaiting() {
     ms: nowMs()
   };
   writeLog('Үзлэг эхлүүлсэн', STATE.curExam.id, w.horse + ' / ' + w.owner, '', STATE.curExam.examNum);
+  waitMarkExamining(w, true); // бусад компьютер, утасны апп дээр «Үзлэг явагдаж байна» гэж харагдана
   nav('exam');
+}
+
+// ── 🩺 «Үзлэг явагдаж байна» тэмдэг (утасны апптай ижил талбарууд: examBy, examByMs, examDevice) ──
+// Тэмдэг 2 цагийн дараа өөрөө хүчингүй болно (үзлэгээ хаалгүй орхисон тохиолдолд).
+const EXAM_LOCK_MS = 2 * 3600 * 1000;
+function waitMarkExamining(w, on) {
+  if (!w) return;
+  try {
+    w.examBy = on ? ((STATE.user && STATE.user.name) || '') : '';
+    w.examByMs = on ? nowMs() : 0;
+    w.examDevice = on ? (window.__fbDeviceId || '') : '';
+    w.ms = w.ms || nowMs(); // дарааллын цаг (хүлээсэн хугацаа) өөрчлөгдөхгүй
+    lsSet('mt_waiting', STATE.waiting);
+    fbSaveRecord('waiting', w);
+  } catch (e) { console.warn('waitMarkExamining', e); }
+}
+function waitExaminingBy(w) {
+  if (!w || !w.examBy) return '';
+  if (nowMs() - (parseFloat(w.examByMs) || 0) > EXAM_LOCK_MS) return '';
+  return String(w.examBy);
+}
+function waitBusyBadge(w) {
+  const by = waitExaminingBy(w);
+  if (!by) return '';
+  const mine = STATE.user && by === STATE.user.name;
+  return `<span class="badge b-o" title="Үзлэг эхлүүлсэн">🩺 ${mine ? 'Та үзэж байна' : 'Үзлэг явагдаж байна · ' + escHTML(by)}</span>`;
 }
 
 // ============================================================
@@ -3119,6 +3150,9 @@ function renderMedChips() {
 
 function cancelExam() {
   if (STATE.curExam && STATE.curExam.services.length === 0 && !STATE.curExam.diagnosis) {
+    // Үзлэгийг орхиход «Үзлэг явагдаж байна» тэмдгийг авна
+    const w0 = (STATE.waiting || []).find(x => String(x.id) === String(STATE.curExam.waitId));
+    if (w0 && w0.examBy) waitMarkExamining(w0, false);
     STATE.curExam = null;
   }
   nav('waiting');

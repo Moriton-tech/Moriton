@@ -94,33 +94,40 @@
   <div class="body">
     <!-- SIDEBAR -->
     <nav class="sb" id="sb">
-      <div class="sb-section">Үндсэн</div>
+      <div class="sb-section">Өнөөдөр</div>
       <div class="sb-list">
         <div class="ni" data-page="my" style="display:none"><div class="ni-icon">📱</div><div class="ni-label">Миний ажил</div><span class="ni-badge b-p" data-bdg="my" style="display:none">0</span></div>
         <div class="ni active" data-page="dashboard"><div class="ni-icon">📊</div><div class="ni-label">Хяналтын самбар</div></div>
+      </div>
+      <div class="sb-section">Хүлээн авах</div>
+      <div class="sb-list">
         <div class="ni" data-page="register"><div class="ni-icon">🐴</div><div class="ni-label">Адуу бүртгэл</div></div>
+        <div class="ni" data-page="waiting"><div class="ni-icon">⏳</div><div class="ni-label">Хүлээж байгаа</div><span class="ni-badge" id="bdg-w">0</span></div>
       </div>
       <div class="sb-section">Эмчилгээ</div>
       <div class="sb-list">
-        <div class="ni" data-page="waiting"><div class="ni-icon">⏳</div><div class="ni-label">Хүлээж байгаа</div><span class="ni-badge" id="bdg-w">0</span></div>
         <div class="ni" data-page="exam"><div class="ni-icon">🩺</div><div class="ni-label">Үзлэг / Эмчилгээ</div></div>
         <div class="ni" data-page="inpatient"><div class="ni-icon">🏥</div><div class="ni-label">Байрлан эмчлүүлэх</div><span class="ni-badge b-p" id="bdg-i">0</span></div>
-        <div class="ni" data-page="planned"><div class="ni-icon">🗓️</div><div class="ni-label">Төлөвлөгөөт үзлэг</div></div>
         <div class="ni" data-page="lab"><div class="ni-icon">🧪</div><div class="ni-label">Шинжилгээ</div><span class="ni-badge b-a" id="bdg-lab">0</span></div>
-        <div class="ni" data-page="review"><div class="ni-icon">👁️</div><div class="ni-label">Ахлах эмчийн хяналт</div><span class="ni-badge" id="bdg-rv" style="display:none">0</span></div>
         <div class="ni" data-page="pharmacy"><div class="ni-icon">💊</div><div class="ni-label">Эмийн сан</div><span class="ni-badge b-p" id="bdg-ph" style="display:none">0</span></div>
+        <div class="ni" data-page="review"><div class="ni-icon">👁️</div><div class="ni-label">Ахлах эмчийн хяналт</div><span class="ni-badge" id="bdg-rv" style="display:none">0</span></div>
+      </div>
+      <div class="sb-section">Хээр ба үржүүлэг</div>
+      <div class="sb-list">
+        <div class="ni" data-page="planned"><div class="ni-icon">🗓️</div><div class="ni-label">Төлөвлөгөөт үзлэг</div></div>
         <div class="ni" data-page="breeding"><div class="ni-icon">🐎</div><div class="ni-label">Үржүүлгийн адуу</div><span class="ni-badge b-g" data-bdg="breed" style="display:none">0</span></div>
       </div>
-      <div class="sb-section">Бүртгэл</div>
+      <div class="sb-section">Санхүү ба тайлан</div>
       <div class="sb-list">
         <div class="ni" data-page="finance"><div class="ni-icon">💰</div><div class="ni-label">Санхүү</div><span class="ni-badge b-g" id="bdg-f">0</span></div>
         <div class="ni" data-page="history"><div class="ni-icon">📋</div><div class="ni-label">Түүх</div></div>
-        <div class="ni" data-page="timesheet"><div class="ni-icon">🕒</div><div class="ni-label">Цагийн бүртгэл</div></div>
-      </div>
-      <div class="sb-section">Тайлан</div>
-      <div class="sb-list">
-        <div class="ni" data-page="kpi"><div class="ni-icon">📈</div><div class="ni-label">KPI самбар</div></div>
         <div class="ni" data-page="report"><div class="ni-icon">📄</div><div class="ni-label">Тайлан</div></div>
+        <div class="ni" data-page="kpi"><div class="ni-icon">📈</div><div class="ni-label">KPI самбар</div></div>
+      </div>
+      <div class="sb-section">Байгууллага</div>
+      <div class="sb-list">
+        <div class="ni" data-page="timesheet"><div class="ni-icon">🕒</div><div class="ni-label">Цагийн бүртгэл</div></div>
+        <div class="ni ni-duty"><div class="ni-icon">🌙</div><div class="ni-label">Ээлж хүлээлцэх акт</div><span class="ni-badge b-o" data-bdg="duty" style="display:none">0</span></div>
       </div>
       <div class="sb-bottom">
         <div class="sb-list">
@@ -137,33 +144,40 @@
         <div class="drawer-hdr-name" style="display:flex;align-items:center;gap:10px"><span class="drawer-logo"></span>Морьтон Адууны Төв</div>
         <div class="drawer-hdr-sub" id="drawer-sub">Эмчилгээний систем</div>
       </div>
-      <div class="sb-section" style="color:var(--gold);opacity:0.85">Үндсэн</div>
+      <div class="sb-section" style="color:var(--gold);opacity:0.85">Өнөөдөр</div>
       <div class="sb-list">
         <div class="ni" data-page="my" style="display:none"><div class="ni-icon">📱</div><div class="ni-label">Миний ажил</div><span class="ni-badge b-p" data-bdg="my" style="display:none">0</span></div>
         <div class="ni" data-page="dashboard"><div class="ni-icon">📊</div><div class="ni-label">Хяналтын самбар</div></div>
+      </div>
+      <div class="sb-section" style="color:var(--gold);opacity:0.85">Хүлээн авах</div>
+      <div class="sb-list">
         <div class="ni" data-page="register"><div class="ni-icon">🐴</div><div class="ni-label">Адуу бүртгэл</div></div>
+        <div class="ni" data-page="waiting"><div class="ni-icon">⏳</div><div class="ni-label">Хүлээж байгаа</div><span class="ni-badge" id="bdg-w2">0</span></div>
       </div>
       <div class="sb-section" style="color:var(--gold);opacity:0.85">Эмчилгээ</div>
       <div class="sb-list">
-        <div class="ni" data-page="waiting"><div class="ni-icon">⏳</div><div class="ni-label">Хүлээж байгаа</div><span class="ni-badge" id="bdg-w2">0</span></div>
         <div class="ni" data-page="exam"><div class="ni-icon">🩺</div><div class="ni-label">Үзлэг / Эмчилгээ</div></div>
         <div class="ni" data-page="inpatient"><div class="ni-icon">🏥</div><div class="ni-label">Байрлан эмчлүүлэх</div><span class="ni-badge b-p" id="bdg-i2">0</span></div>
-        <div class="ni" data-page="planned"><div class="ni-icon">🗓️</div><div class="ni-label">Төлөвлөгөөт үзлэг</div></div>
         <div class="ni" data-page="lab"><div class="ni-icon">🧪</div><div class="ni-label">Шинжилгээ</div><span class="ni-badge b-a" id="bdg-lab2">0</span></div>
-        <div class="ni" data-page="review"><div class="ni-icon">👁️</div><div class="ni-label">Ахлах эмчийн хяналт</div><span class="ni-badge" id="bdg-rv2" style="display:none">0</span></div>
         <div class="ni" data-page="pharmacy"><div class="ni-icon">💊</div><div class="ni-label">Эмийн сан</div><span class="ni-badge b-p" id="bdg-ph2" style="display:none">0</span></div>
+        <div class="ni" data-page="review"><div class="ni-icon">👁️</div><div class="ni-label">Ахлах эмчийн хяналт</div><span class="ni-badge" id="bdg-rv2" style="display:none">0</span></div>
+      </div>
+      <div class="sb-section" style="color:var(--gold);opacity:0.85">Хээр ба үржүүлэг</div>
+      <div class="sb-list">
+        <div class="ni" data-page="planned"><div class="ni-icon">🗓️</div><div class="ni-label">Төлөвлөгөөт үзлэг</div></div>
         <div class="ni" data-page="breeding"><div class="ni-icon">🐎</div><div class="ni-label">Үржүүлгийн адуу</div><span class="ni-badge b-g" data-bdg="breed" style="display:none">0</span></div>
       </div>
-      <div class="sb-section" style="color:var(--gold);opacity:0.85">Бүртгэл</div>
+      <div class="sb-section" style="color:var(--gold);opacity:0.85">Санхүү ба тайлан</div>
       <div class="sb-list">
         <div class="ni" data-page="finance"><div class="ni-icon">💰</div><div class="ni-label">Санхүү</div><span class="ni-badge b-g" id="bdg-f2">0</span></div>
         <div class="ni" data-page="history"><div class="ni-icon">📋</div><div class="ni-label">Түүх</div></div>
-        <div class="ni" data-page="timesheet"><div class="ni-icon">🕒</div><div class="ni-label">Цагийн бүртгэл</div></div>
-      </div>
-      <div class="sb-section" style="color:var(--gold);opacity:0.85">Тайлан</div>
-      <div class="sb-list">
-        <div class="ni" data-page="kpi"><div class="ni-icon">📈</div><div class="ni-label">KPI самбар</div></div>
         <div class="ni" data-page="report"><div class="ni-icon">📄</div><div class="ni-label">Тайлан</div></div>
+        <div class="ni" data-page="kpi"><div class="ni-icon">📈</div><div class="ni-label">KPI самбар</div></div>
+      </div>
+      <div class="sb-section" style="color:var(--gold);opacity:0.85">Байгууллага</div>
+      <div class="sb-list">
+        <div class="ni" data-page="timesheet"><div class="ni-icon">🕒</div><div class="ni-label">Цагийн бүртгэл</div></div>
+        <div class="ni ni-duty"><div class="ni-icon">🌙</div><div class="ni-label">Ээлж хүлээлцэх акт</div><span class="ni-badge b-o" data-bdg="duty" style="display:none">0</span></div>
       </div>
       <div class="sb-bottom">
         <div class="sb-list">
@@ -1935,13 +1949,13 @@
 <div id="print-area"></div>
 
 <script src="mn-sums.js?v=20261112a"></script>
-<script src="app.js?v=20261123a"></script>
+<script src="app.js?v=20261125a"></script>
 <script src="lab.js?v=20261023"></script>
 <script src="pharmacy.js?v=20261110a"></script>
 <script src="timesheet.js?v=20261023"></script>
 <script src="dailyreport.js?v=20261023"></script>
 <script src="ops.js?v=20261123a"></script>
-<script src="halloween.js?v=20261030"></script>
+<script src="dutyact.js?v=20261125a"></script>
 
 <!-- PWA: service worker бүртгэх, автомат шинэчлэлт, суулгах товч -->
 <script src="pwa.js?v=20260731"></script>
