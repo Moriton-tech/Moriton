@@ -34,7 +34,7 @@ struct MainTabs: View {
                 .tabItem { Label("Хүлээлт", systemImage: "clock") }
                 .badge(store.clinicWaiting.count)
             InpListView()
-                .tabItem { Label("Байрлагч", systemImage: "bed.double") }
+                .tabItem { Label("Байрлан", systemImage: "bed.double") }
             LabView()
                 .tabItem { Label("Шинжилгээ", systemImage: "testtube.2") }
                 .badge(store.openLabs.count)

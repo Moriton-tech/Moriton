@@ -191,6 +191,8 @@ struct MyWorkView: View {
             .background(Color.navy)
             .clipShape(RoundedRectangle(cornerRadius: 14))
 
+            DutySection()
+
             if store.me == nil {
                 EmptyNote(text: "«\(store.userName)» хэрэглэгч эмчийн бүртгэлтэй холбогдоогүй байна. Вэб дээр: Тохиргоо → Эмч нар.")
             }
@@ -210,6 +212,8 @@ struct MyWorkView: View {
                     InpCard(inp: i, showTask: false) { writing = i }
                 }
             }
+
+            MyExamsSection()
         }
         .sheet(item: $writing) { i in TreatSheet(inp: i) }
     }
@@ -256,6 +260,9 @@ struct InpCard: View {
                 .background(Color.navy)
                 .foregroundColor(.white)
                 .clipShape(RoundedRectangle(cornerRadius: 10))
+                let examId = inp.raw.s("examId")
+                PhotoButton(target: PhotoTarget(col: examId.isEmpty ? "inps" : "exams", id: examId.isEmpty ? inp.id : examId, horse: inp.horse),
+                            count: examId.isEmpty ? ((inp.raw["images"] as? [Any])?.count ?? 0) : 0)
                 let digits = inp.phone.filter { $0.isNumber || $0 == "+" }
                 if !digits.isEmpty, let url = URL(string: "tel:\(digits)") {
                     Link(destination: url) {
@@ -370,7 +377,7 @@ struct WaitingView: View {
     }
 }
 
-// ── Байрлагч ─────────────────────────────────────────────────
+// ── Байрлан эмчлүүлэх ─────────────────────────────────────────────────
 struct InpListView: View {
     @EnvironmentObject var store: AppStore
     @State private var writing: Inp?
@@ -386,7 +393,7 @@ struct InpListView: View {
                 .frame(minHeight: 44)
                 .background(Color.white)
                 .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.line))
-            if list.isEmpty { EmptyNote(text: "Байрлагч адуу алга") }
+            if list.isEmpty { EmptyNote(text: "Байрлан эмчлүүлж буй адуу алга") }
             ForEach(list) { i in
                 InpCard(inp: i, showTask: true) { writing = i }
             }
@@ -430,6 +437,22 @@ struct MeView: View {
             Card {
                 Text(store.userName).font(.headline)
                 Text(store.role).font(.footnote).foregroundColor(Color.mute)
+            }
+            StatsCard()
+            ScheduleCard()
+            NavigationLink {
+                DutyListView()
+            } label: {
+                HStack {
+                    Text("Жижүүрийн мэдээ, ээлж хүлээлцэлт")
+                    Spacer()
+                    Image(systemName: "chevron.right")
+                }
+                .font(.subheadline)
+                .padding(14)
+                .frame(maxWidth: .infinity, minHeight: 46)
+                .background(Color.white)
+                .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color.line))
             }
             Card {
                 row("Сүлжээ", store.online ? "Холбогдсон" : "Сүлжээгүй")

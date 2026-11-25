@@ -124,3 +124,24 @@ exports.onLabWritten = onDocumentWritten({ document: 'labs/{id}', ...opts }, asy
     thread: 'lab'
   });
 });
+
+// 5) Жижүүр эмч ээлжээ хүлээлгэн өгөхөд → хүлээн авах эмчид; хүлээн авахад → өгсөн эмчид
+exports.onDutyWritten = onDocumentWritten({ document: 'duty/{id}', ...opts }, async (event) => {
+  const before = data(event.data.before), after = data(event.data.after);
+  if (!after || !after.handover) return;
+  const h = after.handover, hb = (before && before.handover) || {};
+  if (h.sentMs && h.sentMs !== hb.sentMs && h.toDocId) {
+    await notify(devices().where('docId', '==', String(h.toDocId)), {
+      title: 'Ээлж хүлээн авах',
+      body: `${after.docName || 'Жижүүр эмч'} ээлжээ танд хүлээлгэн өглөө${h.note ? ' — ' + String(h.note).slice(0, 120) : ''}`,
+      thread: 'duty'
+    });
+  }
+  if (h.acceptedMs && !hb.acceptedMs && after.docId) {
+    await notify(devices().where('docId', '==', String(after.docId)), {
+      title: 'Ээлж хүлээн авлаа',
+      body: `${h.acceptedBy || h.toName || 'Эмч'} ээлжийг хүлээн авлаа`,
+      thread: 'duty'
+    });
+  }
+});

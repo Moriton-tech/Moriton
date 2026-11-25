@@ -8,8 +8,8 @@ settings:
     SWIFT_VERSION: "5.0"
     DEVELOPMENT_TEAM: "FCY9Y2B5SG"
     CODE_SIGN_STYLE: Automatic
-    MARKETING_VERSION: "0.1"
-    CURRENT_PROJECT_VERSION: "1"
+    MARKETING_VERSION: "0.2"
+    CURRENT_PROJECT_VERSION: "2"
     TARGETED_DEVICE_FAMILY: "1"
 targets:
   MoritonEmch:
@@ -31,6 +31,8 @@ targets:
         UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
         UIBackgroundModes: [remote-notification]
         ITSAppUsesNonExemptEncryption: false
+        NSCameraUsageDescription: Үзсэн адууны зургийг авч үзлэгийн бичлэгт хавсаргана.
+        NSPhotoLibraryUsageDescription: Адууны зургийг сонгож үзлэгийн бичлэгт хавсаргана.
     entitlements:
       path: MoritonEmch/MoritonEmch.entitlements
       properties:

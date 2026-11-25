@@ -152,20 +152,44 @@ actor FirestoreClient {
         }
     }
 
+    /// Нэг бичлэг (байхгүй бол nil)
+    func get(_ col: String, id: String) async throws -> Rec? {
+        do {
+            guard let j = try await call("GET", "\(base)/\(col)/\(id)") as? [String: Any] else { throw FSError.bad }
+            return FSValue.decodeFields(j["fields"] as? [String: Any] ?? [:])
+        } catch FSError.http(let code, _) where code == 404 {
+            return nil
+        }
+    }
+
+    /// Нэг талбараар шүүж татах (ж: date >= "2026-11-01")
+    func query(_ col: String, field: String, op: String, value: Any, limit: Int) async throws -> [Rec] {
+        let q: [String: Any] = ["structuredQuery": [
+            "from": [["collectionId": col]],
+            "where": ["fieldFilter": ["field": ["fieldPath": field], "op": op, "value": FSValue.encode(value)]],
+            "limit": limit
+        ]]
+        guard let arr = try await call("POST", "\(base):runQuery", body: q) as? [[String: Any]] else { throw FSError.bad }
+        return arr.compactMap { row in
+            guard let d = row["document"] as? [String: Any] else { return nil }
+            return FSValue.decodeFields(d["fields"] as? [String: Any] ?? [:])
+        }
+    }
+
     // ── Бичих ──
-    /// Байрлагчийн өдрийн бичлэг нэмэх. Бичлэгийг БҮТНЭЭР нь дарж бичихгүй —
-    /// зөвхөн log массивт нэмж, ms/_updatedAt/_writer-ийг шинэчилнэ (бусад талбарт хүрэхгүй).
-    func appendLog(inpId: String, log: Rec, writer: String) async throws {
+    /// Бичлэгийн нэг массив талбарт (log, images) элемент нэмэх. Бичлэгийг БҮТНЭЭР нь дарж бичихгүй —
+    /// зөвхөн тэр массивт нэмж, ms/_updatedAt/_writer-ийг шинэчилнэ (бусад талбарт хүрэхгүй).
+    func append(_ col: String, id: String, field: String, value: Rec, writer: String) async throws {
         let now = Day.nowMs
         let write: [String: Any] = [
             "update": [
-                "name": "\(root)/inps/\(inpId)",
+                "name": "\(root)/\(col)/\(id)",
                 "fields": FSValue.encodeFields(["ms": now, "_updatedAt": now, "_writer": writer])
             ],
             "updateMask": ["fieldPaths": ["ms", "_updatedAt", "_writer"]],
             "updateTransforms": [[
-                "fieldPath": "log",
-                "appendMissingElements": ["values": [FSValue.encode(log)]]
+                "fieldPath": field,
+                "appendMissingElements": ["values": [FSValue.encode(value)]]
             ]],
             "currentDocument": ["exists": true]
         ]
@@ -175,5 +199,31 @@ actor FirestoreClient {
     /// Нэг бичлэгийг бүтнээр хадгалах (төхөөрөмжийн мэдэгдлийн токен г.м.)
     func set(_ col: String, id: String, data: Rec) async throws {
         _ = try await call("PATCH", "\(base)/\(col)/\(id)", body: ["fields": FSValue.encodeFields(data)])
+    }
+
+    /// Зөвхөн нэрлэсэн талбаруудыг шинэчлэх (бусад нь хэвээр; бичлэг байхгүй бол үүсгэнэ)
+    func patch(_ col: String, id: String, data: Rec, mask: [String]) async throws {
+        let qs = mask.map { "updateMask.fieldPaths=\($0)" }.joined(separator: "&")
+        _ = try await call("PATCH", "\(base)/\(col)/\(id)?\(qs)", body: ["fields": FSValue.encodeFields(data)])
+    }
+
+    // ── Зураг (Firebase Storage) ──
+    func uploadJPEG(path: String, data: Data) async throws -> String {
+        guard let enc = path.addingPercentEncoding(withAllowedCharacters: .alphanumerics),
+              let url = URL(string: "https://firebasestorage.googleapis.com/v0/b/\(Config.bucket)/o?uploadType=media&name=\(enc)") else { throw FSError.bad }
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
+        req.setValue("Firebase \(try await token())", forHTTPHeaderField: "Authorization")
+        req.setValue("image/jpeg", forHTTPHeaderField: "Content-Type")
+        req.httpBody = data
+        req.timeoutInterval = 90
+        let (body, resp) = try await URLSession.shared.data(for: req)
+        let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
+        guard (200..<300).contains(code) else {
+            throw FSError.http(code, String(String(data: body, encoding: .utf8)?.prefix(300) ?? ""))
+        }
+        let j = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any] ?? [:]
+        let tok = (j["downloadTokens"] as? String ?? "").components(separatedBy: ",").first ?? ""
+        return "https://firebasestorage.googleapis.com/v0/b/\(Config.bucket)/o/\(enc)?alt=media" + (tok.isEmpty ? "" : "&token=\(tok)")
     }
 }

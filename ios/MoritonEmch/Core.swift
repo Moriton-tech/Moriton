@@ -7,7 +7,8 @@ enum Config {
     static let projectId = "moriton-4ecc0"
     static let apiKey = "AIzaSyCB20uvd_XsWju91IERQGs6yGFYSBSUx10"   // вэбийн firebase.js-тэй ижил (нууц биш)
     static let pwSalt = "moriton_salt_2026"                          // вэбийн _hashPassword-тай ижил
-    static let version = "0.1"
+    static let version = "0.2"
+    static let bucket = "moriton-4ecc0.firebasestorage.app"
     #if DEBUG
     static let apnsEnv = "sandbox"      // Xcode-оор суулгасан хувилбар
     #else
@@ -218,5 +219,57 @@ struct Lab: Identifiable {
         case "cancelled": return "Цуцалсан"
         default: return status
         }
+    }
+}
+
+struct Exam: Identifiable {
+    let id: String
+    let raw: Rec
+    init?(_ r: Rec) {
+        let i = r.s("id")
+        guard !i.isEmpty else { return nil }
+        id = i
+        raw = r
+    }
+    var horse: String { raw.s("horse") }
+    var owner: String { raw.s("owner") }
+    var date: String { raw.s("date") }
+    var examNum: String { raw.s("examNum") }
+    var diagnosis: String { raw.s("diagnosis") }
+    var docName: String { raw.s("docName") }
+    var assistDocName: String { raw.s("assistDocName") }
+    var isPlanned: Bool { raw.s("kind") == "planned" }
+    var imageCount: Int { (raw["images"] as? [Any])?.count ?? 0 }
+}
+
+/// Жижүүрийн мэдээ + ээлж хүлээлцэх бичлэг (collection: duty, id = огноо_эмчийнID)
+struct Duty: Identifiable {
+    let id: String
+    let raw: Rec
+    init?(_ r: Rec) {
+        let i = r.s("id")
+        guard !i.isEmpty else { return nil }
+        id = i
+        raw = r
+    }
+    var date: String { raw.s("date") }
+    var docId: String { raw.s("docId") }
+    var docName: String { raw.s("docName") }
+    var report: Rec { raw.rec("report") ?? [:] }
+    var hasReport: Bool { raw.d("reportMs") > 0 }
+    var handover: Rec { raw.rec("handover") ?? [:] }
+    var sent: Bool { handover.d("sentMs") > 0 }
+    var accepted: Bool { handover.d("acceptedMs") > 0 }
+    var toDocId: String { handover.s("toDocId") }
+    var toName: String { handover.s("toName") }
+}
+
+enum Clock {
+    static func time(_ ms: Double) -> String {
+        guard ms > 0 else { return "" }
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.dateFormat = "MM.dd HH:mm"
+        return f.string(from: Date(timeIntervalSince1970: ms / 1000))
     }
 }
