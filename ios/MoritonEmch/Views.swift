@@ -299,7 +299,328 @@ struct MyWorkView: View {
         }
     }
 
-    // ── Байрлан эмчлүүлэх ─────────────────────────────────────────────────
+    // ── Хүлээлт ──
+    @ViewBuilder private var waitingList: some View {
+        if store.clinicWaiting.isEmpty { EmptyNote(text: "Хүлээж буй адуу алга") }
+        ForEach(store.clinicWaiting) { w in WaitCard(wait: w) { start(w) } }
+    }
+
+    // ── Даалгавар ──
+    @ViewBuilder private var taskList: some View {
+        let tasks = store.myTasks
+        Text("Өнөөдрийн даалгавар").font(.subheadline.bold())
+        if tasks.isEmpty { EmptyNote(text: "Өнөөдөр танд хуваарилсан адуу алга") }
+        ForEach(tasks) { i in InpCard(inp: i, showTask: true) { writing = i } }
+        let others = store.myOthers
+        if !others.isEmpty {
+            Text("Миний эмчилж буй бусад адуу").font(.subheadline.bold()).padding(.top, 8)
+            ForEach(others) { i in InpCard(inp: i, showTask: false) { writing = i } }
+        }
+    }
+
+    // ── Түүх ──
+    @ViewBuilder private var historyList: some View {
+        let list = store.myExams.filter {
+            query.isEmpty || $0.horse.localizedCaseInsensitiveContains(query) || $0.owner.localizedCaseInsensitiveContains(query)
+                || $0.examNum.contains(query) || $0.diagnosis.localizedCaseInsensitiveContains(query)
+        }
+        TextField("Адуу, эзэн, онош, хуудасны №", text: $query)
+            .padding(.horizontal, 12)
+            .frame(minHeight: 44)
+            .background(Color.white)
+            .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.line))
+        Text("Миний үзсэн адуу · \(list.count)").font(.subheadline.bold())
+        if list.isEmpty { EmptyNote(text: "Үзлэг олдсонгүй") }
+        ForEach(list.prefix(60)) { e in ExamRow(exam: e) }
+        if list.count > 60 {
+            NavigationLink("Бүх \(list.count) үзлэгийг харах ›") { HistoryView() }.font(.subheadline)
+        }
+    }
+}
+
+struct WaitCard: View {
+    @EnvironmentObject var store: AppStore
+    let wait: Wait
+    let onStart: () -> Void
+
+    var body: some View {
+        Card {
+            HStack {
+                Text(wait.horse).font(.headline)
+                Spacer()
+                Text(wait.waited).font(.footnote.monospacedDigit()).foregroundColor(Color.mute)
+            }
+            Text("\(wait.owner)\(wait.phone.isEmpty ? "" : " · " + wait.phone)").font(.footnote).foregroundColor(Color.mute)
+            if !wait.symptoms.isEmpty { Text(wait.symptoms).font(.subheadline) }
+            Text("Хуудас № \(wait.examNum.isEmpty ? "—" : wait.examNum)\(wait.iabd.isEmpty ? "" : " · ИАБД " + wait.iabd)")
+                .font(.caption).foregroundColor(Color.mute)
+            Button(action: onStart) {
+                Text("Үзлэг эхлүүлэх").font(.subheadline.weight(.semibold)).frame(maxWidth: .infinity, minHeight: 46)
+            }
+            .background(Color.navy).foregroundColor(.white)
+            .clipShape(RoundedRectangle(cornerRadius: 10))
+            .disabled(store.me == nil)
+        }
+    }
+}
+
+struct ExamRow: View {
+    let exam: Exam
+    var body: some View {
+        NavigationLink {
+            ExamDetailView(examId: exam.id)
+        } label: {
+            Card {
+                HStack(alignment: .top) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(exam.horse).font(.headline).foregroundColor(Color.ink)
+                        Text("\(exam.date) · № \(exam.examNum.isEmpty ? "—" : exam.examNum) · \(exam.owner)")
+                            .font(.caption).foregroundColor(Color.mute)
+                        if !exam.diagnosis.isEmpty {
+                            Text(exam.diagnosis).font(.footnote).foregroundColor(Color.ink).lineLimit(2).multilineTextAlignment(.leading)
+                        }
+                    }
+                    Spacer()
+                    if exam.imageCount > 0 {
+                        Label("\(exam.imageCount)", systemImage: "photo").font(.caption).foregroundColor(Color.mute)
+                    }
+                    Image(systemName: "chevron.right").font(.footnote).foregroundColor(Color.mute)
+                }
+            }
+        }
+    }
+}
+
+struct InpCard: View {
+    let inp: Inp
+    let showTask: Bool
+    let onWrite: () -> Void
+
+    var body: some View {
+        let today = Day.today
+        let done = inp.done(on: today)
+        Card {
+            HStack {
+                Text(inp.horse).font(.headline)
+                Spacer()
+                Tag(text: done ? "Бичсэн" : "Хийгээгүй", ok: done)
+            }
+            Text("\(inp.location.isEmpty ? "байрлалгүй" : inp.location) · \(inp.day) дахь хоног · \(inp.owner)")
+                .font(.footnote).foregroundColor(Color.mute)
+            if !inp.diagnosis.isEmpty { Text(inp.diagnosis).font(.subheadline) }
+            if inp.surgeryPending {
+                Text("Мэс засалд хүлээгдэж буй\(inp.surgeryDate.isEmpty ? "" : " · " + inp.surgeryDate)")
+                    .font(.footnote.weight(.semibold)).foregroundColor(Color.warnFg)
+            }
+            if showTask, let task = inp.assign(on: today)?.s("task"), !task.isEmpty {
+                Text("Даалгавар: \(task)")
+                    .font(.footnote)
+                    .padding(8)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color(hex: 0xF1EFE6))
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+            }
+            if !inp.lastLine.isEmpty {
+                Text(inp.lastLine).font(.caption).foregroundColor(Color.mute)
+            }
+            HStack(spacing: 8) {
+                Button(action: onWrite) {
+                    Text(done ? "Дахин бичлэг нэмэх" : "Эмчилгээ бичих")
+                        .font(.subheadline.weight(.semibold))
+                        .frame(maxWidth: .infinity, minHeight: 46)
+                }
+                .background(Color.navy)
+                .foregroundColor(.white)
+                .clipShape(RoundedRectangle(cornerRadius: 10))
+                let examId = inp.raw.s("examId")
+                PhotoButton(target: PhotoTarget(col: examId.isEmpty ? "inps" : "exams", id: examId.isEmpty ? inp.id : examId, horse: inp.horse),
+                            count: examId.isEmpty ? ((inp.raw["images"] as? [Any])?.count ?? 0) : 0)
+                let digits = inp.phone.filter { $0.isNumber || $0 == "+" }
+                if !digits.isEmpty, let url = URL(string: "tel:\(digits)") {
+                    Link(destination: url) {
+                        Image(systemName: "phone")
+                            .frame(width: 46, height: 46)
+                            .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.navy))
+                    }
+                    .accessibilityLabel("Эзэнд залгах")
+                }
+            }
+        }
+    }
+}
+
+// ── Эмчилгээ бичих (вэбийн өдрийн бичлэгтэй ижил талбарууд) ──
+struct TreatSheet: View {
+    @EnvironmentObject var store: AppStore
+    @Environment(\.dismiss) private var dismiss
+    let inp: Inp
+    @State private var temp = ""
+    @State private var pulse = ""
+    @State private var resp = ""
+    @State private var weight = ""
+    @State private var slot = ""
+    @State private var note = ""
+    @State private var diagnosis = ""
+    @State private var services: [String] = []
+    @State private var meds: [MedLine] = []
+    @State private var loaded = false
+
+    private var svcTotal: Double { services.reduce(0) { $0 + store.price(of: $1) } }
+    private var medTotal: Double { meds.reduce(0) { $0 + $1.priceValue } }
+    private var canSave: Bool {
+        !note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !diagnosis.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            || !services.isEmpty || !meds.isEmpty
+    }
+    private var medNames: Binding<[String]> {
+        Binding(
+            get: { meds.map { $0.name } },
+            set: { names in
+                meds.removeAll { !names.contains($0.name) }
+                for n in names where !meds.contains(where: { $0.name == n }) { meds.append(store.newMedLine(n)) }
+            })
+    }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    Text("\(inp.location.isEmpty ? "байрлалгүй" : inp.location) · \(inp.day) дахь хоног")
+                        .font(.footnote).foregroundColor(Color.mute)
+                    if !inp.lastLine.isEmpty { Text(inp.lastLine).font(.footnote).foregroundColor(Color.mute) }
+                }
+                Section("Үзүүлэлт") {
+                    vital("Темп °C", "38.0", $temp, .decimalPad)
+                    vital("Зүрхний цохилт", "40", $pulse, .numberPad)
+                    vital("Амьсгал /мин", "12", $resp, .numberPad)
+                    vital("Жин кг", "", $weight, .decimalPad)
+                }
+                Section("Цаг") {
+                    Picker("Цаг", selection: $slot) {
+                        Text("—").tag("")
+                        ForEach(["Өглөө", "Өдөр", "Орой", "Шөнө"], id: \.self) { Text($0).tag($0) }
+                    }
+                    .pickerStyle(.segmented)
+                }
+                Section("Эмчилгээ, тэмдэглэл") {
+                    TextEditor(text: $note).frame(minHeight: 90)
+                }
+                Section("Онош (өөрчлөгдсөн бол)") {
+                    TextField("Онош", text: $diagnosis, axis: .vertical)
+                }
+                Section("Үйлчилгээ") {
+                    NavigationLink {
+                        PickList(title: "Үйлчилгээ", all: store.services, selected: $services) { Money.fmt(store.price(of: $0)) }
+                    } label: {
+                        Text(services.isEmpty ? "Үйлчилгээ сонгох" : services.joined(separator: ", "))
+                            .foregroundColor(services.isEmpty ? Color.mute : Color.ink).lineLimit(3)
+                    }
+                }
+                Section("Эм, тариа") {
+                    NavigationLink {
+                        PickList(title: "Эм, тариа", all: store.medNames, selected: medNames)
+                    } label: {
+                        Text("Эм нэмэх").foregroundColor(Color.navy)
+                    }
+                    ForEach($meds) { $m in
+                        MedRow(med: $m) { meds.removeAll { $0.id == m.id } }
+                    }
+                }
+                Section {
+                    HStack {
+                        Text("Өдрийн дүн").bold()
+                        Spacer()
+                        Text(Money.fmt(svcTotal + medTotal)).bold().monospacedDigit()
+                    }
+                    Text("Сүлжээгүй үед бичлэг утсанд хадгалагдаж, холбогдмогц илгээгдэнэ.")
+                        .font(.caption).foregroundColor(Color.mute)
+                }
+            }
+            .navigationTitle(inp.horse)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("Болих") { dismiss() } }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Хадгалах") {
+                        let svc: [Rec] = services.map { ["name": $0, "price": store.price(of: $0)] }
+                        store.addLog(to: inp,
+                                     temp: temp.replacingOccurrences(of: ",", with: "."),
+                                     pulse: pulse, resp: resp,
+                                     weight: weight.replacingOccurrences(of: ",", with: "."),
+                                     slot: slot,
+                                     note: note.trimmingCharacters(in: .whitespacesAndNewlines),
+                                     diagnosis: diagnosis.trimmingCharacters(in: .whitespacesAndNewlines),
+                                     services: svc,
+                                     meds: meds.map { $0.rec })
+                        dismiss()
+                    }
+                    .disabled(!canSave)
+                }
+            }
+            .onAppear {
+                // Эмчилгээний курсийн өнөөдрийн эмийг автоматаар бэлтгэнэ (вэбтэй ижил)
+                guard !loaded else { return }
+                loaded = true
+                meds = store.courseLines(for: inp, date: Day.today)
+            }
+        }
+    }
+
+    private func vital(_ label: String, _ hint: String, _ value: Binding<String>, _ pad: UIKeyboardType) -> some View {
+        HStack {
+            Text(label)
+            Spacer()
+            TextField(hint, text: value)
+                .keyboardType(pad)
+                .multilineTextAlignment(.trailing)
+                .frame(width: 110)
+        }
+    }
+}
+
+/// Эмийн нэг мөр: тоо × нэгжийн үнэ = үнэ (үнийг гараар засаж болно)
+struct MedRow: View {
+    @Binding var med: MedLine
+    let onRemove: () -> Void
+
+    private var computed: String { String(Int64((med.qtyValue * med.unitPrice).rounded())) }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text(med.name).font(.subheadline.weight(.semibold))
+                if med.course != nil { Tag(text: "курс", ok: true) }
+                Spacer()
+                Button(role: .destructive, action: onRemove) { Image(systemName: "xmark.circle") }
+                    .buttonStyle(.borderless)
+                    .accessibilityLabel("\(med.name) хасах")
+            }
+            HStack(spacing: 8) {
+                TextField("тоо", text: $med.qty)
+                    .keyboardType(.decimalPad)
+                    .frame(width: 56)
+                    .onChange(of: med.qty) { _ in
+                        if !med.manualPrice { med.price = computed }
+                    }
+                Text(med.unit.isEmpty ? "нэгж" : med.unit).font(.footnote).foregroundColor(Color.mute)
+                Spacer()
+                TextField("үнэ", text: $med.price)
+                    .keyboardType(.numberPad)
+                    .multilineTextAlignment(.trailing)
+                    .frame(width: 90)
+                    .onChange(of: med.price) { v in
+                        if v != computed { med.manualPrice = true }
+                    }
+                Text("₮").font(.footnote).foregroundColor(Color.mute)
+            }
+            TextField("Тайлбар, заавар", text: $med.note).font(.footnote)
+            if med.unitPrice == 0 {
+                Text("Каталогт нэгжийн үнэ оруулаагүй").font(.caption2).foregroundColor(Color.warnFg)
+            }
+        }
+    }
+}
+
+// ── Байрлан эмчлүүлэх ─────────────────────────────────────────────────
 struct InpListView: View {
     @EnvironmentObject var store: AppStore
     @State private var writing: Inp?
